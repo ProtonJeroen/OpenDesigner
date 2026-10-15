@@ -1,6 +1,7 @@
 #pragma once
 #include <QWidget>
 #include <QPoint>
+class QLineEdit;
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
 #include <V3d_Viewer.hxx>
@@ -46,6 +47,9 @@ private:
     bool beginArrowDrag(const QPoint& origin);
     void updateFaceArrow();
     void hideFaceArrow();
+    void showDragDimension(const QPoint& position);
+    void finishFaceDrag(bool accept);
+    void applyDragDistance(double distance);
     void initializeViewer();
     Handle(Aspect_DisplayConnection) display_;
     Handle(V3d_Viewer) viewer_;
@@ -63,6 +67,8 @@ private:
     bool rotating_ = false;
     bool panning_ = false;
     bool draggingFace_ = false;
+    QLineEdit* dragDimension_ = nullptr;
+    bool dimensionEditing_ = false;
     size_t dragIndex_ = 0;
     int dragAxis_ = 0;
     bool dragMax_ = true;
