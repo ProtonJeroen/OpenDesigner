@@ -19,6 +19,7 @@
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <gp_Circ.hxx>
+#include <ElCLib.hxx>
 #include <BRep_Builder.hxx>
 #include <TopoDS_Compound.hxx>
 #include <gp_Ax2.hxx>
@@ -576,7 +577,7 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
         const gp_Dir dir = axis == 0 ? gp_Dir(1,0,0) : axis == 1 ? gp_Dir(0,1,0) : gp_Dir(0,0,1);
         const gp_Circ circle(gp_Ax2(center,dir),radius);
         for (int i = 0; i < 96; ++i) {
-            const gp_Pnt world = circle.Value(i * 2.0 * 3.14159265358979323846 / 96.0);
+            const gp_Pnt world = ElCLib::Value(i * 2.0 * 3.14159265358979323846 / 96.0, circle);
             Standard_Integer x,y;
             view_->Convert(world.X(),world.Y(),world.Z(),x,y);
             const double distance = std::hypot(point.x()-x,point.y()-y);
