@@ -8,9 +8,10 @@
 #include <QAction>
 #include <QKeySequence>
 #include <QMessageBox>
+#include <QActionGroup>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.5 (prototype)");
+    setWindowTitle("OpenDesigner 0.6 (prototype)");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     setCentralWidget(viewport_);
@@ -37,12 +38,25 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(boxAction, &QAction::triggered, viewport_, &CadViewport::addBox);
     auto* pullAction = model->addAction(tr("&Pull Face..."));
     connect(pullAction, &QAction::triggered, viewport_, &CadViewport::pullSelectedFace);
+    auto* snapMenu = model->addMenu(tr("Face &Snapping"));
+    auto* snapGroup = new QActionGroup(this);
+    snapGroup->setExclusive(true);
+    for (const int step : {0, 1, 5, 10}) {
+        auto* action = snapMenu->addAction(step == 0
+            ? tr("Off") : tr("%1 mm").arg(step));
+        action->setCheckable(true);
+        action->setChecked(step == 1);
+        snapGroup->addAction(action);
+        connect(action, &QAction::triggered, viewport_, [this, step]() {
+            viewport_->setSnapStep(static_cast<double>(step));
+        });
+    }
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
     auto* fitAction = viewMenu->addAction(tr("&Fit All"));
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.5 — direct dimensions prototype."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.6 — face snapping prototype."));
     });
     auto* toolbar = addToolBar(tr("Modeling"));
     toolbar->addAction(boxAction);
@@ -59,5 +73,5 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(viewport_, &CadViewport::statusMessage, this, [this](const QString& msg) {
         statusBar()->showMessage(msg, 5000);
     });
-    statusBar()->showMessage(tr("Left: select face | Drag orange arrow or Ctrl+left drag: pull face | Middle: orbit | Shift+middle: pan | Wheel: zoom"));
+    statusBar()->showMessage(tr("Left: select face | Drag orange arrow or Ctrl+left drag: pull face | Shift during drag: free movement | Middle: orbit | Shift+middle: pan | Wheel: zoom"));
 }
