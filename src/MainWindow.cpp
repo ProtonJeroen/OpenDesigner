@@ -11,7 +11,7 @@
 #include <QActionGroup>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.9 (prototype)");
+    setWindowTitle("OpenDesigner 0.10 (prototype)");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     setCentralWidget(viewport_);
@@ -45,6 +45,21 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* interactiveMove = model->addAction(tr("Interactive &Move Part Mode"));
     interactiveMove->setCheckable(true);
     connect(interactiveMove, &QAction::toggled, viewport_, &CadViewport::setMovePartMode);
+    auto* interactiveRotate = model->addAction(tr("Interactive &Rotate Part Mode"));
+    interactiveRotate->setCheckable(true);
+    connect(interactiveRotate, &QAction::toggled, viewport_, &CadViewport::setRotateMode);
+    auto* angleMenu = model->addMenu(tr("Angle Snapping"));
+    auto* angleGroup = new QActionGroup(this);
+    angleGroup->setExclusive(true);
+    for (const int step : {0, 5, 15, 45}) {
+        auto* action = angleMenu->addAction(step == 0 ? tr("Off") : tr("%1 degrees").arg(step));
+        action->setCheckable(true);
+        action->setChecked(step == 15);
+        angleGroup->addAction(action);
+        connect(action, &QAction::triggered, viewport_, [this,step]() {
+            viewport_->setAngleSnap(static_cast<double>(step));
+        });
+    }
     auto* snapMenu = model->addMenu(tr("Face &Snapping"));
     auto* snapGroup = new QActionGroup(this);
     snapGroup->setExclusive(true);
@@ -63,7 +78,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.9 — Rotate Part prototype."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.10 — Interactive Rotate Part prototype."));
     });
     auto* toolbar = addToolBar(tr("Modeling"));
     toolbar->addAction(boxAction);
@@ -71,6 +86,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     toolbar->addAction(movePartAction);
     toolbar->addAction(rotatePartAction);
     toolbar->addAction(interactiveMove);
+    toolbar->addAction(interactiveRotate);
     toolbar->addAction(fitAction);
     toolbar->addSeparator();
     toolbar->addAction(undoAction);
