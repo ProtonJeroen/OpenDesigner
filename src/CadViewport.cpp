@@ -20,7 +20,6 @@
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
-#include <GC_MakeArcOfCircle.hxx>
 #include <gp_Circ.hxx>
 #include <ElCLib.hxx>
 #include <BRep_Builder.hxx>
@@ -646,14 +645,12 @@ void CadViewport::updateRotationRings() {
         constexpr double pi = 3.14159265358979323846;
         const double start = pi / 12.0;
         const double finish = start + 2.0*pi/3.0;
-        const gp_Pnt arcStart = ElCLib::Value(start,circle);
-        const gp_Pnt arcMid = ElCLib::Value((start+finish)*0.5,circle);
         const gp_Pnt arcEnd = ElCLib::Value(finish,circle);
         const gp_Vec tangent(ElCLib::Value(finish-0.01,circle),arcEnd);
         BRep_Builder builder;
         TopoDS_Compound arrow;
         builder.MakeCompound(arrow);
-        builder.Add(arrow,BRepBuilderAPI_MakeEdge(GC_MakeArcOfCircle(arcStart,arcMid,arcEnd)).Shape());
+        builder.Add(arrow,BRepBuilderAPI_MakeEdge(circle,start,finish).Shape());
         const gp_Pnt coneBase = arcEnd.Translated(tangent.Normalized().Multiplied(-10.0));
         builder.Add(arrow,BRepPrimAPI_MakeCone(gp_Ax2(coneBase,gp_Dir(tangent)),4.5,0.0,10.0).Shape());
         rotationRings_[axis] = new AIS_Shape(arrow);
