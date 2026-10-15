@@ -21,6 +21,13 @@
 #include <TopoDS_Compound.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Vec.hxx>
+#include <gp_Ax1.hxx>
+#include <TopLoc_Location.hxx>
+#include <QDialog>
+#include <QFormLayout>
+#include <QComboBox>
+#include <QDialogButtonBox>
+#include <QDoubleSpinBox>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRep_Tool.hxx>
 #include <TopoDS.hxx>
@@ -118,6 +125,7 @@ void CadViewport::hideFaceArrow() {
 void CadViewport::updateFaceArrow() {
     if (!arrowVisible_ || arrowPartIndex_ >= boxes_.size() || context_.IsNull()) return;
     const auto& part = boxes_[arrowPartIndex_];
+    if (part.orientation.Form() != gp_Identity) return;
     gp_Pnt center(
         (part.min[0] + part.max[0]) * 0.5,
         (part.min[1] + part.max[1]) * 0.5,
@@ -201,6 +209,10 @@ void CadViewport::pullSelectedFace() {
         emit statusMessage(tr("This face is not part of an editable box."));
         return;
     }
+    if (partIt->orientation.Form() != gp_Identity) {
+        emit statusMessage(tr("Pull Face on rotated parts is not supported yet; undo rotation first."));
+        return;
+    }
     const BRepAdaptor_Surface surface(TopoDS::Face(faceShape));
     if (surface.GetType() != GeomAbs_Plane) {
         emit statusMessage(tr("Only planar box faces are supported."));
@@ -235,10 +247,60 @@ void CadViewport::pullSelectedFace() {
         return;
     }
     const size_t index = static_cast<size_t>(partIt - boxes_.begin());
-    undoStack_.push_back({index, partIt->min, partIt->max, nextMin, nextMax});
+    undoStack_.push_back({index, partIt->min, partIt->max, nextMin, nextMax, partIt->orientation, partIt->orientation});
     redoStack_.clear();
     applyBoxBounds(index, nextMin, nextMax);
     emit statusMessage(tr("Face pulled by %1 mm").arg(distance));
+}
+void CadViewport::rotateSelectedPart() {
+    if (context_.IsNull() || context_->NbSelected() != 1) {
+        emit statusMessage(tr("Select a face on the part to rotate."));
+        return;
+    }
+    context_->InitSelected();
+    if (!context_->MoreSelected()) return;
+    const Handle(AIS_InteractiveObject) selected = context_->SelectedInteractive();
+    size_t index = 0;
+    while (index < boxes_.size() && boxes_[index].presentation != selected) ++index;
+    if (index == boxes_.size()) {
+        emit statusMessage(tr("Select a face of an editable box."));
+        return;
+    }
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Rotate Part"));
+    QFormLayout layout(&dialog);
+    QComboBox axisBox(&dialog);
+    axisBox.addItems({tr("X"), tr("Y"), tr("Z")});
+    QDoubleSpinBox angleBox(&dialog);
+    angleBox.setRange(-3600.0, 3600.0);
+    angleBox.setDecimals(2);
+    angleBox.setSuffix(tr(" deg"));
+    angleBox.setValue(90.0);
+    layout.addRow(tr("World axis"), &axisBox);
+    layout.addRow(tr("Angle"), &angleBox);
+    QDialogButtonBox buttons(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    layout.addRow(&buttons);
+    connect(&buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(&buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    if (dialog.exec() != QDialog::Accepted || std::abs(angleBox.value()) < 0.00001) return;
+    auto& part = boxes_[index];
+    const gp_Trsf before = part.orientation;
+    const gp_Pnt center((part.min[0] + part.max[0]) * 0.5,
+                        (part.min[1] + part.max[1]) * 0.5,
+                        (part.min[2] + part.max[2]) * 0.5);
+    const gp_Dir direction = axisBox.currentIndex() == 0 ? gp_Dir(1, 0, 0)
+                           : axisBox.currentIndex() == 1 ? gp_Dir(0, 1, 0)
+                                                          : gp_Dir(0, 0, 1);
+    gp_Trsf rotation;
+    const gp_Pnt worldCenter = center.Transformed(before);
+    rotation.SetRotation(gp_Ax1(worldCenter, direction), angleBox.value() * 3.14159265358979323846 / 180.0);
+    const gp_Trsf after = rotation * before;
+    undoStack_.push_back({index, part.min, part.max, part.min, part.max, before, after});
+    redoStack_.clear();
+    hideFaceArrow();
+    applyPartState(index, part.min, part.max, after);
+    emit statusMessage(tr("Part rotated %1 degrees around world %2 axis.")
+        .arg(angleBox.value()).arg(axisBox.currentText()));
 }
 void CadViewport::movePartAlongSelectedFace() {
     if (context_.IsNull() || context_->NbSelected() != 1) {
@@ -259,6 +321,10 @@ void CadViewport::movePartAlongSelectedFace() {
     while (index < boxes_.size() && boxes_[index].presentation != selected) ++index;
     if (index == boxes_.size()) {
         emit statusMessage(tr("Selected face does not belong to an editable box."));
+        return;
+    }
+    if (boxes_[index].orientation.Form() != gp_Identity) {
+        emit statusMessage(tr("Face-based editing on rotated parts is not supported yet."));
         return;
     }
     const BRepAdaptor_Surface surface(TopoDS::Face(owner->Shape()));
@@ -291,10 +357,16 @@ void CadViewport::movePartAlongSelectedFace() {
     const double delta = (onMax ? 1.0 : -1.0) * distance;
     afterMin[axis] += delta;
     afterMax[axis] += delta;
-    undoStack_.push_back({index, beforeMin, beforeMax, afterMin, afterMax});
+    undoStack_.push_back({index, beforeMin, beforeMax, afterMin, afterMax, boxes_[index].orientation, boxes_[index].orientation});
     redoStack_.clear();
     applyBoxBounds(index, afterMin, afterMax);
     emit statusMessage(tr("Part translated %1 mm; dimensions unchanged.").arg(distance));
+}
+void CadViewport::applyPartState(size_t index, const std::array<double, 3>& min,
+                                 const std::array<double, 3>& max, const gp_Trsf& orientation) {
+    if (index >= boxes_.size()) return;
+    boxes_[index].orientation = orientation;
+    applyBoxBounds(index, min, max);
 }
 void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
                                  const std::array<double, 3>& max) {
@@ -305,6 +377,7 @@ void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
         max[0] - min[0], max[1] - min[1], max[2] - min[2]).Shape();
     context_->ClearSelected(Standard_False);
     part.presentation->SetShape(shape);
+    part.presentation->SetLocalTransformation(part.orientation);
     context_->Redisplay(part.presentation, Standard_False);
     context_->Deactivate(part.presentation);
     context_->Activate(part.presentation, AIS_Shape::SelectionMode(TopAbs_FACE), Standard_False);
@@ -320,7 +393,7 @@ void CadViewport::undoPull() {
     }
     const PullChange change = undoStack_.back();
     undoStack_.pop_back();
-    applyBoxBounds(change.partIndex, change.beforeMin, change.beforeMax);
+    applyPartState(change.partIndex, change.beforeMin, change.beforeMax, change.beforeOrientation);
     redoStack_.push_back(change);
     emit statusMessage(tr("Pull Face undone."));
 }
@@ -331,7 +404,7 @@ void CadViewport::redoPull() {
     }
     const PullChange change = redoStack_.back();
     redoStack_.pop_back();
-    applyBoxBounds(change.partIndex, change.afterMin, change.afterMax);
+    applyPartState(change.partIndex, change.afterMin, change.afterMax, change.afterOrientation);
     undoStack_.push_back(change);
     emit statusMessage(tr("Pull Face redone."));
 }
@@ -470,6 +543,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                 Handle(AIS_InteractiveObject) selected = context_->SelectedInteractive();
                 for (size_t i = 0; i < boxes_.size(); ++i) {
                     if (boxes_[i].presentation != selected) continue;
+                    if (boxes_[i].orientation.Form() != gp_Identity) break;
                     const BRepAdaptor_Surface surf(TopoDS::Face(arrowOwner->Shape()));
                     if (surf.GetType() != GeomAbs_Plane) break;
                     const gp_Dir normal = surf.Plane().Axis().Direction();
@@ -551,7 +625,7 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     draggingFace_ = false;
     if (std::abs(dragDistance_) < 0.0001) { dragDimension_->hide(); return; }
     const auto& part = boxes_[dragIndex_];
-    undoStack_.push_back({dragIndex_, dragMin_, dragMaxBounds_, part.min, part.max});
+    undoStack_.push_back({dragIndex_, dragMin_, dragMaxBounds_, part.min, part.max, part.orientation, part.orientation});
     redoStack_.clear();
     dimensionEditing_ = true;
     showDragDimension(e->pos());

@@ -4,6 +4,7 @@
 class QLineEdit;
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
+#include <gp_Trsf.hxx>
 #include <V3d_Viewer.hxx>
 #include <V3d_View.hxx>
 #include <Aspect_DisplayConnection.hxx>
@@ -18,6 +19,7 @@ public:
     void fitAll();
     void pullSelectedFace();
     void movePartAlongSelectedFace();
+    void rotateSelectedPart();
     void undoPull();
     void redoPull();
     void setSnapStep(double stepMm);
@@ -38,12 +40,16 @@ private:
         Handle(AIS_Shape) presentation;
         std::array<double, 3> min;
         std::array<double, 3> max;
+        gp_Trsf orientation;
     };
     struct PullChange {
         size_t partIndex;
         std::array<double, 3> beforeMin, beforeMax;
         std::array<double, 3> afterMin, afterMax;
+        gp_Trsf beforeOrientation, afterOrientation;
     };
+    void applyPartState(size_t index, const std::array<double, 3>& min,
+                        const std::array<double, 3>& max, const gp_Trsf& orientation);
     void applyBoxBounds(size_t index, const std::array<double, 3>& min,
                         const std::array<double, 3>& max);
     bool beginFaceDrag(const QPoint& origin);
