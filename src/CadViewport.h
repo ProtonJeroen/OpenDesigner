@@ -16,6 +16,8 @@ public:
     void addBox();
     void fitAll();
     void pullSelectedFace();
+    void undoPull();
+    void redoPull();
 signals:
     void partCreated(const QString& name);
     void statusMessage(const QString& message);
@@ -32,12 +34,21 @@ private:
         std::array<double, 3> min;
         std::array<double, 3> max;
     };
+    struct PullChange {
+        size_t partIndex;
+        std::array<double, 3> beforeMin, beforeMax;
+        std::array<double, 3> afterMin, afterMax;
+    };
+    void applyBoxBounds(size_t index, const std::array<double, 3>& min,
+                        const std::array<double, 3>& max);
     void initializeViewer();
     Handle(Aspect_DisplayConnection) display_;
     Handle(V3d_Viewer) viewer_;
     Handle(V3d_View) view_;
     Handle(AIS_InteractiveContext) context_;
     std::vector<BoxPart> boxes_;
+    std::vector<PullChange> undoStack_;
+    std::vector<PullChange> redoStack_;
     QPoint previous_;
     bool rotating_ = false;
     bool panning_ = false;

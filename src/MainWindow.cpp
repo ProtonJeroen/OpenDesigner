@@ -6,6 +6,7 @@
 #include <QToolBar>
 #include <QStatusBar>
 #include <QAction>
+#include <QKeySequence>
 #include <QMessageBox>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
@@ -24,6 +25,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* file = menuBar()->addMenu(tr("&File"));
     auto* exitAction = file->addAction(tr("E&xit"));
     connect(exitAction, &QAction::triggered, this, &QWidget::close);
+    auto* edit = menuBar()->addMenu(tr("&Edit"));
+    auto* undoAction = edit->addAction(tr("&Undo Pull Face"));
+    undoAction->setShortcut(QKeySequence::Undo);
+    connect(undoAction, &QAction::triggered, viewport_, &CadViewport::undoPull);
+    auto* redoAction = edit->addAction(tr("&Redo Pull Face"));
+    redoAction->setShortcut(QKeySequence::Redo);
+    connect(redoAction, &QAction::triggered, viewport_, &CadViewport::redoPull);
     auto* model = menuBar()->addMenu(tr("&Modeling"));
     auto* boxAction = model->addAction(tr("Create &Box"));
     connect(boxAction, &QAction::triggered, viewport_, &CadViewport::addBox);
@@ -40,6 +48,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     toolbar->addAction(boxAction);
     toolbar->addAction(pullAction);
     toolbar->addAction(fitAction);
+    toolbar->addSeparator();
+    toolbar->addAction(undoAction);
+    toolbar->addAction(redoAction);
     connect(viewport_, &CadViewport::partCreated, this, [this, root](const QString& name) {
         new QTreeWidgetItem(root, QStringList{name});
         root->setExpanded(true);
