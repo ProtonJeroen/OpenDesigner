@@ -81,8 +81,14 @@ void CadViewport::pullSelectedFace() {
         emit statusMessage(tr("Select exactly one box face first."));
         return;
     }
-    // SelectedShape() can resolve to the parent AIS shape on some OCCT versions.
-    // The selection owner holds the actual subshape picked by the user.
+    // OCCT SelectedOwner(), SelectedShape() and SelectedInteractive() refer to
+    // the CURRENT selection iterator. Initialize it before reading any value.
+    context_->InitSelected();
+    if (!context_->MoreSelected()) {
+        emit statusMessage(tr("Selection iterator is empty."));
+        return;
+    }
+    // The selection owner holds the picked B-Rep subshape.
     Handle(StdSelect_BRepOwner) faceOwner =
         Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
     if (faceOwner.IsNull()) {
@@ -163,6 +169,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
         context_->SelectDetected();
         if (context_->NbSelected() == 1) {
+            context_->InitSelected();
             const TopoDS_Shape picked = context_->SelectedShape();
             emit statusMessage(tr("Selected shape: %1; B-Rep owner: %2")
                 .arg(picked.IsNull() ? -1 : static_cast<int>(picked.ShapeType()))
