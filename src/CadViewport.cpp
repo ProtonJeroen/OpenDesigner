@@ -12,6 +12,7 @@
 #include <Aspect_NeutralWindow.hxx>
 #include <OpenGl_GraphicDriver.hxx>
 #include <AIS_Shape.hxx>
+#include <Graphic3d_ZLayerId.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <SelectMgr_EntityOwner.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
@@ -562,6 +563,8 @@ void CadViewport::updateMoveAxes() {
         moveAxes_[axis] = new AIS_Shape(shape);
         moveAxes_[axis]->SetColor(axis==0 ? Quantity_NOC_RED : axis==1 ? Quantity_NOC_GREEN : Quantity_NOC_BLUE1);
         context_->Display(moveAxes_[axis],Standard_False);
+        // Topmost layer draws the manipulator over solid geometry (depth cleared).
+        context_->SetZLayer(moveAxes_[axis],Graphic3d_ZLayerId_Topmost);
         context_->SetDisplayMode(moveAxes_[axis],AIS_Shaded,Standard_False);
         context_->Deactivate(moveAxes_[axis]);
     }
