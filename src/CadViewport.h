@@ -21,6 +21,7 @@ public:
     void undoPull();
     void redoPull();
     void setSnapStep(double stepMm);
+    void setMovePartMode(bool enabled);
 signals:
     void partCreated(const QString& name);
     void statusMessage(const QString& message);
@@ -67,6 +68,8 @@ private:
     bool rotating_ = false;
     bool panning_ = false;
     bool draggingFace_ = false;
+    bool movePartMode_ = false;
+    bool dragMovesPart_ = false;
     QLineEdit* dragDimension_ = nullptr;
     bool dimensionEditing_ = false;
     size_t dragIndex_ = 0;
