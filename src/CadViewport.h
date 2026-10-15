@@ -17,6 +17,7 @@ public:
     void addBox();
     void fitAll();
     void pullSelectedFace();
+    void movePartAlongSelectedFace();
     void undoPull();
     void redoPull();
     void setSnapStep(double stepMm);
