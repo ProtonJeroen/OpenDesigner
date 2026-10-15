@@ -236,6 +236,62 @@ void CadViewport::pullSelectedFace() {
     applyBoxBounds(index, nextMin, nextMax);
     emit statusMessage(tr("Face pulled by %1 mm").arg(distance));
 }
+void CadViewport::movePartAlongSelectedFace() {
+    if (context_.IsNull() || context_->NbSelected() != 1) {
+        emit statusMessage(tr("Select a box face to choose the move direction."));
+        return;
+    }
+    context_->InitSelected();
+    if (!context_->MoreSelected()) return;
+    Handle(StdSelect_BRepOwner) owner =
+        Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
+    if (owner.IsNull() || owner->Shape().IsNull()
+        || owner->Shape().ShapeType() != TopAbs_FACE) {
+        emit statusMessage(tr("Select a planar box face."));
+        return;
+    }
+    const Handle(AIS_InteractiveObject) selected = context_->SelectedInteractive();
+    size_t index = 0;
+    while (index < boxes_.size() && boxes_[index].presentation != selected) ++index;
+    if (index == boxes_.size()) {
+        emit statusMessage(tr("Selected face does not belong to an editable box."));
+        return;
+    }
+    const BRepAdaptor_Surface surface(TopoDS::Face(owner->Shape()));
+    if (surface.GetType() != GeomAbs_Plane) {
+        emit statusMessage(tr("Only planar box faces are supported."));
+        return;
+    }
+    const gp_Dir normal = surface.Plane().Axis().Direction();
+    const double components[3] = {normal.X(), normal.Y(), normal.Z()};
+    int axis = 0;
+    for (int i = 1; i < 3; ++i)
+        if (std::abs(components[i]) > std::abs(components[axis])) axis = i;
+    if (std::abs(components[axis]) < 0.999) {
+        emit statusMessage(tr("Only axis-aligned faces are supported."));
+        return;
+    }
+    const double pos = surface.Plane().Location().Coord(axis + 1);
+    const bool onMax = std::abs(pos - boxes_[index].max[axis]) < 0.001;
+    const bool onMin = std::abs(pos - boxes_[index].min[axis]) < 0.001;
+    if (!onMax && !onMin) return;
+    bool ok = false;
+    const double distance = QInputDialog::getDouble(
+        this, tr("Move Part"), tr("Distance along selected face outward normal (mm):"),
+        20.0, -100000.0, 100000.0, 2, &ok);
+    if (!ok || distance == 0.0) return;
+    const auto beforeMin = boxes_[index].min;
+    const auto beforeMax = boxes_[index].max;
+    auto afterMin = beforeMin;
+    auto afterMax = beforeMax;
+    const double delta = (onMax ? 1.0 : -1.0) * distance;
+    afterMin[axis] += delta;
+    afterMax[axis] += delta;
+    undoStack_.push_back({index, beforeMin, beforeMax, afterMin, afterMax});
+    redoStack_.clear();
+    applyBoxBounds(index, afterMin, afterMax);
+    emit statusMessage(tr("Part translated %1 mm; dimensions unchanged.").arg(distance));
+}
 void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
                                  const std::array<double, 3>& max) {
     if (index >= boxes_.size() || context_.IsNull()) return;
