@@ -19,6 +19,8 @@
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <GC_MakeArcOfCircle.hxx>
 #include <gp_Circ.hxx>
 #include <ElCLib.hxx>
 #include <BRep_Builder.hxx>
@@ -638,7 +640,23 @@ void CadViewport::updateRotationRings() {
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
     for (int axis = 0; axis < 3; ++axis) {
         const gp_Dir dir = gp_Dir(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0).Transformed(part.orientation);
-        rotationRings_[axis] = new AIS_Shape(BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(center,dir),radius)).Shape());
+        // A 120-degree curved arrow replaces the full 360-degree ring.
+        // The tip is tangent to the arc, indicating positive rotation.
+        const gp_Circ circle(gp_Ax2(center,dir),radius);
+        constexpr double pi = 3.14159265358979323846;
+        const double start = pi / 12.0;
+        const double finish = start + 2.0*pi/3.0;
+        const gp_Pnt arcStart = ElCLib::Value(start,circle);
+        const gp_Pnt arcMid = ElCLib::Value((start+finish)*0.5,circle);
+        const gp_Pnt arcEnd = ElCLib::Value(finish,circle);
+        const gp_Vec tangent = gp_Vec(ElCLib::D1(finish,circle));
+        BRep_Builder builder;
+        TopoDS_Compound arrow;
+        builder.MakeCompound(arrow);
+        builder.Add(arrow,BRepBuilderAPI_MakeEdge(GC_MakeArcOfCircle(arcStart,arcMid,arcEnd)).Shape());
+        const gp_Pnt coneBase = arcEnd.Translated(tangent.Normalized().Multiplied(-10.0));
+        builder.Add(arrow,BRepPrimAPI_MakeCone(gp_Ax2(coneBase,gp_Dir(tangent)),4.5,0.0,10.0).Shape());
+        rotationRings_[axis] = new AIS_Shape(arrow);
         rotationRings_[axis]->SetColor(axis == 0 ? Quantity_NOC_RED
             : axis == 1 ? Quantity_NOC_GREEN : Quantity_NOC_BLUE1);
         context_->Display(rotationRings_[axis], Standard_False);
@@ -659,8 +677,9 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
     for (int axis = 0; axis < 3; ++axis) {
         const gp_Dir dir = gp_Dir(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0).Transformed(part.orientation);
         const gp_Circ circle(gp_Ax2(center,dir),radius);
-        for (int i = 0; i < 96; ++i) {
-            const gp_Pnt world = ElCLib::Value(i * 2.0 * 3.14159265358979323846 / 96.0, circle);
+        for (int i = 0; i <= 96; ++i) {
+            const double angle = 3.14159265358979323846 / 12.0 + i * (2.0 * 3.14159265358979323846 / 3.0) / 96.0;
+            const gp_Pnt world = ElCLib::Value(angle, circle);
             Standard_Integer x,y;
             view_->Convert(world.X(),world.Y(),world.Z(),x,y);
             const double distance = std::hypot(point.x()-x,point.y()-y);
