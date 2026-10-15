@@ -24,6 +24,7 @@
 #include <gp_Pln.hxx>
 #include <Quantity_Color.hxx>
 #include <cmath>
+#include <algorithm>
 
 CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_NativeWindow);
@@ -292,12 +293,54 @@ bool CadViewport::beginFaceDrag(const QPoint& origin) {
     emit statusMessage(tr("Drag along the face normal; release to commit."));
     return true;
 }
+bool CadViewport::beginArrowDrag(const QPoint& origin) {
+    if (!arrowVisible_ || faceArrow_.IsNull() || view_.IsNull()
+        || arrowPartIndex_ >= boxes_.size()) return false;
+    const auto& part = boxes_[arrowPartIndex_];
+    gp_Pnt center(
+        (part.min[0] + part.max[0]) * 0.5,
+        (part.min[1] + part.max[1]) * 0.5,
+        (part.min[2] + part.max[2]) * 0.5);
+    center.SetCoord(arrowAxis_ + 1,
+                    arrowMax_ ? part.max[arrowAxis_] : part.min[arrowAxis_]);
+    gp_Pnt tip = center;
+    tip.SetCoord(arrowAxis_ + 1, center.Coord(arrowAxis_ + 1)
+                    + (arrowMax_ ? 31.0 : -31.0));
+    Standard_Integer x0, y0, x1, y1;
+    view_->Convert(center.X(), center.Y(), center.Z(), x0, y0);
+    view_->Convert(tip.X(), tip.Y(), tip.Z(), x1, y1);
+    const double dx = static_cast<double>(x1 - x0);
+    const double dy = static_cast<double>(y1 - y0);
+    const double lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared < 4.0) return false;
+    const double t = std::clamp(
+        ((origin.x() - x0) * dx + (origin.y() - y0) * dy) / lengthSquared,
+        0.0, 1.0);
+    const double distance = std::hypot(origin.x() - (x0 + t * dx),
+                                       origin.y() - (y0 + t * dy));
+    if (distance > 12.0) return false;
+    dragIndex_ = arrowPartIndex_;
+    dragAxis_ = arrowAxis_;
+    dragMax_ = arrowMax_;
+    dragMin_ = part.min;
+    dragMaxBounds_ = part.max;
+    dragStart_ = origin;
+    dragDistance_ = 0.0;
+    const double pixels = std::sqrt(lengthSquared);
+    dragScreenX_ = dx / pixels;
+    dragScreenY_ = dy / pixels;
+    dragMmPerPixel_ = 31.0 / pixels;
+    draggingFace_ = true;
+    emit statusMessage(tr("Drag arrow along face normal; release to commit."));
+    return true;
+}
 void CadViewport::mousePressEvent(QMouseEvent* e) {
     previous_ = e->pos();
     rotating_ = e->button() == Qt::MiddleButton && !(e->modifiers() & Qt::ShiftModifier);
     panning_ = e->button() == Qt::MiddleButton && (e->modifiers() & Qt::ShiftModifier);
     if (rotating_ && !view_.IsNull()) view_->StartRotation(previous_.x(), previous_.y());
     if (e->button() == Qt::LeftButton && !context_.IsNull()) {
+        if (beginArrowDrag(e->pos())) return;
         if ((e->modifiers() & Qt::ControlModifier) && beginFaceDrag(e->pos())) return;
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
         context_->SelectDetected();
