@@ -43,6 +43,7 @@ private:
     void applyBoxBounds(size_t index, const std::array<double, 3>& min,
                         const std::array<double, 3>& max);
     bool beginFaceDrag(const QPoint& origin);
+    bool beginArrowDrag(const QPoint& origin);
     void updateFaceArrow();
     void hideFaceArrow();
     void initializeViewer();
