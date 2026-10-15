@@ -144,18 +144,49 @@ void CadViewport::pullSelectedFace() {
         emit statusMessage(tr("Pull distance would collapse or invert the box."));
         return;
     }
-    TopoDS_Shape updated = BRepPrimAPI_MakeBox(
-        gp_Pnt(nextMin[0], nextMin[1], nextMin[2]),
-        nextMax[0] - nextMin[0], nextMax[1] - nextMin[1], nextMax[2] - nextMin[2]).Shape();
-    context_->ClearSelected(Standard_False);
-    partIt->presentation->SetShape(updated);
-    context_->Redisplay(partIt->presentation, Standard_False);
-    context_->Deactivate(partIt->presentation);
-    context_->Activate(partIt->presentation, AIS_Shape::SelectionMode(TopAbs_FACE), Standard_False);
-    partIt->min = nextMin;
-    partIt->max = nextMax;
-    view_->Redraw();
+    const size_t index = static_cast<size_t>(partIt - boxes_.begin());
+    undoStack_.push_back({index, partIt->min, partIt->max, nextMin, nextMax});
+    redoStack_.clear();
+    applyBoxBounds(index, nextMin, nextMax);
     emit statusMessage(tr("Face pulled by %1 mm").arg(distance));
+}
+void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
+                                 const std::array<double, 3>& max) {
+    if (index >= boxes_.size() || context_.IsNull()) return;
+    auto& part = boxes_[index];
+    TopoDS_Shape shape = BRepPrimAPI_MakeBox(
+        gp_Pnt(min[0], min[1], min[2]),
+        max[0] - min[0], max[1] - min[1], max[2] - min[2]).Shape();
+    context_->ClearSelected(Standard_False);
+    part.presentation->SetShape(shape);
+    context_->Redisplay(part.presentation, Standard_False);
+    context_->Deactivate(part.presentation);
+    context_->Activate(part.presentation, AIS_Shape::SelectionMode(TopAbs_FACE), Standard_False);
+    part.min = min;
+    part.max = max;
+    view_->Redraw();
+}
+void CadViewport::undoPull() {
+    if (undoStack_.empty()) {
+        emit statusMessage(tr("Nothing to undo."));
+        return;
+    }
+    const PullChange change = undoStack_.back();
+    undoStack_.pop_back();
+    applyBoxBounds(change.partIndex, change.beforeMin, change.beforeMax);
+    redoStack_.push_back(change);
+    emit statusMessage(tr("Pull Face undone."));
+}
+void CadViewport::redoPull() {
+    if (redoStack_.empty()) {
+        emit statusMessage(tr("Nothing to redo."));
+        return;
+    }
+    const PullChange change = redoStack_.back();
+    redoStack_.pop_back();
+    applyBoxBounds(change.partIndex, change.afterMin, change.afterMax);
+    undoStack_.push_back(change);
+    emit statusMessage(tr("Pull Face redone."));
 }
 void CadViewport::fitAll() {
     if (!view_.IsNull()) { view_->FitAll(0.01, Standard_False); view_->ZFitAll(); view_->Redraw(); }
