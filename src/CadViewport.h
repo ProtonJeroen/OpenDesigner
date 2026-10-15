@@ -48,8 +48,6 @@ private:
     void updateFaceArrow();
     void hideFaceArrow();
     void showDragDimension(const QPoint& position);
-    void finishFaceDrag(bool accept);
-    void applyDragDistance(double distance);
     void initializeViewer();
     Handle(Aspect_DisplayConnection) display_;
     Handle(V3d_Viewer) viewer_;
