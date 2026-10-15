@@ -10,6 +10,12 @@
 #include <StdSelect_BRepOwner.hxx>
 #include <SelectMgr_EntityOwner.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakeCone.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
+#include <gp_Ax2.hxx>
+#include <gp_Vec.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRep_Tool.hxx>
 #include <TopoDS.hxx>
@@ -18,6 +24,7 @@
 #include <gp_Pln.hxx>
 #include <Quantity_Color.hxx>
 #include <cmath>
+#include <algorithm>
 
 CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_NativeWindow);
@@ -55,6 +62,45 @@ void CadViewport::resizeEvent(QResizeEvent*) {
         Handle(Aspect_NeutralWindow) window = Handle(Aspect_NeutralWindow)::DownCast(view_->Window());
         if (!window.IsNull()) window->SetSize(width(), height());
         view_->MustBeResized();
+    }
+}
+void CadViewport::hideFaceArrow() {
+    arrowVisible_ = false;
+    if (!faceArrow_.IsNull() && !context_.IsNull()) {
+        context_->Remove(faceArrow_, Standard_False);
+        faceArrow_.Nullify();
+    }
+}
+void CadViewport::updateFaceArrow() {
+    if (!arrowVisible_ || arrowPartIndex_ >= boxes_.size() || context_.IsNull()) return;
+    const auto& part = boxes_[arrowPartIndex_];
+    gp_Pnt center(
+        (part.min[0] + part.max[0]) * 0.5,
+        (part.min[1] + part.max[1]) * 0.5,
+        (part.min[2] + part.max[2]) * 0.5);
+    center.SetCoord(arrowAxis_ + 1,
+                    arrowMax_ ? part.max[arrowAxis_] : part.min[arrowAxis_]);
+    gp_Vec direction(0, 0, 0);
+    direction.SetCoord(arrowAxis_ + 1, arrowMax_ ? 1.0 : -1.0);
+    const double shaftLength = 22.0;
+    const gp_Ax2 shaftAxis(center, gp_Dir(direction));
+    const gp_Pnt tipBase = center.Translated(direction.Multiplied(shaftLength));
+    const gp_Ax2 tipAxis(tipBase, gp_Dir(direction));
+    BRep_Builder builder;
+    TopoDS_Compound compound;
+    builder.MakeCompound(compound);
+    builder.Add(compound, BRepPrimAPI_MakeCylinder(shaftAxis, 1.6, shaftLength).Shape());
+    builder.Add(compound, BRepPrimAPI_MakeCone(tipAxis, 4.5, 0.0, 9.0).Shape());
+    if (faceArrow_.IsNull()) {
+        faceArrow_ = new AIS_Shape(compound);
+        faceArrow_->SetColor(Quantity_NOC_ORANGE);
+        context_->Display(faceArrow_, Standard_False);
+        context_->SetDisplayMode(faceArrow_, AIS_Shaded, Standard_False);
+        context_->Deactivate(faceArrow_);
+    } else {
+        faceArrow_->SetShape(compound);
+        context_->Redisplay(faceArrow_, Standard_False);
+        context_->Deactivate(faceArrow_);
     }
 }
 void CadViewport::addBox() {
@@ -164,6 +210,7 @@ void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
     context_->Activate(part.presentation, AIS_Shape::SelectionMode(TopAbs_FACE), Standard_False);
     part.min = min;
     part.max = max;
+    updateFaceArrow();
     view_->Redraw();
 }
 void CadViewport::undoPull() {
@@ -246,15 +293,88 @@ bool CadViewport::beginFaceDrag(const QPoint& origin) {
     emit statusMessage(tr("Drag along the face normal; release to commit."));
     return true;
 }
+bool CadViewport::beginArrowDrag(const QPoint& origin) {
+    if (!arrowVisible_ || faceArrow_.IsNull() || view_.IsNull()
+        || arrowPartIndex_ >= boxes_.size()) return false;
+    const auto& part = boxes_[arrowPartIndex_];
+    gp_Pnt center(
+        (part.min[0] + part.max[0]) * 0.5,
+        (part.min[1] + part.max[1]) * 0.5,
+        (part.min[2] + part.max[2]) * 0.5);
+    center.SetCoord(arrowAxis_ + 1,
+                    arrowMax_ ? part.max[arrowAxis_] : part.min[arrowAxis_]);
+    gp_Pnt tip = center;
+    tip.SetCoord(arrowAxis_ + 1, center.Coord(arrowAxis_ + 1)
+                    + (arrowMax_ ? 31.0 : -31.0));
+    Standard_Integer x0, y0, x1, y1;
+    view_->Convert(center.X(), center.Y(), center.Z(), x0, y0);
+    view_->Convert(tip.X(), tip.Y(), tip.Z(), x1, y1);
+    const double dx = static_cast<double>(x1 - x0);
+    const double dy = static_cast<double>(y1 - y0);
+    const double lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared < 4.0) return false;
+    const double t = std::clamp(
+        ((origin.x() - x0) * dx + (origin.y() - y0) * dy) / lengthSquared,
+        0.0, 1.0);
+    const double distance = std::hypot(origin.x() - (x0 + t * dx),
+                                       origin.y() - (y0 + t * dy));
+    if (distance > 12.0) return false;
+    dragIndex_ = arrowPartIndex_;
+    dragAxis_ = arrowAxis_;
+    dragMax_ = arrowMax_;
+    dragMin_ = part.min;
+    dragMaxBounds_ = part.max;
+    dragStart_ = origin;
+    dragDistance_ = 0.0;
+    const double pixels = std::sqrt(lengthSquared);
+    dragScreenX_ = dx / pixels;
+    dragScreenY_ = dy / pixels;
+    dragMmPerPixel_ = 31.0 / pixels;
+    draggingFace_ = true;
+    emit statusMessage(tr("Drag arrow along face normal; release to commit."));
+    return true;
+}
 void CadViewport::mousePressEvent(QMouseEvent* e) {
     previous_ = e->pos();
     rotating_ = e->button() == Qt::MiddleButton && !(e->modifiers() & Qt::ShiftModifier);
     panning_ = e->button() == Qt::MiddleButton && (e->modifiers() & Qt::ShiftModifier);
     if (rotating_ && !view_.IsNull()) view_->StartRotation(previous_.x(), previous_.y());
     if (e->button() == Qt::LeftButton && !context_.IsNull()) {
+        if (beginArrowDrag(e->pos())) return;
         if ((e->modifiers() & Qt::ControlModifier) && beginFaceDrag(e->pos())) return;
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
         context_->SelectDetected();
+        hideFaceArrow();
+        if (context_->NbSelected() == 1) {
+            context_->InitSelected();
+            Handle(StdSelect_BRepOwner) arrowOwner =
+                Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
+            if (!arrowOwner.IsNull() && !arrowOwner->Shape().IsNull()
+                && arrowOwner->Shape().ShapeType() == TopAbs_FACE) {
+                Handle(AIS_InteractiveObject) selected = context_->SelectedInteractive();
+                for (size_t i = 0; i < boxes_.size(); ++i) {
+                    if (boxes_[i].presentation != selected) continue;
+                    const BRepAdaptor_Surface surf(TopoDS::Face(arrowOwner->Shape()));
+                    if (surf.GetType() != GeomAbs_Plane) break;
+                    const gp_Dir normal = surf.Plane().Axis().Direction();
+                    const double components[3] = {normal.X(), normal.Y(), normal.Z()};
+                    int axis = 0;
+                    for (int k = 1; k < 3; ++k)
+                        if (std::abs(components[k]) > std::abs(components[axis])) axis = k;
+                    if (std::abs(components[axis]) < 0.999) break;
+                    const double pos = surf.Plane().Location().Coord(axis + 1);
+                    const bool onMax = std::abs(pos - boxes_[i].max[axis]) < 0.001;
+                    const bool onMin = std::abs(pos - boxes_[i].min[axis]) < 0.001;
+                    if (!onMax && !onMin) break;
+                    arrowPartIndex_ = i;
+                    arrowAxis_ = axis;
+                    arrowMax_ = onMax;
+                    arrowVisible_ = true;
+                    updateFaceArrow();
+                    break;
+                }
+            }
+        }
         if (context_->NbSelected() == 1) {
             context_->InitSelected();
             const TopoDS_Shape picked = context_->SelectedShape();

@@ -10,7 +10,7 @@
 #include <QMessageBox>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.3 (prototype)");
+    setWindowTitle("OpenDesigner 0.4 (prototype)");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     setCentralWidget(viewport_);
@@ -42,7 +42,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.2 — direct modeling prototype."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.4 — interactive face manipulator prototype."));
     });
     auto* toolbar = addToolBar(tr("Modeling"));
     toolbar->addAction(boxAction);
@@ -59,5 +59,5 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(viewport_, &CadViewport::statusMessage, this, [this](const QString& msg) {
         statusBar()->showMessage(msg, 5000);
     });
-    statusBar()->showMessage(tr("Left: select face | Ctrl+left drag: pull face | Middle: orbit | Shift+middle: pan | Wheel: zoom"));
+    statusBar()->showMessage(tr("Left: select face | Drag orange arrow or Ctrl+left drag: pull face | Middle: orbit | Shift+middle: pan | Wheel: zoom"));
 }

@@ -43,11 +43,19 @@ private:
     void applyBoxBounds(size_t index, const std::array<double, 3>& min,
                         const std::array<double, 3>& max);
     bool beginFaceDrag(const QPoint& origin);
+    bool beginArrowDrag(const QPoint& origin);
+    void updateFaceArrow();
+    void hideFaceArrow();
     void initializeViewer();
     Handle(Aspect_DisplayConnection) display_;
     Handle(V3d_Viewer) viewer_;
     Handle(V3d_View) view_;
     Handle(AIS_InteractiveContext) context_;
+    Handle(AIS_Shape) faceArrow_;
+    size_t arrowPartIndex_ = 0;
+    int arrowAxis_ = 0;
+    bool arrowMax_ = true;
+    bool arrowVisible_ = false;
     std::vector<BoxPart> boxes_;
     std::vector<PullChange> undoStack_;
     std::vector<PullChange> redoStack_;
