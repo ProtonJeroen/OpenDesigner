@@ -141,7 +141,6 @@ void CadViewport::hideFaceArrow() {
 void CadViewport::updateFaceArrow() {
     if (!arrowVisible_ || arrowPartIndex_ >= boxes_.size() || context_.IsNull()) return;
     const auto& part = boxes_[arrowPartIndex_];
-    if (part.orientation.Form() != gp_Identity) return;
     gp_Pnt center(
         (part.min[0] + part.max[0]) * 0.5,
         (part.min[1] + part.max[1]) * 0.5,
@@ -151,6 +150,8 @@ void CadViewport::updateFaceArrow() {
     gp_Vec direction(0, 0, 0);
     direction.SetCoord(arrowAxis_ + 1, arrowMax_ ? 1.0 : -1.0);
     const double shaftLength = 22.0;
+    center.Transform(part.orientation);
+    direction.Transform(part.orientation);
     const gp_Ax2 shaftAxis(center, gp_Dir(direction));
     const gp_Pnt tipBase = center.Translated(direction.Multiplied(shaftLength));
     const gp_Ax2 tipAxis(tipBase, gp_Dir(direction));
@@ -223,10 +224,6 @@ void CadViewport::pullSelectedFace() {
     }
     if (partIt == boxes_.end()) {
         emit statusMessage(tr("This face is not part of an editable box."));
-        return;
-    }
-    if (partIt->orientation.Form() != gp_Identity) {
-        emit statusMessage(tr("Pull Face on rotated parts is not supported yet; undo rotation first."));
         return;
     }
     const BRepAdaptor_Surface surface(TopoDS::Face(faceShape));
@@ -337,10 +334,6 @@ void CadViewport::movePartAlongSelectedFace() {
     while (index < boxes_.size() && boxes_[index].presentation != selected) ++index;
     if (index == boxes_.size()) {
         emit statusMessage(tr("Selected face does not belong to an editable box."));
-        return;
-    }
-    if (boxes_[index].orientation.Form() != gp_Identity) {
-        emit statusMessage(tr("Face-based editing on rotated parts is not supported yet."));
         return;
     }
     const BRepAdaptor_Surface surface(TopoDS::Face(owner->Shape()));
@@ -466,6 +459,8 @@ bool CadViewport::beginFaceDrag(const QPoint& origin) {
     gp_Pnt a(0.0, 0.0, 0.0);
     gp_Pnt b(0.0, 0.0, 0.0);
     b.SetCoord(axis + 1, outward * 100.0);
+    a.Transform(boxes_[index].orientation);
+    b.Transform(boxes_[index].orientation);
     Standard_Integer ax, ay, bx, by;
     view_->Convert(a.X(), a.Y(), a.Z(), ax, ay);
     view_->Convert(b.X(), b.Y(), b.Z(), bx, by);
@@ -499,6 +494,8 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
     gp_Pnt tip = center;
     tip.SetCoord(arrowAxis_ + 1, center.Coord(arrowAxis_ + 1)
                     + (arrowMax_ ? 31.0 : -31.0));
+    center.Transform(part.orientation);
+    tip.Transform(part.orientation);
     Standard_Integer x0, y0, x1, y1;
     view_->Convert(center.X(), center.Y(), center.Z(), x0, y0);
     view_->Convert(tip.X(), tip.Y(), tip.Z(), x1, y1);
@@ -685,7 +682,6 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                 Handle(AIS_InteractiveObject) selected = context_->SelectedInteractive();
                 for (size_t i = 0; i < boxes_.size(); ++i) {
                     if (boxes_[i].presentation != selected) continue;
-                    if (boxes_[i].orientation.Form() != gp_Identity) break;
                     const BRepAdaptor_Surface surf(TopoDS::Face(arrowOwner->Shape()));
                     if (surf.GetType() != GeomAbs_Plane) break;
                     const gp_Dir normal = surf.Plane().Axis().Direction();
