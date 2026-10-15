@@ -65,6 +65,7 @@ void CadViewport::addBox() {
     part.max = {x + 100.0, 80.0, 60.0};
     TopoDS_Shape shape = BRepPrimAPI_MakeBox(gp_Pnt(x, 0, 0), 100.0, 80.0, 60.0).Shape();
     part.presentation = new AIS_Shape(shape);
+    part.presentation->SetColor(Quantity_NOC_LIGHTGRAY);
     context_->Display(part.presentation, Standard_False);
     context_->SetDisplayMode(part.presentation, AIS_Shaded, Standard_False);
     // Disable global object selection (mode 0) before enabling subshape mode.
