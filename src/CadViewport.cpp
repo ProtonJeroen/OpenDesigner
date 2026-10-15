@@ -394,6 +394,7 @@ void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
     part.max = max;
     updateFaceArrow();
     if (rotateMode_) updateRotationRings();
+    if (directMoveMode_) updateMoveAxes();
     view_->Redraw();
 }
 void CadViewport::undoPull() {
@@ -537,6 +538,87 @@ void CadViewport::showDragDimension(const QPoint& position) {
     dragDimension_->raise();
 }
 
+void CadViewport::hideMoveAxes() {
+    if (context_.IsNull()) return;
+    for (auto& axis : moveAxes_) {
+        if (!axis.IsNull()) { context_->Remove(axis, Standard_False); axis.Nullify(); }
+    }
+}
+void CadViewport::updateMoveAxes() {
+    hideMoveAxes();
+    if (!directMoveMode_ || moveIndex_ >= boxes_.size() || context_.IsNull()) return;
+    const auto& part = boxes_[moveIndex_];
+    const gp_Pnt center = gp_Pnt((part.min[0]+part.max[0])*0.5,
+        (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
+    for (int axis=0; axis<3; ++axis) {
+        const gp_Dir direction = gp_Dir(axis==0?1:0,axis==1?1:0,axis==2?1:0).Transformed(part.orientation);
+        const gp_Ax2 arrowAxis(center,direction);
+        const gp_Pnt tipBase = center.Translated(gp_Vec(direction).Multiplied(42.0));
+        BRep_Builder builder;
+        TopoDS_Compound shape;
+        builder.MakeCompound(shape);
+        builder.Add(shape,BRepPrimAPI_MakeCylinder(arrowAxis,1.7,42.0).Shape());
+        builder.Add(shape,BRepPrimAPI_MakeCone(gp_Ax2(tipBase,direction),5.0,0.0,10.0).Shape());
+        moveAxes_[axis] = new AIS_Shape(shape);
+        moveAxes_[axis]->SetColor(axis==0 ? Quantity_NOC_RED : axis==1 ? Quantity_NOC_GREEN : Quantity_NOC_BLUE1);
+        context_->Display(moveAxes_[axis],Standard_False);
+        context_->SetDisplayMode(moveAxes_[axis],AIS_Shaded,Standard_False);
+        context_->Deactivate(moveAxes_[axis]);
+    }
+    view_->Redraw();
+}
+void CadViewport::setDirectMoveMode(bool enabled) {
+    directMoveMode_ = enabled;
+    if (!enabled) hideMoveAxes();
+    else {
+        hideFaceArrow();
+        if (!context_.IsNull() && context_->NbSelected()==1) {
+            context_->InitSelected();
+            if (context_->MoreSelected()) {
+                const auto selected=context_->SelectedInteractive();
+                for (size_t i=0;i<boxes_.size();++i)
+                    if (boxes_[i].presentation==selected) { moveIndex_=i; updateMoveAxes(); break; }
+            }
+        }
+    }
+    emit statusMessage(enabled ? tr("Direct Move: click a part, then drag a colored axis.")
+                               : tr("Direct Move disabled."));
+}
+bool CadViewport::beginMoveAxisDrag(const QPoint& point) {
+    if (!directMoveMode_ || moveIndex_>=boxes_.size() || view_.IsNull()) return false;
+    const auto& part=boxes_[moveIndex_];
+    const gp_Pnt center=gp_Pnt((part.min[0]+part.max[0])*0.5,
+        (part.min[1]+part.max[1])*0.5,(part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
+    double best=12.0;
+    int hit=-1;
+    double bestDx=0.0,bestDy=0.0,bestPixels=0.0;
+    for (int axis=0;axis<3;++axis) {
+        const gp_Dir dir=gp_Dir(axis==0?1:0,axis==1?1:0,axis==2?1:0).Transformed(part.orientation);
+        const gp_Pnt tip=center.Translated(gp_Vec(dir).Multiplied(52.0));
+        Standard_Integer x0,y0,x1,y1;
+        view_->Convert(center.X(),center.Y(),center.Z(),x0,y0);
+        view_->Convert(tip.X(),tip.Y(),tip.Z(),x1,y1);
+        const double dx=x1-x0,dy=y1-y0,len2=dx*dx+dy*dy;
+        if (len2<16.0) continue;
+        const double t=std::clamp(((point.x()-x0)*dx+(point.y()-y0)*dy)/len2,0.12,1.0);
+        const double distance=std::hypot(point.x()-(x0+t*dx),point.y()-(y0+t*dy));
+        if (distance<best) { best=distance;hit=axis;bestDx=dx;bestDy=dy;bestPixels=std::sqrt(len2); }
+    }
+    if (hit<0) return false;
+    dragIndex_=moveIndex_;
+    dragAxis_=hit;
+    dragMax_=true;
+    dragMovesPart_=true;
+    dragMin_=part.min;
+    dragMaxBounds_=part.max;
+    dragStart_=point;
+    dragDistance_=0.0;
+    dragScreenX_=bestDx/bestPixels;
+    dragScreenY_=bestDy/bestPixels;
+    dragMmPerPixel_=52.0/bestPixels;
+    draggingFace_=true;
+    return true;
+}
 void CadViewport::hideRotationRings() {
     if (context_.IsNull()) return;
     for (auto& ring : rotationRings_) {
@@ -654,12 +736,24 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             rotationEditing_ = false;
             dragDimension_->hide();
         }
+        if (beginMoveAxisDrag(e->pos())) return;
         if (beginRotationDrag(e->pos())) return;
         if (beginArrowDrag(e->pos())) return;
         if ((e->modifiers() & Qt::ControlModifier) && beginFaceDrag(e->pos())) return;
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
         context_->SelectDetected();
         hideFaceArrow();
+        if (directMoveMode_) {
+            hideMoveAxes();
+            if (context_->NbSelected()==1) {
+                context_->InitSelected();
+                const auto selected=context_->SelectedInteractive();
+                for (size_t i=0;i<boxes_.size();++i)
+                    if (boxes_[i].presentation==selected) { moveIndex_=i; updateMoveAxes(); break; }
+            }
+            view_->Redraw();
+            return;
+        }
         if (rotateMode_) {
             hideRotationRings();
             if (context_->NbSelected() == 1) {
