@@ -580,7 +580,7 @@ void CadViewport::setDirectMoveMode(bool enabled) {
             if (context_->MoreSelected()) {
                 const auto selected=context_->SelectedInteractive();
                 for (size_t i=0;i<boxes_.size();++i)
-                    if (boxes_[i].presentation==selected) { moveIndex_=i; updateMoveAxes(); break; }
+                    if (boxes_[i].presentation==selected) { moveIndex_=i; rotationIndex_=i; updateMoveAxes(); updateRotationRings(); break; }
             }
         }
     }
@@ -642,6 +642,7 @@ void CadViewport::updateRotationRings() {
         rotationRings_[axis]->SetColor(axis == 0 ? Quantity_NOC_RED
             : axis == 1 ? Quantity_NOC_GREEN : Quantity_NOC_BLUE1);
         context_->Display(rotationRings_[axis], Standard_False);
+        context_->SetZLayer(rotationRings_[axis], Graphic3d_ZLayerId_Topmost);
         context_->Deactivate(rotationRings_[axis]);
     }
     view_->Redraw();
@@ -741,13 +742,16 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
         }
         if (beginMoveAxisDrag(e->pos())) return;
         if (beginRotationDrag(e->pos())) return;
-        if (beginArrowDrag(e->pos())) return;
+        if (directMoveMode_ || rotateMode_) {
+            // The combined gizmo takes precedence over the legacy face arrow.
+        } else if (beginArrowDrag(e->pos())) return;
         if ((e->modifiers() & Qt::ControlModifier) && beginFaceDrag(e->pos())) return;
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
         context_->SelectDetected();
         hideFaceArrow();
-        if (directMoveMode_) {
+        if (directMoveMode_ || rotateMode_) {
             hideMoveAxes();
+            hideRotationRings();
             if (context_->NbSelected()==1) {
                 context_->InitSelected();
                 const auto selected=context_->SelectedInteractive();
