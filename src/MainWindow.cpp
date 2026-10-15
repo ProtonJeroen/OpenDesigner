@@ -11,7 +11,7 @@
 #include <QActionGroup>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.8 (prototype)");
+    setWindowTitle("OpenDesigner 0.9 (prototype)");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     setCentralWidget(viewport_);
@@ -40,6 +40,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(pullAction, &QAction::triggered, viewport_, &CadViewport::pullSelectedFace);
     auto* movePartAction = model->addAction(tr("Move &Part Along Face..."));
     connect(movePartAction, &QAction::triggered, viewport_, &CadViewport::movePartAlongSelectedFace);
+    auto* rotatePartAction = model->addAction(tr("&Rotate Part..."));
+    connect(rotatePartAction, &QAction::triggered, viewport_, &CadViewport::rotateSelectedPart);
     auto* interactiveMove = model->addAction(tr("Interactive &Move Part Mode"));
     interactiveMove->setCheckable(true);
     connect(interactiveMove, &QAction::toggled, viewport_, &CadViewport::setMovePartMode);
@@ -61,12 +63,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.8 — interactive Move Part prototype."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.9 — Rotate Part prototype."));
     });
     auto* toolbar = addToolBar(tr("Modeling"));
     toolbar->addAction(boxAction);
     toolbar->addAction(pullAction);
     toolbar->addAction(movePartAction);
+    toolbar->addAction(rotatePartAction);
     toolbar->addAction(interactiveMove);
     toolbar->addAction(fitAction);
     toolbar->addSeparator();
