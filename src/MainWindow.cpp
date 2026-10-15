@@ -11,7 +11,7 @@
 #include <QActionGroup>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.6 (prototype)");
+    setWindowTitle("OpenDesigner 0.7 (prototype)");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     setCentralWidget(viewport_);
@@ -27,10 +27,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* exitAction = file->addAction(tr("E&xit"));
     connect(exitAction, &QAction::triggered, this, &QWidget::close);
     auto* edit = menuBar()->addMenu(tr("&Edit"));
-    auto* undoAction = edit->addAction(tr("&Undo Pull Face"));
+    auto* undoAction = edit->addAction(tr("&Undo Modeling"));
     undoAction->setShortcut(QKeySequence::Undo);
     connect(undoAction, &QAction::triggered, viewport_, &CadViewport::undoPull);
-    auto* redoAction = edit->addAction(tr("&Redo Pull Face"));
+    auto* redoAction = edit->addAction(tr("&Redo Modeling"));
     redoAction->setShortcut(QKeySequence::Redo);
     connect(redoAction, &QAction::triggered, viewport_, &CadViewport::redoPull);
     auto* model = menuBar()->addMenu(tr("&Modeling"));
@@ -38,6 +38,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(boxAction, &QAction::triggered, viewport_, &CadViewport::addBox);
     auto* pullAction = model->addAction(tr("&Pull Face..."));
     connect(pullAction, &QAction::triggered, viewport_, &CadViewport::pullSelectedFace);
+    auto* movePartAction = model->addAction(tr("Move &Part Along Face..."));
+    connect(movePartAction, &QAction::triggered, viewport_, &CadViewport::movePartAlongSelectedFace);
     auto* snapMenu = model->addMenu(tr("Face &Snapping"));
     auto* snapGroup = new QActionGroup(this);
     snapGroup->setExclusive(true);
@@ -56,11 +58,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.6 — face snapping prototype."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.7 — Move Part prototype."));
     });
     auto* toolbar = addToolBar(tr("Modeling"));
     toolbar->addAction(boxAction);
     toolbar->addAction(pullAction);
+    toolbar->addAction(movePartAction);
     toolbar->addAction(fitAction);
     toolbar->addSeparator();
     toolbar->addAction(undoAction);
