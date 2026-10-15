@@ -25,6 +25,7 @@ public:
     void setSnapStep(double stepMm);
     void setMovePartMode(bool enabled);
     void setRotateMode(bool enabled);
+    void setDirectMoveMode(bool enabled);
     void setAngleSnap(double degrees);
 signals:
     void partCreated(const QString& name);
@@ -61,6 +62,9 @@ private:
     void showDragDimension(const QPoint& position);
     void initializeViewer();
     void updateRotationRings();
+    void updateMoveAxes();
+    void hideMoveAxes();
+    bool beginMoveAxisDrag(const QPoint& point);
     void hideRotationRings();
     bool beginRotationDrag(const QPoint& point);
     void applyRotationAngle(double angleDegrees);
@@ -84,6 +88,9 @@ private:
     bool movePartMode_ = false;
     bool dragMovesPart_ = false;
     bool rotateMode_ = false;
+    bool directMoveMode_ = false;
+    size_t moveIndex_ = 0;
+    std::array<Handle(AIS_Shape), 3> moveAxes_;
     bool draggingRotation_ = false;
     bool rotationEditing_ = false;
     size_t rotationIndex_ = 0;
