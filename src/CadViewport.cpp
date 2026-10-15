@@ -67,8 +67,7 @@ void CadViewport::addBox() {
     part.presentation = new AIS_Shape(shape);
     context_->Display(part.presentation, Standard_False);
     context_->SetDisplayMode(part.presentation, AIS_Shaded, Standard_False);
-    // Display() activates whole-object selection by default. Disable it before
-    // enabling face-only selection, otherwise SelectedShape() can be a solid.
+    // Disable global object selection (mode 0) before enabling subshape mode.
     context_->Deactivate(part.presentation);
     context_->Activate(part.presentation, AIS_Shape::SelectionMode(TopAbs_FACE), Standard_False);
     boxes_.push_back(part);
@@ -86,7 +85,7 @@ void CadViewport::pullSelectedFace() {
     Handle(StdSelect_BRepOwner) faceOwner =
         Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
     if (faceOwner.IsNull()) {
-        emit statusMessage(tr("No B-Rep face owner selected."));
+        emit statusMessage(tr("No B-Rep face owner selected (check face selection mode)."));
         return;
     }
     const TopoDS_Shape faceShape = faceOwner->Shape();
@@ -162,6 +161,12 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
     if (e->button() == Qt::LeftButton && !context_.IsNull()) {
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
         context_->SelectDetected();
+        if (context_->NbSelected() == 1) {
+            const TopoDS_Shape picked = context_->SelectedShape();
+            emit statusMessage(tr("Selected shape: %1; B-Rep owner: %2")
+                .arg(picked.IsNull() ? -1 : static_cast<int>(picked.ShapeType()))
+                .arg(Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner()).IsNull() ? tr("no") : tr("yes")));
+        }
         view_->Redraw();
     }
 }
