@@ -33,7 +33,6 @@ void CadViewport::initializeViewer() {
     viewer_->SetDefaultLights();
     viewer_->SetLightOn();
     context_ = new AIS_InteractiveContext(viewer_);
-    context_->Activate(TopAbs_FACE, Standard_True);
     view_ = viewer_->CreateView();
     Handle(Aspect_NeutralWindow) window = new Aspect_NeutralWindow();
     window->SetNativeHandle(static_cast<Aspect_Drawable>(winId()));
@@ -66,7 +65,10 @@ void CadViewport::addBox() {
     part.presentation = new AIS_Shape(shape);
     context_->Display(part.presentation, Standard_False);
     context_->SetDisplayMode(part.presentation, AIS_Shaded, Standard_False);
-    context_->Activate(part.presentation, TopAbs_FACE, Standard_False);
+    // Display() activates whole-object selection by default. Disable it before
+    // enabling face-only selection, otherwise SelectedShape() can be a solid.
+    context_->Deactivate(part.presentation);
+    context_->Activate(part.presentation, AIS_Shape::SelectionMode(TopAbs_FACE), Standard_False);
     boxes_.push_back(part);
     ++partCount_;
     emit partCreated(QString("Part %1").arg(partCount_));
@@ -130,7 +132,8 @@ void CadViewport::pullSelectedFace() {
     context_->ClearSelected(Standard_False);
     partIt->presentation->SetShape(updated);
     context_->Redisplay(partIt->presentation, Standard_False);
-    context_->Activate(partIt->presentation, TopAbs_FACE, Standard_False);
+    context_->Deactivate(partIt->presentation);
+    context_->Activate(partIt->presentation, AIS_Shape::SelectionMode(TopAbs_FACE), Standard_False);
     partIt->min = nextMin;
     partIt->max = nextMax;
     view_->Redraw();
