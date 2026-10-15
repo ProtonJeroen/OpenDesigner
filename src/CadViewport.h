@@ -64,6 +64,7 @@ private:
     void hideRotationRings();
     bool beginRotationDrag(const QPoint& point);
     void applyRotationAngle(double angleDegrees);
+    double rotationCursorAngle(const QPoint& point, int axis, const gp_Trsf& orientation) const;
     Handle(Aspect_DisplayConnection) display_;
     Handle(V3d_Viewer) viewer_;
     Handle(V3d_View) view_;
