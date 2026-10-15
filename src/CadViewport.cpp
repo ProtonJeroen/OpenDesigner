@@ -682,7 +682,6 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                 Handle(AIS_InteractiveObject) selected = context_->SelectedInteractive();
                 for (size_t i = 0; i < boxes_.size(); ++i) {
                     if (boxes_[i].presentation != selected) continue;
-                    if (boxes_[i].orientation.Form() != gp_Identity) break;
                     const BRepAdaptor_Surface surf(TopoDS::Face(arrowOwner->Shape()));
                     if (surf.GetType() != GeomAbs_Plane) break;
                     const gp_Dir normal = surf.Plane().Axis().Direction();
