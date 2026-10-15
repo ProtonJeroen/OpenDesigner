@@ -224,8 +224,26 @@ bool CadViewport::beginFaceDrag(const QPoint& origin) {
     dragMaxBounds_ = boxes_[index].max;
     dragStart_ = origin;
     dragDistance_ = 0.0;
+    // Project a world-space outward axis onto screen pixels. Qt Y points down.
+    const double outward = maxSide ? 1.0 : -1.0;
+    gp_Pnt a(0.0, 0.0, 0.0);
+    gp_Pnt b(0.0, 0.0, 0.0);
+    b.SetCoord(axis + 1, outward * 100.0);
+    Standard_Integer ax, ay, bx, by;
+    view_->Convert(a.X(), a.Y(), a.Z(), ax, ay);
+    view_->Convert(b.X(), b.Y(), b.Z(), bx, by);
+    const double dx = static_cast<double>(bx - ax);
+    const double dy = static_cast<double>(by - ay);
+    const double pixels = std::hypot(dx, dy);
+    if (pixels < 2.0) {
+        emit statusMessage(tr("Face normal is nearly aligned with camera; rotate view first."));
+        return false;
+    }
+    dragScreenX_ = dx / pixels;
+    dragScreenY_ = dy / pixels;
+    dragMmPerPixel_ = 100.0 / pixels;
     draggingFace_ = true;
-    emit statusMessage(tr("Drag up/down to pull face; release to commit (1 px = 0.5 mm)."));
+    emit statusMessage(tr("Drag along the face normal; release to commit."));
     return true;
 }
 void CadViewport::mousePressEvent(QMouseEvent* e) {
@@ -251,7 +269,8 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
     if (view_.IsNull()) return;
     QPoint p = e->pos();
     if (draggingFace_) {
-        const double requested = (p.y() - dragStart_.y()) * 0.5;
+        const double requested = ((p.x() - dragStart_.x()) * dragScreenX_
+                                + (p.y() - dragStart_.y()) * dragScreenY_) * dragMmPerPixel_;
         auto min = dragMin_;
         auto max = dragMaxBounds_;
         if (dragMax_) max[dragAxis_] += requested;
