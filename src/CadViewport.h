@@ -61,5 +61,7 @@ private:
     QPoint dragStart_;
     std::array<double, 3> dragMin_{}, dragMaxBounds_{};
     double dragDistance_ = 0.0;
+    double dragScreenX_ = 0.0, dragScreenY_ = 0.0;
+    double dragMmPerPixel_ = 0.5;
     int partCount_ = 0;
 };
