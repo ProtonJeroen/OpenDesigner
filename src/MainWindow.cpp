@@ -11,7 +11,7 @@
 #include <QActionGroup>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.7 (prototype)");
+    setWindowTitle("OpenDesigner 0.8 (prototype)");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     setCentralWidget(viewport_);
@@ -40,6 +40,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(pullAction, &QAction::triggered, viewport_, &CadViewport::pullSelectedFace);
     auto* movePartAction = model->addAction(tr("Move &Part Along Face..."));
     connect(movePartAction, &QAction::triggered, viewport_, &CadViewport::movePartAlongSelectedFace);
+    auto* interactiveMove = model->addAction(tr("Interactive &Move Part Mode"));
+    interactiveMove->setCheckable(true);
+    connect(interactiveMove, &QAction::toggled, viewport_, &CadViewport::setMovePartMode);
     auto* snapMenu = model->addMenu(tr("Face &Snapping"));
     auto* snapGroup = new QActionGroup(this);
     snapGroup->setExclusive(true);
@@ -58,12 +61,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.7 — Move Part prototype."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.8 — interactive Move Part prototype."));
     });
     auto* toolbar = addToolBar(tr("Modeling"));
     toolbar->addAction(boxAction);
     toolbar->addAction(pullAction);
     toolbar->addAction(movePartAction);
+    toolbar->addAction(interactiveMove);
     toolbar->addAction(fitAction);
     toolbar->addSeparator();
     toolbar->addAction(undoAction);
@@ -76,5 +80,5 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(viewport_, &CadViewport::statusMessage, this, [this](const QString& msg) {
         statusBar()->showMessage(msg, 5000);
     });
-    statusBar()->showMessage(tr("Left: select face | Drag orange arrow or Ctrl+left drag: pull face | Shift during drag: free movement | Middle: orbit | Shift+middle: pan | Wheel: zoom"));
+    statusBar()->showMessage(tr("Left: select face | Drag orange arrow: Pull Face / Move Part (toggle mode) | Shift during drag: free movement | Middle: orbit | Shift+middle: pan | Wheel: zoom"));
 }

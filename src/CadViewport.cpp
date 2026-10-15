@@ -52,7 +52,11 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
         if (last.partIndex != dragIndex_) { dragDimension_->hide(); dimensionEditing_ = false; return; }
         auto min = last.beforeMin;
         auto max = last.beforeMax;
-        if (dragMax_) max[dragAxis_] += distance;
+        if (dragMovesPart_) {
+            const double delta = (dragMax_ ? 1.0 : -1.0) * distance;
+            min[dragAxis_] += delta;
+            max[dragAxis_] += delta;
+        } else if (dragMax_) max[dragAxis_] += distance;
         else min[dragAxis_] -= distance;
         if (max[dragAxis_] - min[dragAxis_] <= 0.001) {
             emit statusMessage(tr("Distance would collapse or invert the box."));
@@ -385,8 +389,11 @@ bool CadViewport::beginFaceDrag(const QPoint& origin) {
     dragScreenX_ = dx / pixels;
     dragScreenY_ = dy / pixels;
     dragMmPerPixel_ = 100.0 / pixels;
+    dragMovesPart_ = movePartMode_;
     draggingFace_ = true;
-    emit statusMessage(tr("Drag along the face normal; release to commit."));
+    emit statusMessage(dragMovesPart_
+        ? tr("Drag to move the entire part along the face normal.")
+        : tr("Drag along the face normal; release to commit."));
     return true;
 }
 bool CadViewport::beginArrowDrag(const QPoint& origin) {
@@ -426,8 +433,11 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
     dragScreenX_ = dx / pixels;
     dragScreenY_ = dy / pixels;
     dragMmPerPixel_ = 31.0 / pixels;
+    dragMovesPart_ = movePartMode_;
     draggingFace_ = true;
-    emit statusMessage(tr("Drag arrow along face normal; release to commit."));
+    emit statusMessage(dragMovesPart_
+        ? tr("Drag arrow to move the entire part.")
+        : tr("Drag arrow along face normal; release to commit."));
     return true;
 }
 void CadViewport::showDragDimension(const QPoint& position) {
@@ -491,6 +501,12 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
         view_->Redraw();
     }
 }
+void CadViewport::setMovePartMode(bool enabled) {
+    movePartMode_ = enabled;
+    emit statusMessage(enabled
+        ? tr("Move Part mode: select a face, then drag its orange arrow.")
+        : tr("Pull Face mode: select a face, then drag its orange arrow."));
+}
 void CadViewport::setSnapStep(double stepMm) {
     snapStepMm_ = stepMm;
     emit statusMessage(stepMm > 0.0
@@ -509,13 +525,19 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
             : rawDistance;
         auto min = dragMin_;
         auto max = dragMaxBounds_;
-        if (dragMax_) max[dragAxis_] += requested;
+        if (dragMovesPart_) {
+            const double delta = (dragMax_ ? 1.0 : -1.0) * requested;
+            min[dragAxis_] += delta;
+            max[dragAxis_] += delta;
+        } else if (dragMax_) max[dragAxis_] += requested;
         else min[dragAxis_] -= requested;
         if (max[dragAxis_] - min[dragAxis_] > 0.001
             && std::abs(requested - dragDistance_) > 0.0001) {
             dragDistance_ = requested;
             applyBoxBounds(dragIndex_, min, max);
-            emit statusMessage(tr("Face drag: %1 mm").arg(dragDistance_, 0, 'f', 1));
+            emit statusMessage(tr("%1: %2 mm")
+                .arg(dragMovesPart_ ? tr("Move Part") : tr("Pull Face"))
+                .arg(dragDistance_, 0, 'f', 1));
             showDragDimension(p);
         }
     } else if (rotating_) view_->Rotation(p.x(), p.y());
@@ -535,7 +557,9 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     showDragDimension(e->pos());
     dragDimension_->setFocus();
     dragDimension_->selectAll();
-    emit statusMessage(tr("Face dragged %1 mm. Type exact mm and press Enter, or Esc to keep.").arg(dragDistance_, 0, 'f', 1));
+    emit statusMessage(tr("%1: %2 mm. Type exact mm and press Enter, or Esc to keep.")
+        .arg(dragMovesPart_ ? tr("Move Part") : tr("Pull Face"))
+        .arg(dragDistance_, 0, 'f', 1));
 }
 void CadViewport::wheelEvent(QWheelEvent* e) {
     if (view_.IsNull()) return;
