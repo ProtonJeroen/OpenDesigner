@@ -4,6 +4,7 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [develop, main]
+  workflow_dispatch:
 jobs:
   linux:
     runs-on: ubuntu-24.04
@@ -17,3 +18,21 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build
+      - name: Stage Linux executable
+        run: |
+          mkdir -p dist/OpenDesigner
+          cp build/OpenDesigner dist/OpenDesigner/
+          cat > dist/OpenDesigner/README.txt <<'EOF'
+          OpenDesigner v0.1.1 Linux prototype
+          This is an unbundled executable, NOT a standalone AppImage.
+          Requires compatible Qt 6, Open CASCADE and graphics runtime libraries.
+          On Ubuntu 24.04 the build dependencies from .github/workflows/build.yml
+          provide the required development/runtime libraries.
+          Run: ./OpenDesigner
+          EOF
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenDesigner-linux-x86_64-prototype
+          path: dist/OpenDesigner/
+          if-no-files-found: error
