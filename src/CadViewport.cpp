@@ -649,7 +649,7 @@ void CadViewport::updateRotationRings() {
         const gp_Pnt arcStart = ElCLib::Value(start,circle);
         const gp_Pnt arcMid = ElCLib::Value((start+finish)*0.5,circle);
         const gp_Pnt arcEnd = ElCLib::Value(finish,circle);
-        const gp_Vec tangent = gp_Vec(ElCLib::D1(finish,circle));
+        const gp_Vec tangent(ElCLib::Value(finish-0.01,circle),arcEnd);
         BRep_Builder builder;
         TopoDS_Compound arrow;
         builder.MakeCompound(arrow);
