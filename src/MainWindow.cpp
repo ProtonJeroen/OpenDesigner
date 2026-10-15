@@ -11,7 +11,7 @@
 #include <QActionGroup>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.12 (prototype)");
+    setWindowTitle("OpenDesigner 0.13 (prototype)");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     setCentralWidget(viewport_);
@@ -48,6 +48,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* interactiveRotate = model->addAction(tr("Interactive &Rotate Part Mode"));
     interactiveRotate->setCheckable(true);
     connect(interactiveRotate, &QAction::toggled, viewport_, &CadViewport::setRotateMode);
+    auto* directMove = model->addAction(tr("Direct Move Part Mode"));
+    directMove->setCheckable(true);
+    connect(directMove, &QAction::toggled, viewport_, &CadViewport::setDirectMoveMode);
     auto* angleMenu = model->addMenu(tr("Angle Snapping"));
     auto* angleGroup = new QActionGroup(this);
     angleGroup->setExclusive(true);
@@ -78,7 +81,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.12 — Interactive Rotate Part prototype."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.13 — Interactive Rotate Part prototype."));
     });
     auto* toolbar = addToolBar(tr("Modeling"));
     toolbar->addAction(boxAction);
@@ -87,6 +90,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     toolbar->addAction(rotatePartAction);
     toolbar->addAction(interactiveMove);
     toolbar->addAction(interactiveRotate);
+    toolbar->addAction(directMove);
     toolbar->addAction(fitAction);
     toolbar->addSeparator();
     toolbar->addAction(undoAction);
