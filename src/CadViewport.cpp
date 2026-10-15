@@ -399,6 +399,7 @@ void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
     part.min = min;
     part.max = max;
     updateFaceArrow();
+    if (rotateMode_ && !draggingRotation_) updateRotationRings();
     view_->Redraw();
 }
 void CadViewport::undoPull() {
@@ -758,6 +759,7 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
                               rotationBefore_,part.orientation});
         redoStack_.clear();
         rotationEditing_ = true;
+        updateRotationRings();
         dragDimension_->setText(QLocale().toString(rotationAngle_,'f',2));
         dragDimension_->setFocus();
         dragDimension_->selectAll();
