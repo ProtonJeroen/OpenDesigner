@@ -191,12 +191,50 @@ void CadViewport::redoPull() {
 void CadViewport::fitAll() {
     if (!view_.IsNull()) { view_->FitAll(0.01, Standard_False); view_->ZFitAll(); view_->Redraw(); }
 }
+bool CadViewport::beginFaceDrag(const QPoint& origin) {
+    if (context_.IsNull()) return false;
+    context_->MoveTo(origin.x(), origin.y(), view_, Standard_False);
+    context_->SelectDetected(Standard_False);
+    if (context_->NbSelected() != 1) return false;
+    context_->InitSelected();
+    if (!context_->MoreSelected()) return false;
+    Handle(StdSelect_BRepOwner) owner =
+        Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
+    if (owner.IsNull() || owner->Shape().IsNull()
+        || owner->Shape().ShapeType() != TopAbs_FACE) return false;
+    Handle(AIS_InteractiveObject) selected = context_->SelectedInteractive();
+    size_t index = 0;
+    while (index < boxes_.size() && boxes_[index].presentation != selected) ++index;
+    if (index == boxes_.size()) return false;
+    const BRepAdaptor_Surface surface(TopoDS::Face(owner->Shape()));
+    if (surface.GetType() != GeomAbs_Plane) return false;
+    const gp_Dir normal = surface.Plane().Axis().Direction();
+    const double n[3] = {normal.X(), normal.Y(), normal.Z()};
+    int axis = 0;
+    for (int i = 1; i < 3; ++i)
+        if (std::abs(n[i]) > std::abs(n[axis])) axis = i;
+    if (std::abs(n[axis]) < 0.999) return false;
+    const double position = surface.Plane().Location().Coord(axis + 1);
+    const bool maxSide = std::abs(position - boxes_[index].max[axis]) < 0.001;
+    if (!maxSide && std::abs(position - boxes_[index].min[axis]) >= 0.001) return false;
+    dragIndex_ = index;
+    dragAxis_ = axis;
+    dragMax_ = maxSide;
+    dragMin_ = boxes_[index].min;
+    dragMaxBounds_ = boxes_[index].max;
+    dragStart_ = origin;
+    dragDistance_ = 0.0;
+    draggingFace_ = true;
+    emit statusMessage(tr("Drag up/down to pull face; release to commit (1 px = 0.5 mm)."));
+    return true;
+}
 void CadViewport::mousePressEvent(QMouseEvent* e) {
     previous_ = e->pos();
     rotating_ = e->button() == Qt::MiddleButton && !(e->modifiers() & Qt::ShiftModifier);
     panning_ = e->button() == Qt::MiddleButton && (e->modifiers() & Qt::ShiftModifier);
     if (rotating_ && !view_.IsNull()) view_->StartRotation(previous_.x(), previous_.y());
     if (e->button() == Qt::LeftButton && !context_.IsNull()) {
+        if ((e->modifiers() & Qt::ControlModifier) && beginFaceDrag(e->pos())) return;
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
         context_->SelectDetected();
         if (context_->NbSelected() == 1) {
@@ -212,10 +250,32 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
 void CadViewport::mouseMoveEvent(QMouseEvent* e) {
     if (view_.IsNull()) return;
     QPoint p = e->pos();
-    if (rotating_) view_->Rotation(p.x(), p.y());
+    if (draggingFace_) {
+        const double requested = (dragStart_.y() - p.y()) * 0.5;
+        auto min = dragMin_;
+        auto max = dragMaxBounds_;
+        if (dragMax_) max[dragAxis_] += requested;
+        else min[dragAxis_] -= requested;
+        if (max[dragAxis_] - min[dragAxis_] > 0.001
+            && std::abs(requested - dragDistance_) > 0.0001) {
+            dragDistance_ = requested;
+            applyBoxBounds(dragIndex_, min, max);
+            emit statusMessage(tr("Face drag: %1 mm").arg(dragDistance_, 0, 'f', 1));
+        }
+    } else if (rotating_) view_->Rotation(p.x(), p.y());
     else if (panning_) view_->Pan(p.x() - previous_.x(), previous_.y() - p.y());
     else if (!context_.IsNull()) context_->MoveTo(p.x(), p.y(), view_, Standard_True);
     previous_ = p;
+}
+void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
+    if (e->button() == Qt::MiddleButton) { rotating_ = false; panning_ = false; }
+    if (e->button() != Qt::LeftButton || !draggingFace_) return;
+    draggingFace_ = false;
+    if (std::abs(dragDistance_) < 0.0001) return;
+    const auto& part = boxes_[dragIndex_];
+    undoStack_.push_back({dragIndex_, dragMin_, dragMaxBounds_, part.min, part.max});
+    redoStack_.clear();
+    emit statusMessage(tr("Face dragged %1 mm (Ctrl+Z to undo).").arg(dragDistance_, 0, 'f', 1));
 }
 void CadViewport::wheelEvent(QWheelEvent* e) {
     if (view_.IsNull()) return;
