@@ -19,6 +19,7 @@ public:
     void pullSelectedFace();
     void undoPull();
     void redoPull();
+    void setSnapStep(double stepMm);
 signals:
     void partCreated(const QString& name);
     void statusMessage(const QString& message);
@@ -75,5 +76,6 @@ private:
     double dragDistance_ = 0.0;
     double dragScreenX_ = 0.0, dragScreenY_ = 0.0;
     double dragMmPerPixel_ = 0.5;
+    double snapStepMm_ = 1.0;
     int partCount_ = 0;
 };

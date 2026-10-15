@@ -435,12 +435,22 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
         view_->Redraw();
     }
 }
+void CadViewport::setSnapStep(double stepMm) {
+    snapStepMm_ = stepMm;
+    emit statusMessage(stepMm > 0.0
+        ? tr("Face snapping: %1 mm (hold Shift to bypass).").arg(stepMm)
+        : tr("Face snapping disabled."));
+}
 void CadViewport::mouseMoveEvent(QMouseEvent* e) {
     if (view_.IsNull()) return;
     QPoint p = e->pos();
     if (draggingFace_) {
-        const double requested = ((p.x() - dragStart_.x()) * dragScreenX_
-                                + (p.y() - dragStart_.y()) * dragScreenY_) * dragMmPerPixel_;
+        const double rawDistance = ((p.x() - dragStart_.x()) * dragScreenX_
+                                  + (p.y() - dragStart_.y()) * dragScreenY_) * dragMmPerPixel_;
+        const bool snapping = snapStepMm_ > 0.0 && !(e->modifiers() & Qt::ShiftModifier);
+        const double requested = snapping
+            ? std::round(rawDistance / snapStepMm_) * snapStepMm_
+            : rawDistance;
         auto min = dragMin_;
         auto max = dragMaxBounds_;
         if (dragMax_) max[dragAxis_] += requested;
