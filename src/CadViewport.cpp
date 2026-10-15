@@ -194,7 +194,7 @@ void CadViewport::fitAll() {
 bool CadViewport::beginFaceDrag(const QPoint& origin) {
     if (context_.IsNull()) return false;
     context_->MoveTo(origin.x(), origin.y(), view_, Standard_False);
-    context_->SelectDetected(Standard_False);
+    context_->SelectDetected(AIS_SelectionScheme_Replace);
     if (context_->NbSelected() != 1) return false;
     context_->InitSelected();
     if (!context_->MoreSelected()) return false;
