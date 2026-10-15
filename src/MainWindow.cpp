@@ -10,7 +10,7 @@
 #include <QMessageBox>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.4 (prototype)");
+    setWindowTitle("OpenDesigner 0.5 (prototype)");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     setCentralWidget(viewport_);
@@ -42,7 +42,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.4 — interactive face manipulator prototype."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.5 — direct dimensions prototype."));
     });
     auto* toolbar = addToolBar(tr("Modeling"));
     toolbar->addAction(boxAction);
