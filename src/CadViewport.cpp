@@ -251,7 +251,7 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
     if (view_.IsNull()) return;
     QPoint p = e->pos();
     if (draggingFace_) {
-        const double requested = (dragStart_.y() - p.y()) * 0.5;
+        const double requested = (p.y() - dragStart_.y()) * 0.5;
         auto min = dragMin_;
         auto max = dragMaxBounds_;
         if (dragMax_) max[dragAxis_] += requested;
