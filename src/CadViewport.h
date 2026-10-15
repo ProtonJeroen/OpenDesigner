@@ -27,6 +27,7 @@ protected:
     void resizeEvent(QResizeEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
+    void mouseReleaseEvent(QMouseEvent*) override;
     void wheelEvent(QWheelEvent*) override;
 private:
     struct BoxPart {
@@ -41,6 +42,7 @@ private:
     };
     void applyBoxBounds(size_t index, const std::array<double, 3>& min,
                         const std::array<double, 3>& max);
+    bool beginFaceDrag(const QPoint& origin);
     void initializeViewer();
     Handle(Aspect_DisplayConnection) display_;
     Handle(V3d_Viewer) viewer_;
@@ -52,5 +54,12 @@ private:
     QPoint previous_;
     bool rotating_ = false;
     bool panning_ = false;
+    bool draggingFace_ = false;
+    size_t dragIndex_ = 0;
+    int dragAxis_ = 0;
+    bool dragMax_ = true;
+    QPoint dragStart_;
+    std::array<double, 3> dragMin_{}, dragMaxBounds_{};
+    double dragDistance_ = 0.0;
     int partCount_ = 0;
 };
