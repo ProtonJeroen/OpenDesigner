@@ -10,7 +10,7 @@
 #include <QMessageBox>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.2 (prototype)");
+    setWindowTitle("OpenDesigner 0.3 (prototype)");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     setCentralWidget(viewport_);
@@ -59,5 +59,5 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(viewport_, &CadViewport::statusMessage, this, [this](const QString& msg) {
         statusBar()->showMessage(msg, 5000);
     });
-    statusBar()->showMessage(tr("Left: select face | Middle: orbit | Shift+middle: pan | Wheel: zoom"));
+    statusBar()->showMessage(tr("Left: select face | Ctrl+left drag: pull face | Middle: orbit | Shift+middle: pan | Wheel: zoom"));
 }
