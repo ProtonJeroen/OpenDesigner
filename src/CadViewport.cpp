@@ -555,7 +555,7 @@ void CadViewport::updateRotationRings() {
     const double radius = 0.65 * std::max({part.max[0]-part.min[0],
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
     for (int axis = 0; axis < 3; ++axis) {
-        const gp_Dir dir = axis == 0 ? gp_Dir(1,0,0) : axis == 1 ? gp_Dir(0,1,0) : gp_Dir(0,0,1);
+        const gp_Dir dir = gp_Dir(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0).Transformed(part.orientation);
         rotationRings_[axis] = new AIS_Shape(BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(center,dir),radius)).Shape());
         rotationRings_[axis]->SetColor(axis == 0 ? Quantity_NOC_RED
             : axis == 1 ? Quantity_NOC_GREEN : Quantity_NOC_BLUE1);
@@ -574,7 +574,7 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
     double best = 12.0;
     int axisHit = -1;
     for (int axis = 0; axis < 3; ++axis) {
-        const gp_Dir dir = axis == 0 ? gp_Dir(1,0,0) : axis == 1 ? gp_Dir(0,1,0) : gp_Dir(0,0,1);
+        const gp_Dir dir = gp_Dir(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0).Transformed(part.orientation);
         const gp_Circ circle(gp_Ax2(center,dir),radius);
         for (int i = 0; i < 96; ++i) {
             const gp_Pnt world = ElCLib::Value(i * 2.0 * 3.14159265358979323846 / 96.0, circle);
@@ -589,17 +589,40 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
     rotationBefore_ = part.orientation;
     rotationAngle_ = 0.0;
     dragStart_ = point;
+    rotationStartAngle_ = rotationCursorAngle(point, rotationAxis_, rotationBefore_);
+    rotationPreviousAngle_ = rotationStartAngle_;
+    rotationAccumulatedAngle_ = 0.0;
     draggingRotation_ = true;
     hideFaceArrow();
     return true;
+}
+double CadViewport::rotationCursorAngle(const QPoint& point, int axis, const gp_Trsf& orientation) const {
+    const auto& part = boxes_[rotationIndex_];
+    const gp_Pnt center = gp_Pnt((part.min[0]+part.max[0])*0.5,
+        (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(orientation);
+    const double radius = 0.65 * std::max({part.max[0]-part.min[0],
+        part.max[1]-part.min[1], part.max[2]-part.min[2]});
+    const gp_Dir dir = gp_Dir(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0).Transformed(orientation);
+    const gp_Circ circle(gp_Ax2(center,dir),radius);
+    double best = 1e100;
+    double result = 0.0;
+    constexpr int samples = 360;
+    for (int i=0; i<samples; ++i) {
+        const double angle = i * 2.0 * 3.14159265358979323846 / samples;
+        const gp_Pnt world = ElCLib::Value(angle,circle);
+        Standard_Integer x,y;
+        view_->Convert(world.X(),world.Y(),world.Z(),x,y);
+        const double d = std::hypot(point.x()-x,point.y()-y);
+        if (d < best) { best=d; result=angle; }
+    }
+    return result;
 }
 void CadViewport::applyRotationAngle(double degrees) {
     if (rotationIndex_ >= boxes_.size()) return;
     auto& part = boxes_[rotationIndex_];
     const gp_Pnt center = gp_Pnt((part.min[0]+part.max[0])*0.5,
         (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(rotationBefore_);
-    const gp_Dir dir = rotationAxis_ == 0 ? gp_Dir(1,0,0)
-        : rotationAxis_ == 1 ? gp_Dir(0,1,0) : gp_Dir(0,0,1);
+    const gp_Dir dir = gp_Dir(rotationAxis_ == 0 ? 1 : 0, rotationAxis_ == 1 ? 1 : 0, rotationAxis_ == 2 ? 1 : 0).Transformed(rotationBefore_);
     gp_Trsf rotation;
     rotation.SetRotation(gp_Ax1(center,dir),degrees * 3.14159265358979323846 / 180.0);
     applyPartState(rotationIndex_,part.min,part.max,rotation * rotationBefore_);
@@ -710,7 +733,14 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
     if (view_.IsNull()) return;
     QPoint p = e->pos();
     if (draggingRotation_) {
-        const double raw = (p.x()-dragStart_.x()) * 0.5;
+        const double angle = rotationCursorAngle(p, rotationAxis_, rotationBefore_);
+        double delta = angle - rotationPreviousAngle_;
+        constexpr double pi = 3.14159265358979323846;
+        while (delta > pi) delta -= 2.0*pi;
+        while (delta < -pi) delta += 2.0*pi;
+        rotationPreviousAngle_ = angle;
+        rotationAccumulatedAngle_ += delta;
+        const double raw = rotationAccumulatedAngle_ * 180.0 / pi;
         const double degrees = rotationSnap_ > 0.0 && !(e->modifiers() & Qt::ShiftModifier)
             ? std::round(raw/rotationSnap_) * rotationSnap_ : raw;
         if (std::abs(degrees-rotationAngle_) > 0.0001) {
