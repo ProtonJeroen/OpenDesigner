@@ -4,6 +4,11 @@
 #include <QPaintEngine>
 #include <QResizeEvent>
 #include <QInputDialog>
+#include <QLineEdit>
+#include <QDoubleValidator>
+#include <QShortcut>
+#include <QLocale>
+#include <algorithm>
 #include <Aspect_NeutralWindow.hxx>
 #include <OpenGl_GraphicDriver.hxx>
 #include <AIS_Shape.hxx>
@@ -32,6 +37,41 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_NoSystemBackground);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
+    dragDimension_ = new QLineEdit(this);
+    dragDimension_->setFixedWidth(112);
+    dragDimension_->setAlignment(Qt::AlignCenter);
+    dragDimension_->setValidator(new QDoubleValidator(-100000.0, 100000.0, 2, dragDimension_));
+    dragDimension_->hide();
+    connect(dragDimension_, &QLineEdit::returnPressed, this, [this]() {
+        if (!dimensionEditing_) return;
+        bool ok = false;
+        const double distance = QLocale().toDouble(dragDimension_->text(), &ok);
+        if (!ok) { emit statusMessage(tr("Enter a valid distance in mm.")); return; }
+        if (undoStack_.empty()) { dragDimension_->hide(); dimensionEditing_ = false; return; }
+        auto& last = undoStack_.back();
+        if (last.partIndex != dragIndex_) { dragDimension_->hide(); dimensionEditing_ = false; return; }
+        auto min = last.beforeMin;
+        auto max = last.beforeMax;
+        if (dragMax_) max[dragAxis_] += distance;
+        else min[dragAxis_] -= distance;
+        if (max[dragAxis_] - min[dragAxis_] <= 0.001) {
+            emit statusMessage(tr("Distance would collapse or invert the box."));
+            return;
+        }
+        applyBoxBounds(last.partIndex, min, max);
+        last.afterMin = min;
+        last.afterMax = max;
+        dragDimension_->hide();
+        dimensionEditing_ = false;
+        setFocus();
+        emit statusMessage(tr("Exact face distance: %1 mm").arg(distance));
+    });
+    auto* cancelDimension = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    connect(cancelDimension, &QShortcut::activated, this, [this]() {
+        dragDimension_->hide();
+        dimensionEditing_ = false;
+        setFocus();
+    });
 }
 QPaintEngine* CadViewport::paintEngine() const { return nullptr; }
 void CadViewport::initializeViewer() {
@@ -334,12 +374,22 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
     emit statusMessage(tr("Drag arrow along face normal; release to commit."));
     return true;
 }
+void CadViewport::showDragDimension(const QPoint& position) {
+    if (!dragDimension_) return;
+    dragDimension_->setText(QLocale().toString(dragDistance_, 'f', 2));
+    dragDimension_->move(
+        std::clamp(position.x() + 16, 0, std::max(0, width() - dragDimension_->width())),
+        std::clamp(position.y() - 36, 0, std::max(0, height() - dragDimension_->height())));
+    dragDimension_->show();
+    dragDimension_->raise();
+}
 void CadViewport::mousePressEvent(QMouseEvent* e) {
     previous_ = e->pos();
     rotating_ = e->button() == Qt::MiddleButton && !(e->modifiers() & Qt::ShiftModifier);
     panning_ = e->button() == Qt::MiddleButton && (e->modifiers() & Qt::ShiftModifier);
     if (rotating_ && !view_.IsNull()) view_->StartRotation(previous_.x(), previous_.y());
     if (e->button() == Qt::LeftButton && !context_.IsNull()) {
+        if (dimensionEditing_) { dimensionEditing_ = false; dragDimension_->hide(); }
         if (beginArrowDrag(e->pos())) return;
         if ((e->modifiers() & Qt::ControlModifier) && beginFaceDrag(e->pos())) return;
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
@@ -400,6 +450,7 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
             dragDistance_ = requested;
             applyBoxBounds(dragIndex_, min, max);
             emit statusMessage(tr("Face drag: %1 mm").arg(dragDistance_, 0, 'f', 1));
+            showDragDimension(p);
         }
     } else if (rotating_) view_->Rotation(p.x(), p.y());
     else if (panning_) view_->Pan(p.x() - previous_.x(), previous_.y() - p.y());
@@ -410,11 +461,15 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     if (e->button() == Qt::MiddleButton) { rotating_ = false; panning_ = false; }
     if (e->button() != Qt::LeftButton || !draggingFace_) return;
     draggingFace_ = false;
-    if (std::abs(dragDistance_) < 0.0001) return;
+    if (std::abs(dragDistance_) < 0.0001) { dragDimension_->hide(); return; }
     const auto& part = boxes_[dragIndex_];
     undoStack_.push_back({dragIndex_, dragMin_, dragMaxBounds_, part.min, part.max});
     redoStack_.clear();
-    emit statusMessage(tr("Face dragged %1 mm (Ctrl+Z to undo).").arg(dragDistance_, 0, 'f', 1));
+    dimensionEditing_ = true;
+    showDragDimension(e->pos());
+    dragDimension_->setFocus();
+    dragDimension_->selectAll();
+    emit statusMessage(tr("Face dragged %1 mm. Type exact mm and press Enter, or Esc to keep.").arg(dragDistance_, 0, 'f', 1));
 }
 void CadViewport::wheelEvent(QWheelEvent* e) {
     if (view_.IsNull()) return;
