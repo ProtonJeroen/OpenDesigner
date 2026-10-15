@@ -125,6 +125,7 @@ void CadViewport::hideFaceArrow() {
 void CadViewport::updateFaceArrow() {
     if (!arrowVisible_ || arrowPartIndex_ >= boxes_.size() || context_.IsNull()) return;
     const auto& part = boxes_[arrowPartIndex_];
+    if (part.orientation.Form() != gp_Identity) return false;
     gp_Pnt center(
         (part.min[0] + part.max[0]) * 0.5,
         (part.min[1] + part.max[1]) * 0.5,
@@ -206,6 +207,10 @@ void CadViewport::pullSelectedFace() {
     }
     if (partIt == boxes_.end()) {
         emit statusMessage(tr("This face is not part of an editable box."));
+        return;
+    }
+    if (partIt->orientation.Form() != gp_Identity) {
+        emit statusMessage(tr("Pull Face on rotated parts is not supported yet; undo rotation first."));
         return;
     }
     const BRepAdaptor_Surface surface(TopoDS::Face(faceShape));
@@ -316,6 +321,10 @@ void CadViewport::movePartAlongSelectedFace() {
     while (index < boxes_.size() && boxes_[index].presentation != selected) ++index;
     if (index == boxes_.size()) {
         emit statusMessage(tr("Selected face does not belong to an editable box."));
+        return;
+    }
+    if (boxes_[index].orientation.Form() != gp_Identity) {
+        emit statusMessage(tr("Face-based editing on rotated parts is not supported yet."));
         return;
     }
     const BRepAdaptor_Surface surface(TopoDS::Face(owner->Shape()));
@@ -534,6 +543,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                 Handle(AIS_InteractiveObject) selected = context_->SelectedInteractive();
                 for (size_t i = 0; i < boxes_.size(); ++i) {
                     if (boxes_[i].presentation != selected) continue;
+                    if (boxes_[i].orientation.Form() != gp_Identity) break;
                     const BRepAdaptor_Surface surf(TopoDS::Face(arrowOwner->Shape()));
                     if (surf.GetType() != GeomAbs_Plane) break;
                     const gp_Dir normal = surf.Plane().Axis().Direction();
