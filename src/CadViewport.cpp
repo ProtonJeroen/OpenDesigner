@@ -17,6 +17,9 @@
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakeCone.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <gp_Circ.hxx>
+#include <ElCLib.hxx>
 #include <BRep_Builder.hxx>
 #include <TopoDS_Compound.hxx>
 #include <gp_Ax2.hxx>
@@ -50,6 +53,18 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     dragDimension_->setValidator(new QDoubleValidator(-100000.0, 100000.0, 2, dragDimension_));
     dragDimension_->hide();
     connect(dragDimension_, &QLineEdit::returnPressed, this, [this]() {
+        if (rotationEditing_) {
+            bool ok = false;
+            const double angle = QLocale().toDouble(dragDimension_->text(), &ok);
+            if (!ok) return;
+            applyRotationAngle(angle);
+            if (!undoStack_.empty()) undoStack_.back().afterOrientation = boxes_[rotationIndex_].orientation;
+            rotationEditing_ = false;
+            dragDimension_->hide();
+            updateRotationRings();
+            setFocus();
+            return;
+        }
         if (!dimensionEditing_) return;
         bool ok = false;
         const double distance = QLocale().toDouble(dragDimension_->text(), &ok);
@@ -81,6 +96,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     connect(cancelDimension, &QShortcut::activated, this, [this]() {
         dragDimension_->hide();
         dimensionEditing_ = false;
+        rotationEditing_ = false;
         setFocus();
     });
 }
@@ -384,6 +400,7 @@ void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
     part.min = min;
     part.max = max;
     updateFaceArrow();
+    if (rotateMode_ && !draggingRotation_) updateRotationRings();
     view_->Redraw();
 }
 void CadViewport::undoPull() {
@@ -522,18 +539,120 @@ void CadViewport::showDragDimension(const QPoint& position) {
     dragDimension_->show();
     dragDimension_->raise();
 }
+
+void CadViewport::hideRotationRings() {
+    if (context_.IsNull()) return;
+    for (auto& ring : rotationRings_) {
+        if (!ring.IsNull()) { context_->Remove(ring, Standard_False); ring.Nullify(); }
+    }
+}
+void CadViewport::updateRotationRings() {
+    hideRotationRings();
+    if (!rotateMode_ || rotationIndex_ >= boxes_.size() || context_.IsNull()) return;
+    const auto& part = boxes_[rotationIndex_];
+    const gp_Pnt center = gp_Pnt((part.min[0]+part.max[0])*0.5,
+        (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
+    const double radius = 0.65 * std::max({part.max[0]-part.min[0],
+        part.max[1]-part.min[1], part.max[2]-part.min[2]});
+    for (int axis = 0; axis < 3; ++axis) {
+        const gp_Dir dir = axis == 0 ? gp_Dir(1,0,0) : axis == 1 ? gp_Dir(0,1,0) : gp_Dir(0,0,1);
+        rotationRings_[axis] = new AIS_Shape(BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(center,dir),radius)).Shape());
+        rotationRings_[axis]->SetColor(axis == 0 ? Quantity_NOC_RED
+            : axis == 1 ? Quantity_NOC_GREEN : Quantity_NOC_BLUE1);
+        context_->Display(rotationRings_[axis], Standard_False);
+        context_->Deactivate(rotationRings_[axis]);
+    }
+    view_->Redraw();
+}
+bool CadViewport::beginRotationDrag(const QPoint& point) {
+    if (!rotateMode_ || rotationIndex_ >= boxes_.size() || view_.IsNull()) return false;
+    const auto& part = boxes_[rotationIndex_];
+    const gp_Pnt center = gp_Pnt((part.min[0]+part.max[0])*0.5,
+        (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
+    const double radius = 0.65 * std::max({part.max[0]-part.min[0],
+        part.max[1]-part.min[1], part.max[2]-part.min[2]});
+    double best = 12.0;
+    int axisHit = -1;
+    for (int axis = 0; axis < 3; ++axis) {
+        const gp_Dir dir = axis == 0 ? gp_Dir(1,0,0) : axis == 1 ? gp_Dir(0,1,0) : gp_Dir(0,0,1);
+        const gp_Circ circle(gp_Ax2(center,dir),radius);
+        for (int i = 0; i < 96; ++i) {
+            const gp_Pnt world = ElCLib::Value(i * 2.0 * 3.14159265358979323846 / 96.0, circle);
+            Standard_Integer x,y;
+            view_->Convert(world.X(),world.Y(),world.Z(),x,y);
+            const double distance = std::hypot(point.x()-x,point.y()-y);
+            if (distance < best) { best = distance; axisHit = axis; }
+        }
+    }
+    if (axisHit < 0) return false;
+    rotationAxis_ = axisHit;
+    rotationBefore_ = part.orientation;
+    rotationAngle_ = 0.0;
+    dragStart_ = point;
+    draggingRotation_ = true;
+    hideFaceArrow();
+    return true;
+}
+void CadViewport::applyRotationAngle(double degrees) {
+    if (rotationIndex_ >= boxes_.size()) return;
+    auto& part = boxes_[rotationIndex_];
+    const gp_Pnt center = gp_Pnt((part.min[0]+part.max[0])*0.5,
+        (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(rotationBefore_);
+    const gp_Dir dir = rotationAxis_ == 0 ? gp_Dir(1,0,0)
+        : rotationAxis_ == 1 ? gp_Dir(0,1,0) : gp_Dir(0,0,1);
+    gp_Trsf rotation;
+    rotation.SetRotation(gp_Ax1(center,dir),degrees * 3.14159265358979323846 / 180.0);
+    applyPartState(rotationIndex_,part.min,part.max,rotation * rotationBefore_);
+    rotationAngle_ = degrees;
+}
+void CadViewport::setRotateMode(bool enabled) {
+    rotateMode_ = enabled;
+    if (!enabled) hideRotationRings();
+    else if (!context_.IsNull() && context_->NbSelected() == 1) {
+        context_->InitSelected();
+        const auto selected = context_->SelectedInteractive();
+        for (size_t i=0; i<boxes_.size(); ++i)
+            if (boxes_[i].presentation == selected) {
+                rotationIndex_ = i;
+                updateRotationRings();
+                break;
+            }
+    }
+    emit statusMessage(enabled ? tr("Rotate mode: select a face and drag a colored ring.")
+        : tr("Rotate mode disabled."));
+}
+void CadViewport::setAngleSnap(double degrees) { rotationSnap_ = degrees; }
+
 void CadViewport::mousePressEvent(QMouseEvent* e) {
     previous_ = e->pos();
     rotating_ = e->button() == Qt::MiddleButton && !(e->modifiers() & Qt::ShiftModifier);
     panning_ = e->button() == Qt::MiddleButton && (e->modifiers() & Qt::ShiftModifier);
     if (rotating_ && !view_.IsNull()) view_->StartRotation(previous_.x(), previous_.y());
     if (e->button() == Qt::LeftButton && !context_.IsNull()) {
-        if (dimensionEditing_) { dimensionEditing_ = false; dragDimension_->hide(); }
+        if (dimensionEditing_ || rotationEditing_) {
+            dimensionEditing_ = false;
+            rotationEditing_ = false;
+            dragDimension_->hide();
+        }
+        if (beginRotationDrag(e->pos())) return;
         if (beginArrowDrag(e->pos())) return;
         if ((e->modifiers() & Qt::ControlModifier) && beginFaceDrag(e->pos())) return;
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
         context_->SelectDetected();
         hideFaceArrow();
+        if (rotateMode_) {
+            hideRotationRings();
+            if (context_->NbSelected() == 1) {
+                context_->InitSelected();
+                const auto selected = context_->SelectedInteractive();
+                for (size_t i=0; i<boxes_.size(); ++i)
+                    if (boxes_[i].presentation == selected) {
+                        rotationIndex_ = i;
+                        updateRotationRings();
+                        break;
+                    }
+            }
+        }
         if (context_->NbSelected() == 1) {
             context_->InitSelected();
             Handle(StdSelect_BRepOwner) arrowOwner =
@@ -590,7 +709,19 @@ void CadViewport::setSnapStep(double stepMm) {
 void CadViewport::mouseMoveEvent(QMouseEvent* e) {
     if (view_.IsNull()) return;
     QPoint p = e->pos();
-    if (draggingFace_) {
+    if (draggingRotation_) {
+        const double raw = (p.x()-dragStart_.x()) * 0.5;
+        const double degrees = rotationSnap_ > 0.0 && !(e->modifiers() & Qt::ShiftModifier)
+            ? std::round(raw/rotationSnap_) * rotationSnap_ : raw;
+        if (std::abs(degrees-rotationAngle_) > 0.0001) {
+            applyRotationAngle(degrees);
+            dragDimension_->setText(QLocale().toString(degrees,'f',2));
+            dragDimension_->move(std::clamp(p.x()+16,0,std::max(0,width()-dragDimension_->width())),
+                                 std::clamp(p.y()-36,0,std::max(0,height()-dragDimension_->height())));
+            dragDimension_->show();
+            emit statusMessage(tr("Rotation: %1 degrees").arg(degrees,0,'f',1));
+        }
+    } else if (draggingFace_) {
         const double rawDistance = ((p.x() - dragStart_.x()) * dragScreenX_
                                   + (p.y() - dragStart_.y()) * dragScreenY_) * dragMmPerPixel_;
         const bool snapping = snapStepMm_ > 0.0 && !(e->modifiers() & Qt::ShiftModifier);
@@ -621,6 +752,21 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
 }
 void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     if (e->button() == Qt::MiddleButton) { rotating_ = false; panning_ = false; }
+    if (e->button() == Qt::LeftButton && draggingRotation_) {
+        draggingRotation_ = false;
+        if (std::abs(rotationAngle_) < 0.0001) { dragDimension_->hide(); return; }
+        const auto& part = boxes_[rotationIndex_];
+        undoStack_.push_back({rotationIndex_,part.min,part.max,part.min,part.max,
+                              rotationBefore_,part.orientation});
+        redoStack_.clear();
+        rotationEditing_ = true;
+        updateRotationRings();
+        dragDimension_->setText(QLocale().toString(rotationAngle_,'f',2));
+        dragDimension_->setFocus();
+        dragDimension_->selectAll();
+        emit statusMessage(tr("Enter exact angle, or Esc to keep rotation."));
+        return;
+    }
     if (e->button() != Qt::LeftButton || !draggingFace_) return;
     draggingFace_ = false;
     if (std::abs(dragDistance_) < 0.0001) { dragDimension_->hide(); return; }

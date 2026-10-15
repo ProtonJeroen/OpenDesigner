@@ -24,6 +24,8 @@ public:
     void redoPull();
     void setSnapStep(double stepMm);
     void setMovePartMode(bool enabled);
+    void setRotateMode(bool enabled);
+    void setAngleSnap(double degrees);
 signals:
     void partCreated(const QString& name);
     void statusMessage(const QString& message);
@@ -58,6 +60,10 @@ private:
     void hideFaceArrow();
     void showDragDimension(const QPoint& position);
     void initializeViewer();
+    void updateRotationRings();
+    void hideRotationRings();
+    bool beginRotationDrag(const QPoint& point);
+    void applyRotationAngle(double angleDegrees);
     Handle(Aspect_DisplayConnection) display_;
     Handle(V3d_Viewer) viewer_;
     Handle(V3d_View) view_;
@@ -76,6 +82,18 @@ private:
     bool draggingFace_ = false;
     bool movePartMode_ = false;
     bool dragMovesPart_ = false;
+    bool rotateMode_ = false;
+    bool draggingRotation_ = false;
+    bool rotationEditing_ = false;
+    size_t rotationIndex_ = 0;
+    int rotationAxis_ = 0;
+    double rotationAngle_ = 0.0;
+    double rotationSnap_ = 15.0;
+    double rotationStartAngle_ = 0.0;
+    double rotationPreviousAngle_ = 0.0;
+    double rotationAccumulatedAngle_ = 0.0;
+    gp_Trsf rotationBefore_;
+    std::array<Handle(AIS_Shape), 3> rotationRings_;
     QLineEdit* dragDimension_ = nullptr;
     bool dimensionEditing_ = false;
     size_t dragIndex_ = 0;
