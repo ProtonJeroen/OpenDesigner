@@ -7,6 +7,8 @@
 #include <Aspect_NeutralWindow.hxx>
 #include <OpenGl_GraphicDriver.hxx>
 #include <AIS_Shape.hxx>
+#include <StdSelect_BRepOwner.hxx>
+#include <SelectMgr_EntityOwner.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRep_Tool.hxx>
@@ -79,9 +81,19 @@ void CadViewport::pullSelectedFace() {
         emit statusMessage(tr("Select exactly one box face first."));
         return;
     }
-    const TopoDS_Shape faceShape = context_->SelectedShape();
+    // SelectedShape() can resolve to the parent AIS shape on some OCCT versions.
+    // The selection owner holds the actual subshape picked by the user.
+    Handle(StdSelect_BRepOwner) faceOwner =
+        Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
+    if (faceOwner.IsNull()) {
+        emit statusMessage(tr("No B-Rep face owner selected."));
+        return;
+    }
+    const TopoDS_Shape faceShape = faceOwner->Shape();
     if (faceShape.IsNull() || faceShape.ShapeType() != TopAbs_FACE) {
-        emit statusMessage(tr("Select a planar face, not the whole part."));
+        emit statusMessage(tr("Selected shape type: %1 (expected FACE = %2).")
+            .arg(static_cast<int>(faceShape.IsNull() ? TopAbs_SHAPE : faceShape.ShapeType()))
+            .arg(static_cast<int>(TopAbs_FACE)));
         return;
     }
     Handle(AIS_InteractiveObject) selectedObject = context_->SelectedInteractive();
