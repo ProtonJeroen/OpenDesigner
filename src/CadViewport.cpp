@@ -400,7 +400,7 @@ void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
     part.min = min;
     part.max = max;
     updateFaceArrow();
-    if (rotateMode_ && !draggingRotation_) updateRotationRings();
+    if (rotateMode_) updateRotationRings();
     view_->Redraw();
 }
 void CadViewport::undoPull() {
