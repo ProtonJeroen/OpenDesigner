@@ -125,7 +125,7 @@ void CadViewport::hideFaceArrow() {
 void CadViewport::updateFaceArrow() {
     if (!arrowVisible_ || arrowPartIndex_ >= boxes_.size() || context_.IsNull()) return;
     const auto& part = boxes_[arrowPartIndex_];
-    if (part.orientation.Form() != gp_Identity) return false;
+    if (part.orientation.Form() != gp_Identity) return;
     gp_Pnt center(
         (part.min[0] + part.max[0]) * 0.5,
         (part.min[1] + part.max[1]) * 0.5,
