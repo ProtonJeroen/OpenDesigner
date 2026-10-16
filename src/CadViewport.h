@@ -63,6 +63,8 @@ private:
     void applyGroupMove(double distance);
     bool prepareMultiFaceDrag();
     bool applyMultiFaceDrag(double distance);
+    void updateMultiFaceHighlight();
+    void clearMultiFaceHighlight();
     void refreshPartSelection();
     void applyBoxBounds(size_t index, const std::array<double, 3>& min,
                         const std::array<double, 3>& max);
@@ -87,6 +89,7 @@ private:
     Handle(V3d_View) view_;
     Handle(AIS_InteractiveContext) context_;
     Handle(AIS_Shape) faceArrow_;
+    Handle(AIS_Shape) multiFaceHighlight_;
     size_t arrowPartIndex_ = 0;
     int arrowAxis_ = 0;
     bool arrowMax_ = true;
