@@ -761,25 +761,18 @@ void CadViewport::setTransformSelectionMode() {
     }
     hideMoveAxes();
     hideRotationRings();
-    refreshPartSelection();
+    // Preserve face selections when changing tools. Rebuild the OCCT
+    // selection only when there is an explicit whole-part selection.
+    if (!selectedPartIndices_.empty()) refreshPartSelection();
+    else view_->Redraw();
 }
 void CadViewport::setDirectMoveMode(bool enabled) {
     directMoveMode_ = enabled;
     setTransformSelectionMode();
-    if (!enabled) hideMoveAxes();
-    else {
-        hideFaceArrow();
-        if (!context_.IsNull() && context_->NbSelected()==1) {
-            context_->InitSelected();
-            if (context_->MoreSelected()) {
-                const auto selected=context_->SelectedInteractive();
-                for (size_t i=0;i<boxes_.size();++i)
-                    if (boxes_[i].presentation==selected) { moveIndex_=i; rotationIndex_=i; updateMoveAxes(); updateRotationRings(); break; }
-            }
-        }
-    }
-    emit statusMessage(enabled ? tr("Direct Move: click a part, then drag a colored axis.")
-                               : tr("Direct Move disabled."));
+    if (enabled) hideFaceArrow();
+    emit statusMessage(enabled
+        ? tr("Move: select parts with Alt+click (Ctrl+Alt for groups), then drag an axis.")
+        : tr("Move disabled. Selection preserved."));
 }
 bool CadViewport::beginMoveAxisDrag(const QPoint& point) {
     if (!directMoveMode_ || moveIndex_>=boxes_.size() || view_.IsNull()) return false;
@@ -983,19 +976,10 @@ void CadViewport::applyRotationAngle(double degrees) {
 void CadViewport::setRotateMode(bool enabled) {
     rotateMode_ = enabled;
     setTransformSelectionMode();
-    if (!enabled) hideRotationRings();
-    else if (!context_.IsNull() && context_->NbSelected() == 1) {
-        context_->InitSelected();
-        const auto selected = context_->SelectedInteractive();
-        for (size_t i=0; i<boxes_.size(); ++i)
-            if (boxes_[i].presentation == selected) {
-                rotationIndex_ = i;
-                updateRotationRings();
-                break;
-            }
-    }
-    emit statusMessage(enabled ? tr("Rotate mode: select a face and drag a colored ring.")
-        : tr("Rotate mode disabled."));
+    if (enabled) hideFaceArrow();
+    emit statusMessage(enabled
+        ? tr("Rotate: select parts with Alt+click (Ctrl+Alt for groups), then drag a ring.")
+        : tr("Rotate disabled. Selection preserved."));
 }
 void CadViewport::setAngleSnap(double degrees) { rotationSnap_ = degrees; }
 
