@@ -63,6 +63,7 @@ private:
     void initializeViewer();
     void updateRotationRings();
     void updateMoveAxes();
+    void setTransformSelectionMode();
     void hideMoveAxes();
     bool beginMoveAxisDrag(const QPoint& point);
     void hideRotationRings();
