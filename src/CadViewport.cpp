@@ -278,11 +278,12 @@ void CadViewport::updateFaceArrow() {
 void CadViewport::addBox() {
     initializeViewer();
     const double x = partCount_ * 125.0;
-    BoxPart part;
+    CadPart part;
     part.min = {x, 0.0, 0.0};
     part.max = {x + 100.0, 80.0, 60.0};
     TopoDS_Shape shape = BRepPrimAPI_MakeBox(gp_Pnt(x, 0, 0), 100.0, 80.0, 60.0).Shape();
-    part.presentation = new AIS_Shape(shape);
+    part.shape = shape;
+    part.presentation = new AIS_Shape(part.shape);
     part.presentation->SetColor(Quantity_NOC_LIGHTGRAY);
     context_->Display(part.presentation, Standard_False);
     context_->SetDisplayMode(part.presentation, AIS_Shaded, Standard_False);
@@ -307,8 +308,8 @@ void CadViewport::duplicateSelectedParts() {
     constexpr double offsetMm = 25.0;
     for (const size_t index : sources) {
         if (index >= boxes_.size() || !boxes_[index].visible) continue;
-        const BoxPart original = boxes_[index];
-        BoxPart copy;
+        const CadPart original = boxes_[index];
+        CadPart copy;
         copy.min = original.min;
         copy.max = original.max;
         copy.orientation = original.orientation;
@@ -321,7 +322,8 @@ void CadViewport::duplicateSelectedParts() {
             gp_Pnt(copy.min[0], copy.min[1], copy.min[2]),
             copy.max[0] - copy.min[0], copy.max[1] - copy.min[1],
             copy.max[2] - copy.min[2]).Shape();
-        copy.presentation = new AIS_Shape(shape);
+        copy.shape = shape;
+        copy.presentation = new AIS_Shape(copy.shape);
         copy.presentation->SetColor(Quantity_NOC_LIGHTGRAY);
         copy.presentation->SetLocalTransformation(copy.orientation);
         context_->Display(copy.presentation, Standard_False);
@@ -565,7 +567,8 @@ void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
         gp_Pnt(min[0], min[1], min[2]),
         max[0] - min[0], max[1] - min[1], max[2] - min[2]).Shape();
     if (!batchingPartUpdates_) context_->ClearSelected(Standard_False);
-    part.presentation->SetShape(shape);
+    part.shape = shape;
+    part.presentation->SetShape(part.shape);
     part.presentation->SetLocalTransformation(part.orientation);
     context_->Redisplay(part.presentation, Standard_False);
     context_->Deactivate(part.presentation);
