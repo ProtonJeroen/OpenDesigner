@@ -691,8 +691,10 @@ void CadViewport::updateRotationRings() {
     hideRotationRings();
     if (!rotateMode_ || rotationIndex_ >= boxes_.size() || context_.IsNull()) return;
     const auto& part = boxes_[rotationIndex_];
-    const gp_Pnt center = gp_Pnt((part.min[0]+part.max[0])*0.5,
-        (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
+    const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter()
+        : gp_Pnt((part.min[0]+part.max[0])*0.5,
+            (part.min[1]+part.max[1])*0.5,
+            (part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
     const double radius = selectedPartIndices_.size() > 1 ? 60.0 : 0.65 * std::max({part.max[0]-part.min[0],
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
     for (int axis = 0; axis < 3; ++axis) {
