@@ -810,10 +810,21 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             // replaced during manipulator display updates and cannot be used
             // as the sole source of truth for additive part selection.
             const bool multiSelect = (e->modifiers() & Qt::ControlModifier);
-            const auto detected = context_->DetectedInteractive();
+            // DetectedInteractive() must only be called when a valid owner exists.
+            // Clicking empty viewport space otherwise dereferences a null owner
+            // in OCCT and segfaults before we can clear the selection.
             size_t hit = boxes_.size();
-            for (size_t i = 0; i < boxes_.size(); ++i)
-                if (boxes_[i].presentation == detected) { hit = i; break; }
+            if (context_->HasDetected()) {
+                const auto detected = context_->DetectedInteractive();
+                if (!detected.IsNull()) {
+                    for (size_t i = 0; i < boxes_.size(); ++i) {
+                        if (boxes_[i].presentation == detected) {
+                            hit = i;
+                            break;
+                        }
+                    }
+                }
+            }
             if (!multiSelect) selectedPartIndices_.clear();
             if (hit < boxes_.size()) {
                 const auto it = std::find(selectedPartIndices_.begin(),
