@@ -80,6 +80,7 @@ private:
     bool arrowMax_ = true;
     bool arrowVisible_ = false;
     std::vector<BoxPart> boxes_;
+    std::vector<size_t> selectedPartIndices_;
     std::vector<PullChange> undoStack_;
     std::vector<PullChange> redoStack_;
     QPoint previous_;
