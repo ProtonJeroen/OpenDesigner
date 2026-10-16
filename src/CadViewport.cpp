@@ -115,26 +115,26 @@ void CadViewport::initializeViewer() {
     viewer_->SetDefaultLights();
     viewer_->SetLightOn();
     context_ = new AIS_InteractiveContext(viewer_);
-    // Configure OCCT's initialized drawers instead of replacing them with
-    // empty drawers: shaded highlights need valid material/aspect handles.
+    // Edge-only highlights: keep shaded faces at their original color.
+    // Use OCCT's existing initialized drawers to avoid null shading aspects.
     const Quantity_Color cyan(0.0, 0.95, 1.0, Quantity_TOC_RGB);
     const Handle(Prs3d_Drawer) selectionStyle = context_->SelectionStyle();
     if (!selectionStyle.IsNull()) {
         selectionStyle->SetColor(cyan);
-        selectionStyle->SetDisplayMode(AIS_Shaded);
+        selectionStyle->SetDisplayMode(AIS_WireFrame);
     }
-    // A pale overlay gives a brighter preview without modifying part colors.
+    const Quantity_Color hoverEdges(0.85, 0.85, 0.85, Quantity_TOC_RGB);
     const Handle(Prs3d_Drawer) dynamicStyle =
         context_->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic);
     if (!dynamicStyle.IsNull()) {
-        dynamicStyle->SetColor(Quantity_Color(0.85, 0.85, 0.85, Quantity_TOC_RGB));
-        dynamicStyle->SetDisplayMode(AIS_Shaded);
+        dynamicStyle->SetColor(hoverEdges);
+        dynamicStyle->SetDisplayMode(AIS_WireFrame);
     }
     const Handle(Prs3d_Drawer) localDynamicStyle =
         context_->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic);
     if (!localDynamicStyle.IsNull()) {
-        localDynamicStyle->SetColor(Quantity_Color(0.85, 0.85, 0.85, Quantity_TOC_RGB));
-        localDynamicStyle->SetDisplayMode(AIS_Shaded);
+        localDynamicStyle->SetColor(hoverEdges);
+        localDynamicStyle->SetDisplayMode(AIS_WireFrame);
     }
     view_ = viewer_->CreateView();
     Handle(Aspect_NeutralWindow) window = new Aspect_NeutralWindow();
