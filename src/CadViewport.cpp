@@ -631,6 +631,20 @@ gp_Pnt CadViewport::selectionCenter() const {
     }
     return count ? gp_Pnt(x/count, y/count, z/count) : gp_Pnt(0, 0, 0);
 }
+void CadViewport::selectParts(const std::vector<size_t>& indices) {
+    selectedPartIndices_.clear();
+    for (const size_t index : indices) {
+        if (index < boxes_.size() &&
+            std::find(selectedPartIndices_.begin(), selectedPartIndices_.end(), index)
+                == selectedPartIndices_.end())
+            selectedPartIndices_.push_back(index);
+    }
+    hideFaceArrow();
+    hideMoveAxes();
+    hideRotationRings();
+    refreshPartSelection();
+    emit partSelectionChanged(selectedPartIndices_);
+}
 void CadViewport::refreshPartSelection() {
     if (context_.IsNull()) return;
     context_->ClearSelected(Standard_False);
@@ -695,6 +709,7 @@ void CadViewport::setTransformSelectionMode() {
         ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE);
     context_->ClearSelected(Standard_False);
     selectedPartIndices_.clear();
+    emit partSelectionChanged(selectedPartIndices_);
     for (auto& part : boxes_) {
         context_->Deactivate(part.presentation);
         context_->Activate(part.presentation, mode, Standard_False);
@@ -1000,6 +1015,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                 updateMoveAxes();
                 updateRotationRings();
             }
+            emit partSelectionChanged(selectedPartIndices_);
             const int count = static_cast<int>(selectedPartIndices_.size());
             emit statusMessage(count > 1
                 ? tr("%1 parts selected. Drag an axis to move the group.").arg(count)
