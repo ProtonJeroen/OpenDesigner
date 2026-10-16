@@ -153,6 +153,16 @@ void CadViewport::initializeViewer() {
         selectionStyle->SetColor(cyan);
         selectionStyle->SetDisplayMode(AIS_WireFrame);
     }
+    // OCCT uses a separate local-selection highlight drawer for faces.
+    // Configuring only SelectionStyle() changes whole-object selection,
+    // but leaves selected subshapes with the default highlight color.
+    const Handle(Prs3d_Drawer) faceSelectionStyle =
+        context_->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected);
+    if (!faceSelectionStyle.IsNull()) {
+        faceSelectionStyle->SetColor(cyan);
+        // Outline only: leave the actual face material untouched.
+        faceSelectionStyle->SetDisplayMode(AIS_WireFrame);
+    }
     const Quantity_Color hoverEdges(0.85, 0.85, 0.85, Quantity_TOC_RGB);
     const Handle(Prs3d_Drawer) dynamicStyle =
         context_->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic);
@@ -242,8 +252,7 @@ void CadViewport::addBox() {
     context_->SetDisplayMode(part.presentation, AIS_Shaded, Standard_False);
     // Disable global object selection (mode 0) before enabling subshape mode.
     context_->Deactivate(part.presentation);
-    context_->Activate(part.presentation,
-        (directMoveMode_ || rotateMode_) ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE),
+    context_->Activate(part.presentation, AIS_Shape::SelectionMode(TopAbs_FACE),
         Standard_False);
     boxes_.push_back(part);
     ++partCount_;
@@ -745,36 +754,25 @@ void CadViewport::updateMoveAxes() {
 }
 void CadViewport::setTransformSelectionMode() {
     if (context_.IsNull()) return;
-    const int mode = (directMoveMode_ || rotateMode_)
-        ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE);
-    context_->ClearSelected(Standard_False);
-    selectedPartIndices_.clear();
-    emit partSelectionChanged(selectedPartIndices_);
+    const int mode = AIS_Shape::SelectionMode(TopAbs_FACE);
     for (auto& part : boxes_) {
         context_->Deactivate(part.presentation);
         context_->Activate(part.presentation, mode, Standard_False);
     }
     hideMoveAxes();
     hideRotationRings();
-    view_->Redraw();
+    // Preserve face selections when changing tools. Rebuild the OCCT
+    // selection only when there is an explicit whole-part selection.
+    if (!selectedPartIndices_.empty()) refreshPartSelection();
+    else view_->Redraw();
 }
 void CadViewport::setDirectMoveMode(bool enabled) {
     directMoveMode_ = enabled;
     setTransformSelectionMode();
-    if (!enabled) hideMoveAxes();
-    else {
-        hideFaceArrow();
-        if (!context_.IsNull() && context_->NbSelected()==1) {
-            context_->InitSelected();
-            if (context_->MoreSelected()) {
-                const auto selected=context_->SelectedInteractive();
-                for (size_t i=0;i<boxes_.size();++i)
-                    if (boxes_[i].presentation==selected) { moveIndex_=i; rotationIndex_=i; updateMoveAxes(); updateRotationRings(); break; }
-            }
-        }
-    }
-    emit statusMessage(enabled ? tr("Direct Move: click a part, then drag a colored axis.")
-                               : tr("Direct Move disabled."));
+    if (enabled) hideFaceArrow();
+    emit statusMessage(enabled
+        ? tr("Move: select parts with Alt+click (Ctrl+Alt for groups), then drag an axis.")
+        : tr("Move disabled. Selection preserved."));
 }
 bool CadViewport::beginMoveAxisDrag(const QPoint& point) {
     if (!directMoveMode_ || moveIndex_>=boxes_.size() || view_.IsNull()) return false;
@@ -978,19 +976,10 @@ void CadViewport::applyRotationAngle(double degrees) {
 void CadViewport::setRotateMode(bool enabled) {
     rotateMode_ = enabled;
     setTransformSelectionMode();
-    if (!enabled) hideRotationRings();
-    else if (!context_.IsNull() && context_->NbSelected() == 1) {
-        context_->InitSelected();
-        const auto selected = context_->SelectedInteractive();
-        for (size_t i=0; i<boxes_.size(); ++i)
-            if (boxes_[i].presentation == selected) {
-                rotationIndex_ = i;
-                updateRotationRings();
-                break;
-            }
-    }
-    emit statusMessage(enabled ? tr("Rotate mode: select a face and drag a colored ring.")
-        : tr("Rotate mode disabled."));
+    if (enabled) hideFaceArrow();
+    emit statusMessage(enabled
+        ? tr("Rotate: select parts with Alt+click (Ctrl+Alt for groups), then drag a ring.")
+        : tr("Rotate disabled. Selection preserved."));
 }
 void CadViewport::setAngleSnap(double degrees) { rotationSnap_ = degrees; }
 
@@ -1005,21 +994,32 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             rotationEditing_ = false;
             dragDimension_->hide();
         }
-        const bool additiveSelection = (directMoveMode_ || rotateMode_) && (e->modifiers() & Qt::ControlModifier);
+        const bool partPicking = (e->modifiers() & Qt::AltModifier);
+        const bool additiveSelection = (e->modifiers() & Qt::ControlModifier);
+        // Alt temporarily picks complete parts; ordinary clicks always pick faces.
+        // Keep the existing part selection independent of the active tool.
+        for (auto& part : boxes_) {
+            if (!part.visible) continue;
+            context_->Deactivate(part.presentation);
+            context_->Activate(part.presentation,
+                partPicking ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE), Standard_False);
+        }
         // Prioritize curved rotation handles over the projected straight move axes.
         // Their screen-space hit regions can overlap, especially with group selection.
-        if (!additiveSelection && beginRotationDrag(e->pos())) return;
-        if (!additiveSelection && beginMoveAxisDrag(e->pos())) return;
-        if (directMoveMode_ || rotateMode_) {
-            // The combined gizmo takes precedence over the legacy face arrow.
+        if (!partPicking && !additiveSelection && beginRotationDrag(e->pos())) return;
+        if (!partPicking && !additiveSelection && beginMoveAxisDrag(e->pos())) return;
+        if (directMoveMode_ || rotateMode_ || partPicking) {
+            // Selection and active transform tools are separate.
         } else if (beginArrowDrag(e->pos())) return;
-        if (!(directMoveMode_ || rotateMode_) && (e->modifiers() & Qt::ControlModifier) && beginFaceDrag(e->pos())) return;
+        // Ctrl is reserved for additive face selection, not drag-to-pull.
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
-        if (directMoveMode_ || rotateMode_) {
+        if (partPicking) {
+            if (!context_->SelectionStyle().IsNull())
+                context_->SelectionStyle()->SetDisplayMode(AIS_WireFrame);
             // Keep a separate set of part indices. OCCT selection owners are
             // replaced during manipulator display updates and cannot be used
             // as the sole source of truth for additive part selection.
-            const bool multiSelect = (e->modifiers() & Qt::ControlModifier);
+            const bool multiSelect = additiveSelection;
             // DetectedInteractive() must only be called when a valid owner exists.
             // Clicking empty viewport space otherwise dereferences a null owner
             // in OCCT and segfaults before we can clear the selection.
@@ -1054,8 +1054,8 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             if (!selectedPartIndices_.empty()) {
                 moveIndex_ = selectedPartIndices_.front();
                 rotationIndex_ = moveIndex_;
-                updateMoveAxes();
-                updateRotationRings();
+                if (directMoveMode_) updateMoveAxes();
+                if (rotateMode_) updateRotationRings();
             }
             emit partSelectionChanged(selectedPartIndices_);
             const int count = static_cast<int>(selectedPartIndices_.size());
@@ -1066,9 +1066,14 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             view_->Redraw();
             return;
         }
-        context_->SelectDetected(AIS_SelectionScheme_Replace);
+        // Use OCCT's additive selection scheme for Ctrl+click on faces.
+        // Highlight selected faces by cyan edges only, preserving their material.
+        if (!context_->SelectionStyle().IsNull())
+            context_->SelectionStyle()->SetDisplayMode(AIS_WireFrame);
+        context_->SelectDetected(additiveSelection
+            ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
         hideFaceArrow();
-        if (rotateMode_) {
+        if (rotateMode_ && !additiveSelection) {
             hideRotationRings();
             if (context_->NbSelected() == 1) {
                 context_->InitSelected();
