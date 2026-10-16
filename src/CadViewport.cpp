@@ -657,10 +657,13 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
     dragScreenY_ = dy / pixels;
     dragMmPerPixel_ = 31.0 / pixels;
     dragMovesPart_ = movePartMode_;
+    multiFaceDragging_ = !dragMovesPart_ && prepareMultiFaceDrag();
     draggingFace_ = true;
     emit statusMessage(dragMovesPart_
         ? tr("Drag arrow to move the entire part.")
-        : tr("Drag arrow along face normal; release to commit."));
+        : multiFaceDragging_
+            ? tr("Drag arrow to pull all selected faces together.")
+            : tr("Drag arrow along face normal; release to commit."));
     return true;
 }
 bool CadViewport::prepareMultiFaceDrag() {
@@ -1105,21 +1108,19 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
         }
         const bool partPicking = (e->modifiers() & Qt::AltModifier);
         const bool additiveSelection = (e->modifiers() & Qt::ControlModifier);
-        // Alt temporarily picks complete parts; ordinary clicks always pick faces.
-        // Keep the existing part selection independent of the active tool.
+        // Start manipulator drags BEFORE changing OCCT selection modes:
+        // Deactivate/Activate may discard selected subshape owners.
+        if (!partPicking && !additiveSelection && beginRotationDrag(e->pos())) return;
+        if (!partPicking && !additiveSelection && beginMoveAxisDrag(e->pos())) return;
+        if (!partPicking && !additiveSelection && !directMoveMode_ && !rotateMode_
+            && beginArrowDrag(e->pos())) return;
+        // Only reconfigure picking when actually selecting geometry.
         for (auto& part : boxes_) {
             if (!part.visible) continue;
             context_->Deactivate(part.presentation);
             context_->Activate(part.presentation,
                 partPicking ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE), Standard_False);
         }
-        // Prioritize curved rotation handles over the projected straight move axes.
-        // Their screen-space hit regions can overlap, especially with group selection.
-        if (!partPicking && !additiveSelection && beginRotationDrag(e->pos())) return;
-        if (!partPicking && !additiveSelection && beginMoveAxisDrag(e->pos())) return;
-        if (directMoveMode_ || rotateMode_ || partPicking) {
-            // Selection and active transform tools are separate.
-        } else if (beginArrowDrag(e->pos())) return;
         // Ctrl is reserved for additive face selection, not drag-to-pull.
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
         if (partPicking) {
