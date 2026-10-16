@@ -28,6 +28,9 @@ public:
     void setDirectMoveMode(bool enabled);
     void setAngleSnap(double degrees);
     void selectParts(const std::vector<size_t>& indices);
+    void setPartVisible(size_t index, bool visible);
+    bool isPartVisible(size_t index) const;
+    void fitSelection(const std::vector<size_t>& indices);
 signals:
     void partCreated(const QString& name);
     void partSelectionChanged(const std::vector<size_t>& indices);
@@ -46,6 +49,7 @@ private:
         std::array<double, 3> min;
         std::array<double, 3> max;
         gp_Trsf orientation;
+        bool visible = true;
     };
     struct PullChange {
         size_t partIndex;
