@@ -50,9 +50,12 @@ private:
         std::array<double, 3> beforeMin, beforeMax;
         std::array<double, 3> afterMin, afterMax;
         gp_Trsf beforeOrientation, afterOrientation;
+        std::vector<PullChange> groupedChanges;
     };
     void applyPartState(size_t index, const std::array<double, 3>& min,
                         const std::array<double, 3>& max, const gp_Trsf& orientation);
+    void applyGroupMove(double distance);
+    void refreshPartSelection();
     void applyBoxBounds(size_t index, const std::array<double, 3>& min,
                         const std::array<double, 3>& max);
     bool beginFaceDrag(const QPoint& origin);
@@ -63,6 +66,8 @@ private:
     void initializeViewer();
     void updateRotationRings();
     void updateMoveAxes();
+    gp_Pnt selectionCenter() const;
+    void setTransformSelectionMode();
     void hideMoveAxes();
     bool beginMoveAxisDrag(const QPoint& point);
     void hideRotationRings();
@@ -79,6 +84,17 @@ private:
     bool arrowMax_ = true;
     bool arrowVisible_ = false;
     std::vector<BoxPart> boxes_;
+    std::vector<size_t> selectedPartIndices_;
+    std::vector<PullChange> groupMoveBefore_;
+    gp_Dir groupMoveDirection_ = gp_Dir(1, 0, 0);
+    bool groupMoveDragging_ = false;
+    bool batchingPartUpdates_ = false;
+    bool groupMoveEditing_ = false;
+    bool groupRotationDragging_ = false;
+    bool groupRotationEditing_ = false;
+    std::vector<PullChange> groupRotationBefore_;
+    gp_Pnt groupRotationCenter_;
+    gp_Dir groupRotationDirection_ = gp_Dir(1, 0, 0);
     std::vector<PullChange> undoStack_;
     std::vector<PullChange> redoStack_;
     QPoint previous_;
