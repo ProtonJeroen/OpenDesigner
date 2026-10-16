@@ -23,6 +23,8 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
+#include <TopExp_Explorer.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
 #include <gp_Circ.hxx>
 #include <ElCLib.hxx>
@@ -152,6 +154,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
         rotationEditing_ = false;
         groupRotationEditing_ = false;
         groupMoveEditing_ = false;
+        clearMultiFaceHighlight();
         multiFaceEditing_ = false;
         setFocus();
     });
@@ -611,6 +614,7 @@ bool CadViewport::beginFaceDrag(const QPoint& origin) {
     dragMmPerPixel_ = 100.0 / pixels;
     dragMovesPart_ = movePartMode_;
     multiFaceDragging_ = !dragMovesPart_ && prepareMultiFaceDrag();
+    if (multiFaceDragging_) updateMultiFaceHighlight();
     draggingFace_ = true;
     emit statusMessage(dragMovesPart_
         ? tr("Drag to move the entire part along the face normal.")
@@ -704,6 +708,59 @@ bool CadViewport::prepareMultiFaceDrag() {
     return !multiFaceParts_.empty();
 }
 
+void CadViewport::clearMultiFaceHighlight() {
+    if (!multiFaceHighlight_.IsNull() && !context_.IsNull()) {
+        context_->Remove(multiFaceHighlight_, Standard_False);
+        multiFaceHighlight_.Nullify();
+    }
+}
+
+void CadViewport::updateMultiFaceHighlight() {
+    if (context_.IsNull()) return;
+    BRep_Builder builder;
+    TopoDS_Compound edges;
+    builder.MakeCompound(edges);
+    int count = 0;
+    for (const auto& item : multiFaceParts_) {
+        if (item.before.partIndex >= boxes_.size()) continue;
+        const auto& part = boxes_[item.before.partIndex];
+        for (TopExp_Explorer faces(part.presentation->Shape(), TopAbs_FACE); faces.More(); faces.Next()) {
+            const TopoDS_Face face = TopoDS::Face(faces.Current());
+            const BRepAdaptor_Surface surface(face);
+            if (surface.GetType() != GeomAbs_Plane) continue;
+            const gp_Dir normal = surface.Plane().Axis().Direction();
+            const double n[3] = {normal.X(), normal.Y(), normal.Z()};
+            int axis = 0;
+            for (int k = 1; k < 3; ++k)
+                if (std::abs(n[k]) > std::abs(n[axis])) axis = k;
+            if (std::abs(n[axis]) < 0.999) continue;
+            const double pos = surface.Plane().Location().Coord(axis + 1);
+            const bool onMax = std::abs(pos - part.max[axis]) < 0.001;
+            const bool onMin = std::abs(pos - part.min[axis]) < 0.001;
+            if (!((onMax && item.sides[axis * 2 + 1]) ||
+                  (onMin && item.sides[axis * 2]))) continue;
+            for (TopExp_Explorer edge(face, TopAbs_EDGE); edge.More(); edge.Next()) {
+                builder.Add(edges, BRepBuilderAPI_Transform(
+                    edge.Current(), part.orientation, true).Shape());
+                ++count;
+            }
+        }
+    }
+    if (count == 0) { clearMultiFaceHighlight(); return; }
+    if (multiFaceHighlight_.IsNull()) {
+        multiFaceHighlight_ = new AIS_Shape(edges);
+        multiFaceHighlight_->SetColor(Quantity_Color(0.0, 0.95, 1.0, Quantity_TOC_RGB));
+        context_->Display(multiFaceHighlight_, Standard_False);
+        context_->SetDisplayMode(multiFaceHighlight_, AIS_WireFrame, Standard_False);
+        context_->Deactivate(multiFaceHighlight_);
+    } else {
+        multiFaceHighlight_->SetShape(edges);
+        context_->Redisplay(multiFaceHighlight_, Standard_False);
+        context_->Deactivate(multiFaceHighlight_);
+    }
+    context_->SetZLayer(multiFaceHighlight_, Graphic3d_ZLayerId_Topmost);
+}
+
 bool CadViewport::applyMultiFaceDrag(double distance) {
     // Validate the complete group before applying any geometry.
     std::vector<PullChange> changes;
@@ -720,6 +777,10 @@ bool CadViewport::applyMultiFaceDrag(double distance) {
     for (const auto& change : changes)
         applyPartState(change.partIndex, change.afterMin, change.afterMax, change.afterOrientation);
     batchingPartUpdates_ = false;
+    // Rebuilt B-Reps invalidate OCCT's old selected face owners. Show a
+    // temporary cyan edge overlay reconstructed from the current geometry.
+    updateMultiFaceHighlight();
+    updateFaceArrow();
     view_->Redraw();
     return true;
 }
@@ -1102,6 +1163,8 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
     if (rotating_ && !view_.IsNull()) view_->StartRotation(previous_.x(), previous_.y());
     if (e->button() == Qt::LeftButton && !context_.IsNull()) {
         if (dimensionEditing_ || rotationEditing_) {
+            clearMultiFaceHighlight();
+            multiFaceEditing_ = false;
             dimensionEditing_ = false;
             rotationEditing_ = false;
             dragDimension_->hide();
@@ -1351,6 +1414,7 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     draggingFace_ = false;
     if (multiFaceDragging_) {
         multiFaceDragging_ = false;
+        clearMultiFaceHighlight();
         if (std::abs(dragDistance_) < 0.0001) { dragDimension_->hide(); return; }
         PullChange operation = multiFaceParts_.front().before;
         operation.groupedChanges.clear();
