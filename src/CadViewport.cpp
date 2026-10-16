@@ -242,8 +242,7 @@ void CadViewport::addBox() {
     context_->SetDisplayMode(part.presentation, AIS_Shaded, Standard_False);
     // Disable global object selection (mode 0) before enabling subshape mode.
     context_->Deactivate(part.presentation);
-    context_->Activate(part.presentation,
-        (directMoveMode_ || rotateMode_) ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE),
+    context_->Activate(part.presentation, AIS_Shape::SelectionMode(TopAbs_FACE),
         Standard_False);
     boxes_.push_back(part);
     ++partCount_;
@@ -745,18 +744,14 @@ void CadViewport::updateMoveAxes() {
 }
 void CadViewport::setTransformSelectionMode() {
     if (context_.IsNull()) return;
-    const int mode = (directMoveMode_ || rotateMode_)
-        ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE);
-    context_->ClearSelected(Standard_False);
-    selectedPartIndices_.clear();
-    emit partSelectionChanged(selectedPartIndices_);
+    const int mode = AIS_Shape::SelectionMode(TopAbs_FACE);
     for (auto& part : boxes_) {
         context_->Deactivate(part.presentation);
         context_->Activate(part.presentation, mode, Standard_False);
     }
     hideMoveAxes();
     hideRotationRings();
-    view_->Redraw();
+    refreshPartSelection();
 }
 void CadViewport::setDirectMoveMode(bool enabled) {
     directMoveMode_ = enabled;
@@ -1005,21 +1000,30 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             rotationEditing_ = false;
             dragDimension_->hide();
         }
-        const bool additiveSelection = (directMoveMode_ || rotateMode_) && (e->modifiers() & Qt::ControlModifier);
+        const bool partPicking = (e->modifiers() & Qt::AltModifier);
+        const bool additiveSelection = (e->modifiers() & Qt::ControlModifier);
+        // Alt temporarily picks complete parts; ordinary clicks always pick faces.
+        // Keep the existing part selection independent of the active tool.
+        for (auto& part : boxes_) {
+            if (!part.visible) continue;
+            context_->Deactivate(part.presentation);
+            context_->Activate(part.presentation,
+                partPicking ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE), Standard_False);
+        }
         // Prioritize curved rotation handles over the projected straight move axes.
         // Their screen-space hit regions can overlap, especially with group selection.
-        if (!additiveSelection && beginRotationDrag(e->pos())) return;
-        if (!additiveSelection && beginMoveAxisDrag(e->pos())) return;
-        if (directMoveMode_ || rotateMode_) {
-            // The combined gizmo takes precedence over the legacy face arrow.
+        if (!partPicking && !additiveSelection && beginRotationDrag(e->pos())) return;
+        if (!partPicking && !additiveSelection && beginMoveAxisDrag(e->pos())) return;
+        if (directMoveMode_ || rotateMode_ || partPicking) {
+            // Selection and active transform tools are separate.
         } else if (beginArrowDrag(e->pos())) return;
         if (!(directMoveMode_ || rotateMode_) && (e->modifiers() & Qt::ControlModifier) && beginFaceDrag(e->pos())) return;
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
-        if (directMoveMode_ || rotateMode_) {
+        if (partPicking) {
             // Keep a separate set of part indices. OCCT selection owners are
             // replaced during manipulator display updates and cannot be used
             // as the sole source of truth for additive part selection.
-            const bool multiSelect = (e->modifiers() & Qt::ControlModifier);
+            const bool multiSelect = additiveSelection;
             // DetectedInteractive() must only be called when a valid owner exists.
             // Clicking empty viewport space otherwise dereferences a null owner
             // in OCCT and segfaults before we can clear the selection.
@@ -1054,8 +1058,8 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             if (!selectedPartIndices_.empty()) {
                 moveIndex_ = selectedPartIndices_.front();
                 rotationIndex_ = moveIndex_;
-                updateMoveAxes();
-                updateRotationRings();
+                if (directMoveMode_) updateMoveAxes();
+                if (rotateMode_) updateRotationRings();
             }
             emit partSelectionChanged(selectedPartIndices_);
             const int count = static_cast<int>(selectedPartIndices_.size());
