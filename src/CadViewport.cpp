@@ -260,78 +260,108 @@ void CadViewport::addBox() {
     fitAll();
 }
 void CadViewport::pullSelectedFace() {
-    if (context_.IsNull() || context_->NbSelected() != 1) {
-        emit statusMessage(tr("Select exactly one box face first."));
+    if (context_.IsNull() || context_->NbSelected() == 0) {
+        emit statusMessage(tr("Select one or more planar box faces first."));
         return;
     }
-    // OCCT SelectedOwner(), SelectedShape() and SelectedInteractive() refer to
-    // the CURRENT selection iterator. Initialize it before reading any value.
-    context_->InitSelected();
-    if (!context_->MoreSelected()) {
-        emit statusMessage(tr("Selection iterator is empty."));
-        return;
+
+    // Collect every selected boundary before modifying any geometry.
+    // A part can contribute multiple faces, but must be rebuilt only once.
+    struct Pending {
+        size_t index;
+        std::array<double, 3> min, max;
+        std::array<bool, 6> sides{};
+    };
+    std::vector<Pending> pending;
+    int faceCount = 0;
+    for (context_->InitSelected(); context_->MoreSelected(); context_->NextSelected()) {
+        const Handle(StdSelect_BRepOwner) owner =
+            Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
+        if (owner.IsNull() || owner->Shape().IsNull()
+            || owner->Shape().ShapeType() != TopAbs_FACE) {
+            emit statusMessage(tr("Pull requires face selection (not whole parts)."));
+            return;
+        }
+        const Handle(AIS_InteractiveObject) object = context_->SelectedInteractive();
+        size_t index = 0;
+        while (index < boxes_.size() && boxes_[index].presentation != object) ++index;
+        if (index == boxes_.size()) {
+            emit statusMessage(tr("Selected face does not belong to an editable box."));
+            return;
+        }
+        const BRepAdaptor_Surface surface(TopoDS::Face(owner->Shape()));
+        if (surface.GetType() != GeomAbs_Plane) {
+            emit statusMessage(tr("Only planar box faces are supported."));
+            return;
+        }
+        const gp_Dir normal = surface.Plane().Axis().Direction();
+        const double components[3] = {normal.X(), normal.Y(), normal.Z()};
+        int axis = 0;
+        for (int k = 1; k < 3; ++k)
+            if (std::abs(components[k]) > std::abs(components[axis])) axis = k;
+        if (std::abs(components[axis]) < 0.999) {
+            emit statusMessage(tr("Only box boundary faces are supported."));
+            return;
+        }
+        const auto& part = boxes_[index];
+        const double position = surface.Plane().Location().Coord(axis + 1);
+        const bool onMax = std::abs(position - part.max[axis]) < 0.001;
+        const bool onMin = std::abs(position - part.min[axis]) < 0.001;
+        if (!onMax && !onMin) {
+            emit statusMessage(tr("Could not match a selected face to a box boundary."));
+            return;
+        }
+        auto it = std::find_if(pending.begin(), pending.end(),
+            [index](const Pending& p) { return p.index == index; });
+        if (it == pending.end()) {
+            pending.push_back({index, part.min, part.max, {}});
+            it = std::prev(pending.end());
+        }
+        const int side = axis * 2 + (onMax ? 1 : 0);
+        if (!it->sides[side]) {
+            it->sides[side] = true;
+            ++faceCount;
+        }
     }
-    // The selection owner holds the picked B-Rep subshape.
-    Handle(StdSelect_BRepOwner) faceOwner =
-        Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
-    if (faceOwner.IsNull()) {
-        emit statusMessage(tr("No B-Rep face owner selected (check face selection mode)."));
-        return;
-    }
-    const TopoDS_Shape faceShape = faceOwner->Shape();
-    if (faceShape.IsNull() || faceShape.ShapeType() != TopAbs_FACE) {
-        emit statusMessage(tr("Selected shape type: %1 (expected FACE = %2).")
-            .arg(static_cast<int>(faceShape.IsNull() ? TopAbs_SHAPE : faceShape.ShapeType()))
-            .arg(static_cast<int>(TopAbs_FACE)));
-        return;
-    }
-    Handle(AIS_InteractiveObject) selectedObject = context_->SelectedInteractive();
-    auto partIt = boxes_.end();
-    for (auto it = boxes_.begin(); it != boxes_.end(); ++it) {
-        if (it->presentation == selectedObject) { partIt = it; break; }
-    }
-    if (partIt == boxes_.end()) {
-        emit statusMessage(tr("This face is not part of an editable box."));
-        return;
-    }
-    const BRepAdaptor_Surface surface(TopoDS::Face(faceShape));
-    if (surface.GetType() != GeomAbs_Plane) {
-        emit statusMessage(tr("Only planar box faces are supported."));
-        return;
-    }
-    const gp_Dir normal = surface.Plane().Axis().Direction();
-    const double components[3] = {normal.X(), normal.Y(), normal.Z()};
-    int axis = 0;
-    for (int i = 1; i < 3; ++i)
-        if (std::abs(components[i]) > std::abs(components[axis])) axis = i;
-    if (std::abs(components[axis]) < 0.999) {
-        emit statusMessage(tr("Only axis-aligned box faces are supported."));
-        return;
-    }
-    const double position = surface.Plane().Location().Coord(axis + 1);
-    const bool onMax = std::abs(position - partIt->max[axis]) < 0.001;
-    const bool onMin = std::abs(position - partIt->min[axis]) < 0.001;
-    if (!onMax && !onMin) {
-        emit statusMessage(tr("Could not match selected face to box boundary."));
-        return;
-    }
+    if (pending.empty()) return;
+
     bool ok = false;
-    const double distance = QInputDialog::getDouble(this, tr("Pull Face"),
-        tr("Outward distance (mm; negative = inward):"), 20.0, -100000.0, 100000.0, 2, &ok);
-    if (!ok || distance == 0.0) return;
-    auto nextMin = partIt->min;
-    auto nextMax = partIt->max;
-    if (onMax) nextMax[axis] += distance;
-    else nextMin[axis] -= distance;
-    if (nextMax[axis] - nextMin[axis] <= 0.001) {
-        emit statusMessage(tr("Pull distance would collapse or invert the box."));
-        return;
+    const double distance = QInputDialog::getDouble(this, tr("Pull Selected Faces"),
+        tr("Outward distance for all selected faces (mm; negative = inward):"),
+        20.0, -100000.0, 100000.0, 2, &ok);
+    if (!ok || std::abs(distance) < 0.000001) return;
+
+    std::vector<PullChange> changes;
+    for (auto& item : pending) {
+        const auto& part = boxes_[item.index];
+        for (int axis = 0; axis < 3; ++axis) {
+            if (item.sides[axis * 2]) item.min[axis] -= distance;
+            if (item.sides[axis * 2 + 1]) item.max[axis] += distance;
+            if (item.max[axis] - item.min[axis] <= 0.001) {
+                emit statusMessage(tr("Pull would collapse or invert a selected box. No changes applied."));
+                return;
+            }
+        }
+        changes.push_back({item.index, part.min, part.max, item.min, item.max,
+                           part.orientation, part.orientation});
     }
-    const size_t index = static_cast<size_t>(partIt - boxes_.begin());
-    undoStack_.push_back({index, partIt->min, partIt->max, nextMin, nextMax, partIt->orientation, partIt->orientation});
+
+    // Store a single grouped undo operation even when only one part has
+    // multiple selected faces.
+    PullChange operation = changes.front();
+    if (changes.size() > 1) operation.groupedChanges = changes;
+    undoStack_.push_back(operation);
     redoStack_.clear();
-    applyBoxBounds(index, nextMin, nextMax);
-    emit statusMessage(tr("Face pulled by %1 mm").arg(distance));
+    hideFaceArrow();
+    batchingPartUpdates_ = true;
+    for (const auto& change : changes)
+        applyPartState(change.partIndex, change.afterMin, change.afterMax,
+                       change.afterOrientation);
+    batchingPartUpdates_ = false;
+    context_->ClearSelected(Standard_False); // Old face owners refer to replaced geometry.
+    view_->Redraw();
+    emit statusMessage(tr("%1 selected face(s) pulled by %2 mm across %3 part(s).")
+        .arg(faceCount).arg(distance).arg(changes.size()));
 }
 void CadViewport::rotateSelectedPart() {
     if (context_.IsNull() || context_->NbSelected() != 1) {
