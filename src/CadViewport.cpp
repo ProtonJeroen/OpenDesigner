@@ -1099,6 +1099,8 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
     }
     if (axisHit < 0) return false;
     rotationAxis_ = axisHit;
+    // A new drag must not reuse the previous group's exact-angle editing state.
+    groupRotationEditing_ = false;
     groupRotationDragging_ = selectedPartIndices_.size() > 1;
     groupRotationBefore_.clear();
     if (groupRotationDragging_) {
@@ -1127,7 +1129,12 @@ double CadViewport::rotationCursorAngle(const QPoint& point, int axis, const gp_
     const double radius = groupRotationDragging_ ? 60.0 : 0.65 * std::max({part.max[0]-part.min[0],
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
     const gp_Dir dir = gp_Dir(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0).Transformed(orientation);
-    const gp_Circ circle(gp_Ax2(center,dir),radius);
+    // Use exactly the same local reference frame as the displayed rotation
+    // gizmo and beginRotationDrag(). Otherwise the angle can jump or appear
+    // unchanged while dragging a single part.
+    const gp_Dir localReference = axis == 0 ? gp_Dir(0,1,0) : gp_Dir(1,0,0);
+    const gp_Dir reference = localReference.Transformed(orientation);
+    const gp_Circ circle(gp_Ax2(center,dir,reference),radius);
     double best = 1e100;
     double result = 0.0;
     constexpr int samples = 360;
