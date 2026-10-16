@@ -47,6 +47,8 @@ protected:
     void wheelEvent(QWheelEvent*) override;
 private:
     struct CadPart {
+        enum class GeometryKind { Box, GeneralBRep };
+        GeometryKind geometryKind = GeometryKind::Box;
         // Canonical local-space B-Rep. Box bounds are temporary editing metadata.
         TopoDS_Shape shape;
         Handle(AIS_Shape) presentation;
