@@ -32,6 +32,8 @@
 #include <gp_Vec.hxx>
 #include <gp_Ax1.hxx>
 #include <TopLoc_Location.hxx>
+#include <Bnd_Box.hxx>
+#include <BRepBndLib.hxx>
 #include <QDialog>
 #include <QFormLayout>
 #include <QComboBox>
@@ -631,10 +633,48 @@ gp_Pnt CadViewport::selectionCenter() const {
     }
     return count ? gp_Pnt(x/count, y/count, z/count) : gp_Pnt(0, 0, 0);
 }
+void CadViewport::setPartVisible(size_t index, bool visible) {
+    if (index >= boxes_.size()) return;
+    auto& part = boxes_[index];
+    if (part.visible == visible) return;
+    part.visible = visible;
+    if (!context_.IsNull()) {
+        if (visible) {
+            context_->Display(part.presentation, Standard_False);
+            context_->Deactivate(part.presentation);
+            context_->Activate(part.presentation,
+                (directMoveMode_ || rotateMode_) ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE),
+                Standard_False);
+        } else {
+            context_->Erase(part.presentation, Standard_False);
+        }
+    }
+    std::vector<size_t> remaining;
+    for (const auto selected : selectedPartIndices_)
+        if (selected < boxes_.size() && boxes_[selected].visible)
+            remaining.push_back(selected);
+    selectParts(remaining);
+}
+bool CadViewport::isPartVisible(size_t index) const {
+    return index < boxes_.size() && boxes_[index].visible;
+}
+void CadViewport::fitSelection(const std::vector<size_t>& indices) {
+    if (view_.IsNull()) return;
+    Bnd_Box bounds;
+    for (const auto index : indices) {
+        if (index >= boxes_.size() || !boxes_[index].visible) continue;
+        const auto& part = boxes_[index];
+        BRepBndLib::Add(part.presentation->Shape().Moved(TopLoc_Location(part.orientation)), bounds);
+    }
+    if (bounds.IsVoid()) return;
+    view_->FitAll(bounds, 0.1, Standard_False);
+    view_->ZFitAll();
+    view_->Redraw();
+}
 void CadViewport::selectParts(const std::vector<size_t>& indices) {
     selectedPartIndices_.clear();
     for (const size_t index : indices) {
-        if (index < boxes_.size() &&
+        if (index < boxes_.size() && boxes_[index].visible &&
             std::find(selectedPartIndices_.begin(), selectedPartIndices_.end(), index)
                 == selectedPartIndices_.end())
             selectedPartIndices_.push_back(index);
