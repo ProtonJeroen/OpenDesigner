@@ -17,7 +17,7 @@
 #include <QActionGroup>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.19 (prototype)");
+    setWindowTitle("OpenDesigner 0.20 (prototype)");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     setCentralWidget(viewport_);
@@ -48,6 +48,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* model = menuBar()->addMenu(tr("&Modeling"));
     auto* boxAction = model->addAction(tr("Create &Box"));
     connect(boxAction, &QAction::triggered, viewport_, &CadViewport::addBox);
+    auto* cylinderAction = model->addAction(tr("Create &Cylinder"));
+    connect(cylinderAction, &QAction::triggered, viewport_, &CadViewport::addCylinder);
     auto* duplicateAction = model->addAction(tr("&Duplicate Selected Parts"));
     duplicateAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
     connect(duplicateAction, &QAction::triggered, viewport_, &CadViewport::duplicateSelectedParts);
