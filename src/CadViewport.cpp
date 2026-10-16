@@ -662,6 +662,13 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
     dragMmPerPixel_ = 31.0 / pixels;
     dragMovesPart_ = movePartMode_;
     multiFaceDragging_ = !dragMovesPart_ && prepareMultiFaceDrag();
+    if (multiFaceDragging_) {
+        // Preserve face identities in multiFaceParts_ before clearing OCCT owners.
+        // The old selection highlight otherwise remains at its original position.
+        context_->ClearSelected(Standard_False);
+        updateMultiFaceHighlight();
+        view_->Redraw();
+    }
     draggingFace_ = true;
     emit statusMessage(dragMovesPart_
         ? tr("Drag arrow to move the entire part.")
