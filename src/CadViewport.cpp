@@ -1116,7 +1116,9 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                     }
             }
         }
-        if (context_->NbSelected() == 1) {
+        // Keep one manipulation arrow as an anchor for a multi-face selection.
+        // The grouped drag operation will use all selected face owners.
+        if (context_->NbSelected() >= 1) {
             context_->InitSelected();
             Handle(StdSelect_BRepOwner) arrowOwner =
                 Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
