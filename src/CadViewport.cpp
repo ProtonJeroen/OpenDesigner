@@ -322,6 +322,19 @@ void CadViewport::addCylinder() {
 }
 void CadViewport::duplicateSelectedParts() {
     initializeViewer();
+    // A face selection identifies its owning part as well. Allow Ctrl+D
+    // directly after clicking a cylinder face, without requiring Alt+click.
+    if (selectedPartIndices_.empty() && !context_.IsNull()) {
+        for (context_->InitSelected(); context_->MoreSelected(); context_->NextSelected()) {
+            const auto object = context_->SelectedInteractive();
+            for (size_t i = 0; i < boxes_.size(); ++i) {
+                if (boxes_[i].presentation == object &&
+                    std::find(selectedPartIndices_.begin(), selectedPartIndices_.end(), i)
+                        == selectedPartIndices_.end())
+                    selectedPartIndices_.push_back(i);
+            }
+        }
+    }
     if (selectedPartIndices_.empty()) {
         emit statusMessage(tr("Select one or more parts with Alt+click or in the Structure Browser."));
         return;
@@ -1496,7 +1509,10 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
         if (max[dragAxis_] - min[dragAxis_] > 0.001
             && std::abs(requested - dragDistance_) > 0.0001) {
             dragDistance_ = requested;
-            applyBoxBounds(dragIndex_, min, max);
+            if (dragMovesPart_ && boxes_[dragIndex_].geometryKind == CadPart::GeometryKind::GeneralBRep)
+                applyPartState(dragIndex_, min, max, boxes_[dragIndex_].orientation);
+            else
+                applyBoxBounds(dragIndex_, min, max);
             emit statusMessage(tr("%1: %2 mm")
                 .arg(dragMovesPart_ ? tr("Move Part") : tr("Pull Face"))
                 .arg(dragDistance_, 0, 'f', 1));
