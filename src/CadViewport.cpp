@@ -295,6 +295,52 @@ void CadViewport::addBox() {
     emit partCreated(QString("Part %1").arg(partCount_));
     fitAll();
 }
+void CadViewport::duplicateSelectedParts() {
+    initializeViewer();
+    if (selectedPartIndices_.empty()) {
+        emit statusMessage(tr("Select one or more parts with Alt+click or in the Structure Browser."));
+        return;
+    }
+    // Snapshot indices: newly appended copies must not become inputs to this operation.
+    const auto sources = selectedPartIndices_;
+    std::vector<size_t> copies;
+    constexpr double offsetMm = 25.0;
+    for (const size_t index : sources) {
+        if (index >= boxes_.size() || !boxes_[index].visible) continue;
+        const BoxPart original = boxes_[index];
+        BoxPart copy;
+        copy.min = original.min;
+        copy.max = original.max;
+        copy.orientation = original.orientation;
+        // Translate in world X without altering the part's local dimensions or rotation.
+        gp_Trsf translation;
+        translation.SetTranslation(gp_Vec(offsetMm, 0.0, 0.0));
+        copy.orientation = translation * original.orientation;
+        copy.visible = true;
+        const TopoDS_Shape shape = BRepPrimAPI_MakeBox(
+            gp_Pnt(copy.min[0], copy.min[1], copy.min[2]),
+            copy.max[0] - copy.min[0], copy.max[1] - copy.min[1],
+            copy.max[2] - copy.min[2]).Shape();
+        copy.presentation = new AIS_Shape(shape);
+        copy.presentation->SetColor(Quantity_NOC_LIGHTGRAY);
+        copy.presentation->SetLocalTransformation(copy.orientation);
+        context_->Display(copy.presentation, Standard_False);
+        context_->SetDisplayMode(copy.presentation, AIS_Shaded, Standard_False);
+        context_->Deactivate(copy.presentation);
+        context_->Activate(copy.presentation,
+            (directMoveMode_ || rotateMode_) ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE),
+            Standard_False);
+        boxes_.push_back(copy);
+        copies.push_back(boxes_.size() - 1);
+        ++partCount_;
+        emit partCreated(QString("Part %1").arg(partCount_));
+    }
+    if (copies.empty()) return;
+    selectParts(copies);
+    emit statusMessage(tr("%1 part(s) duplicated. Use Move Part to position copies.")
+        .arg(copies.size()));
+}
+
 void CadViewport::pullSelectedFace() {
     if (context_.IsNull() || context_->NbSelected() == 0) {
         emit statusMessage(tr("Select one or more planar box faces first."));

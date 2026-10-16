@@ -17,7 +17,7 @@
 #include <QActionGroup>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.16 (prototype)");
+    setWindowTitle("OpenDesigner 0.19 (prototype)");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     setCentralWidget(viewport_);
@@ -48,6 +48,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* model = menuBar()->addMenu(tr("&Modeling"));
     auto* boxAction = model->addAction(tr("Create &Box"));
     connect(boxAction, &QAction::triggered, viewport_, &CadViewport::addBox);
+    auto* duplicateAction = model->addAction(tr("&Duplicate Selected Parts"));
+    duplicateAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
+    connect(duplicateAction, &QAction::triggered, viewport_, &CadViewport::duplicateSelectedParts);
     auto* pullAction = model->addAction(tr("&Pull Face..."));
     connect(pullAction, &QAction::triggered, viewport_, &CadViewport::pullSelectedFace);
     auto* movePartAction = model->addAction(tr("Move &Part Along Face..."));
@@ -104,10 +107,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.15 — Interactive Rotate Part prototype."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.19 — Duplicate Parts prototype."));
     });
     auto* toolbar = addToolBar(tr("Modeling"));
     toolbar->addAction(boxAction);
+    toolbar->addAction(duplicateAction);
     toolbar->addAction(pullAction);
     toolbar->addAction(movePartAction);
     toolbar->addAction(rotatePartAction);
@@ -182,6 +186,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         QMenu menu(structure_);
         auto* select = menu.addAction(tr("Select"));
         auto* rename = menu.addAction(tr("Rename (F2)"));
+        auto* duplicate = menu.addAction(tr("Duplicate Selected Parts"));
         menu.addSeparator();
         auto* hide = menu.addAction(targets.size() > 1 ? tr("Hide Selected Parts") : tr("Hide"));
         auto* show = menu.addAction(targets.size() > 1 ? tr("Show Selected Parts") : tr("Show"));
@@ -191,6 +196,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         if (chosen == select) {
             structure_->clearSelection();
             item->setSelected(true);
+        } else if (chosen == duplicate) {
+            std::vector<size_t> indices;
+            for (auto* target : targets) {
+                const size_t index = static_cast<size_t>(target->data(0, Qt::UserRole).toULongLong());
+                if (viewport_->isPartVisible(index)) indices.push_back(index);
+            }
+            viewport_->selectParts(indices);
+            viewport_->duplicateSelectedParts();
         } else if (chosen == rename) {
             structure_->setCurrentItem(item, 0);
             structure_->editItem(item, 0);
