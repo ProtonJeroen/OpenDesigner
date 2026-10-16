@@ -81,6 +81,25 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
             return;
         }
         if (!dimensionEditing_) return;
+        if (multiFaceEditing_) {
+            bool ok = false;
+            const double distance = QLocale().toDouble(dragDimension_->text(), &ok);
+            if (!ok || !applyMultiFaceDrag(distance)) {
+                emit statusMessage(tr("Invalid distance: one or more boxes would collapse."));
+                return;
+            }
+            if (!undoStack_.empty()) {
+                for (auto& change : undoStack_.back().groupedChanges) {
+                    change.afterMin = boxes_[change.partIndex].min;
+                    change.afterMax = boxes_[change.partIndex].max;
+                }
+            }
+            multiFaceEditing_ = false;
+            dimensionEditing_ = false;
+            dragDimension_->hide();
+            setFocus();
+            return;
+        }
         if (groupMoveEditing_) {
             bool ok = false;
             const double distance = QLocale().toDouble(dragDimension_->text(), &ok);
@@ -133,6 +152,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
         rotationEditing_ = false;
         groupRotationEditing_ = false;
         groupMoveEditing_ = false;
+        multiFaceEditing_ = false;
         setFocus();
     });
 }
@@ -590,6 +610,7 @@ bool CadViewport::beginFaceDrag(const QPoint& origin) {
     dragScreenY_ = dy / pixels;
     dragMmPerPixel_ = 100.0 / pixels;
     dragMovesPart_ = movePartMode_;
+    multiFaceDragging_ = !dragMovesPart_ && prepareMultiFaceDrag();
     draggingFace_ = true;
     emit statusMessage(dragMovesPart_
         ? tr("Drag to move the entire part along the face normal.")
@@ -642,6 +663,64 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
         : tr("Drag arrow along face normal; release to commit."));
     return true;
 }
+bool CadViewport::prepareMultiFaceDrag() {
+    multiFaceParts_.clear();
+    if (context_.IsNull() || context_->NbSelected() < 2) return false;
+    for (context_->InitSelected(); context_->MoreSelected(); context_->NextSelected()) {
+        const auto owner = Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
+        if (owner.IsNull() || owner->Shape().IsNull() || owner->Shape().ShapeType() != TopAbs_FACE) {
+            multiFaceParts_.clear();
+            return false;
+        }
+        const auto object = context_->SelectedInteractive();
+        size_t index = 0;
+        while (index < boxes_.size() && boxes_[index].presentation != object) ++index;
+        if (index == boxes_.size()) { multiFaceParts_.clear(); return false; }
+        const auto surface = BRepAdaptor_Surface(TopoDS::Face(owner->Shape()));
+        if (surface.GetType() != GeomAbs_Plane) { multiFaceParts_.clear(); return false; }
+        const gp_Dir normal = surface.Plane().Axis().Direction();
+        const double n[3] = {normal.X(), normal.Y(), normal.Z()};
+        int axis = 0;
+        for (int k = 1; k < 3; ++k) if (std::abs(n[k]) > std::abs(n[axis])) axis = k;
+        if (std::abs(n[axis]) < 0.999) { multiFaceParts_.clear(); return false; }
+        const auto& part = boxes_[index];
+        const double position = surface.Plane().Location().Coord(axis + 1);
+        const bool onMax = std::abs(position - part.max[axis]) < 0.001;
+        const bool onMin = std::abs(position - part.min[axis]) < 0.001;
+        if (!onMax && !onMin) { multiFaceParts_.clear(); return false; }
+        auto it = std::find_if(multiFaceParts_.begin(), multiFaceParts_.end(),
+            [index](const FaceDragPart& item) { return item.before.partIndex == index; });
+        if (it == multiFaceParts_.end()) {
+            PullChange before{index, part.min, part.max, part.min, part.max,
+                              part.orientation, part.orientation};
+            multiFaceParts_.push_back({before, {}});
+            it = std::prev(multiFaceParts_.end());
+        }
+        it->sides[axis * 2 + (onMax ? 1 : 0)] = true;
+    }
+    return !multiFaceParts_.empty();
+}
+
+bool CadViewport::applyMultiFaceDrag(double distance) {
+    // Validate the complete group before applying any geometry.
+    std::vector<PullChange> changes;
+    for (const auto& item : multiFaceParts_) {
+        auto change = item.before;
+        for (int axis = 0; axis < 3; ++axis) {
+            if (item.sides[axis * 2]) change.afterMin[axis] -= distance;
+            if (item.sides[axis * 2 + 1]) change.afterMax[axis] += distance;
+            if (change.afterMax[axis] - change.afterMin[axis] <= 0.001) return false;
+        }
+        changes.push_back(change);
+    }
+    batchingPartUpdates_ = true;
+    for (const auto& change : changes)
+        applyPartState(change.partIndex, change.afterMin, change.afterMax, change.afterOrientation);
+    batchingPartUpdates_ = false;
+    view_->Redraw();
+    return true;
+}
+
 void CadViewport::showDragDimension(const QPoint& position) {
     if (!dragDimension_) return;
     dragDimension_->setText(QLocale().toString(dragDistance_, 'f', 2));
@@ -1199,6 +1278,15 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
         const double requested = snapping
             ? std::round(rawDistance / snapStepMm_) * snapStepMm_
             : rawDistance;
+        if (multiFaceDragging_) {
+            if (std::abs(requested - dragDistance_) > 0.0001 && applyMultiFaceDrag(requested)) {
+                dragDistance_ = requested;
+                showDragDimension(p);
+                emit statusMessage(tr("Multi-Face Pull: %1 mm").arg(requested, 0, 'f', 1));
+            }
+            previous_ = p;
+            return;
+        }
         if (groupMoveDragging_) {
             if (std::abs(requested - dragDistance_) > 0.0001) {
                 dragDistance_ = requested;
@@ -1260,6 +1348,27 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     }
     if (e->button() != Qt::LeftButton || !draggingFace_) return;
     draggingFace_ = false;
+    if (multiFaceDragging_) {
+        multiFaceDragging_ = false;
+        if (std::abs(dragDistance_) < 0.0001) { dragDimension_->hide(); return; }
+        PullChange operation = multiFaceParts_.front().before;
+        operation.groupedChanges.clear();
+        for (const auto& item : multiFaceParts_) {
+            auto change = item.before;
+            change.afterMin = boxes_[change.partIndex].min;
+            change.afterMax = boxes_[change.partIndex].max;
+            operation.groupedChanges.push_back(change);
+        }
+        undoStack_.push_back(operation);
+        redoStack_.clear();
+        multiFaceEditing_ = true;
+        dimensionEditing_ = true;
+        showDragDimension(e->pos());
+        dragDimension_->setFocus();
+        dragDimension_->selectAll();
+        emit statusMessage(tr("Multi-Face Pull: enter exact mm or Esc to keep."));
+        return;
+    }
     if (groupMoveDragging_) {
         groupMoveDragging_ = false;
         if (std::abs(dragDistance_) < 0.0001) { dragDimension_->hide(); return; }
