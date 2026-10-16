@@ -1,6 +1,8 @@
 #include "MainWindow.h"
 #include "CadViewport.h"
 #include <QTreeWidget>
+#include <QSignalBlocker>
+#include <QAbstractItemView>
 #include <QDockWidget>
 #include <QMenuBar>
 #include <QToolBar>
@@ -11,13 +13,14 @@
 #include <QActionGroup>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.15 (prototype)");
+    setWindowTitle("OpenDesigner 0.16 (prototype)");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     setCentralWidget(viewport_);
     auto* dock = new QDockWidget(tr("Structure Browser"), this);
     structure_ = new QTreeWidget(dock);
     structure_->setHeaderLabel(tr("Model"));
+    structure_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     auto* root = new QTreeWidgetItem(structure_, QStringList{tr("Assembly 1")});
     root->setExpanded(true);
     dock->setWidget(structure_);
@@ -108,9 +111,26 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     toolbar->addAction(undoAction);
     toolbar->addAction(redoAction);
     connect(viewport_, &CadViewport::partCreated, this, [this, root](const QString& name) {
-        new QTreeWidgetItem(root, QStringList{name});
+        auto* item = new QTreeWidgetItem(root, QStringList{name});
+        item->setData(0, Qt::UserRole, root->childCount() - 1);
         root->setExpanded(true);
         statusBar()->showMessage(name + tr(" created"), 3000);
+    });
+    connect(structure_, &QTreeWidget::itemSelectionChanged, this, [this, root]() {
+        std::vector<size_t> indices;
+        for (auto* item : structure_->selectedItems()) {
+            if (item->parent() != root) continue;
+            indices.push_back(static_cast<size_t>(item->data(0, Qt::UserRole).toULongLong()));
+        }
+        viewport_->selectParts(indices);
+    });
+    connect(viewport_, &CadViewport::partSelectionChanged, this, [this, root](const std::vector<size_t>& indices) {
+        const QSignalBlocker blocker(structure_);
+        structure_->clearSelection();
+        for (const size_t index : indices) {
+            if (index < static_cast<size_t>(root->childCount()))
+                root->child(static_cast<int>(index))->setSelected(true);
+        }
     });
     connect(viewport_, &CadViewport::statusMessage, this, [this](const QString& msg) {
         statusBar()->showMessage(msg, 5000);
