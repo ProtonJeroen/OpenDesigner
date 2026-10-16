@@ -20,6 +20,8 @@
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepOffsetAPI_MakePipe.hxx>
 #include <gp_Circ.hxx>
 #include <ElCLib.hxx>
 #include <BRep_Builder.hxx>
@@ -650,13 +652,22 @@ void CadViewport::updateRotationRings() {
         BRep_Builder builder;
         TopoDS_Compound arrow;
         builder.MakeCompound(arrow);
-        builder.Add(arrow,BRepBuilderAPI_MakeEdge(circle,start,finish).Shape());
+        // Sweep a circular profile along the arc: same solid, shaded style as move arrows.
+        const double shaftRadius = 1.7;
+        const gp_Pnt arcStart = ElCLib::Value(start, circle);
+        const gp_Vec startTangent(arcStart, ElCLib::Value(start+0.01, circle));
+        const TopoDS_Wire arcPath = BRepBuilderAPI_MakeWire(
+            BRepBuilderAPI_MakeEdge(circle, start, finish)).Wire();
+        const TopoDS_Wire profile = BRepBuilderAPI_MakeWire(
+            BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(arcStart, gp_Dir(startTangent)), shaftRadius))).Wire();
+        builder.Add(arrow, BRepOffsetAPI_MakePipe(arcPath, BRepBuilderAPI_MakeFace(profile).Face()).Shape());
         const gp_Pnt coneBase = arcEnd.Translated(tangent.Normalized().Multiplied(-10.0));
         builder.Add(arrow,BRepPrimAPI_MakeCone(gp_Ax2(coneBase,gp_Dir(tangent)),4.5,0.0,10.0).Shape());
         rotationRings_[axis] = new AIS_Shape(arrow);
         rotationRings_[axis]->SetColor(axis == 0 ? Quantity_NOC_RED
             : axis == 1 ? Quantity_NOC_GREEN : Quantity_NOC_BLUE1);
         context_->Display(rotationRings_[axis], Standard_False);
+        context_->SetDisplayMode(rotationRings_[axis], AIS_Shaded, Standard_False);
         context_->SetZLayer(rotationRings_[axis], Graphic3d_ZLayerId_Topmost);
         context_->Deactivate(rotationRings_[axis]);
     }
