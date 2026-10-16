@@ -160,9 +160,8 @@ void CadViewport::initializeViewer() {
         context_->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected);
     if (!faceSelectionStyle.IsNull()) {
         faceSelectionStyle->SetColor(cyan);
-        faceSelectionStyle->SetDisplayMode(AIS_Shaded);
-        faceSelectionStyle->SetupOwnShadingAspect();
-        faceSelectionStyle->ShadingAspect()->SetColor(cyan);
+        // Outline only: leave the actual face material untouched.
+        faceSelectionStyle->SetDisplayMode(AIS_WireFrame);
     }
     const Quantity_Color hoverEdges(0.85, 0.85, 0.85, Quantity_TOC_RGB);
     const Handle(Prs3d_Drawer) dynamicStyle =
@@ -1084,10 +1083,9 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             return;
         }
         // Use OCCT's additive selection scheme for Ctrl+click on faces.
-        // Highlight selected faces with a cyan shaded overlay, while whole
-        // parts retain the cyan edge-only style.
+        // Highlight selected faces by cyan edges only, preserving their material.
         if (!context_->SelectionStyle().IsNull())
-            context_->SelectionStyle()->SetDisplayMode(AIS_Shaded);
+            context_->SelectionStyle()->SetDisplayMode(AIS_WireFrame);
         context_->SelectDetected(additiveSelection
             ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
         hideFaceArrow();
