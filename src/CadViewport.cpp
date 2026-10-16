@@ -153,6 +153,17 @@ void CadViewport::initializeViewer() {
         selectionStyle->SetColor(cyan);
         selectionStyle->SetDisplayMode(AIS_WireFrame);
     }
+    // OCCT uses a separate local-selection highlight drawer for faces.
+    // Configuring only SelectionStyle() changes whole-object selection,
+    // but leaves selected subshapes with the default highlight color.
+    const Handle(Prs3d_Drawer) faceSelectionStyle =
+        context_->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected);
+    if (!faceSelectionStyle.IsNull()) {
+        faceSelectionStyle->SetColor(cyan);
+        faceSelectionStyle->SetDisplayMode(AIS_Shaded);
+        faceSelectionStyle->SetupOwnShadingAspect();
+        faceSelectionStyle->ShadingAspect()->SetColor(cyan);
+    }
     const Quantity_Color hoverEdges(0.85, 0.85, 0.85, Quantity_TOC_RGB);
     const Handle(Prs3d_Drawer) dynamicStyle =
         context_->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic);
