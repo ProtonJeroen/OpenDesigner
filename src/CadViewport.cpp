@@ -643,7 +643,12 @@ void CadViewport::updateRotationRings() {
         const gp_Dir dir = gp_Dir(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0).Transformed(part.orientation);
         // A 120-degree curved arrow replaces the full 360-degree ring.
         // The tip is tangent to the arc, indicating positive rotation.
-        const gp_Circ circle(gp_Ax2(center,dir),radius);
+        // Keep the circle's zero-angle direction attached to the part's local frame.
+        // gp_Ax2(center, dir) alone chooses an arbitrary world-aligned X direction,
+        // so a curved arrow would appear stationary when rotating around its own axis.
+        const gp_Dir localReference = axis == 0 ? gp_Dir(0,1,0) : gp_Dir(1,0,0);
+        const gp_Dir reference = localReference.Transformed(part.orientation);
+        const gp_Circ circle(gp_Ax2(center,dir,reference),radius);
         constexpr double pi = 3.14159265358979323846;
         const double start = pi / 12.0;
         const double finish = start + 2.0*pi/3.0;
@@ -685,7 +690,12 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
     int axisHit = -1;
     for (int axis = 0; axis < 3; ++axis) {
         const gp_Dir dir = gp_Dir(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0).Transformed(part.orientation);
-        const gp_Circ circle(gp_Ax2(center,dir),radius);
+        // Keep the circle's zero-angle direction attached to the part's local frame.
+        // gp_Ax2(center, dir) alone chooses an arbitrary world-aligned X direction,
+        // so a curved arrow would appear stationary when rotating around its own axis.
+        const gp_Dir localReference = axis == 0 ? gp_Dir(0,1,0) : gp_Dir(1,0,0);
+        const gp_Dir reference = localReference.Transformed(part.orientation);
+        const gp_Circ circle(gp_Ax2(center,dir,reference),radius);
         for (int i = 0; i <= 96; ++i) {
             const double angle = 3.14159265358979323846 / 12.0 + i * (2.0 * 3.14159265358979323846 / 3.0) / 96.0;
             const gp_Pnt world = ElCLib::Value(angle, circle);
