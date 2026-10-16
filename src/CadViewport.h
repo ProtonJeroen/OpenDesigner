@@ -27,8 +27,10 @@ public:
     void setRotateMode(bool enabled);
     void setDirectMoveMode(bool enabled);
     void setAngleSnap(double degrees);
+    void selectParts(const std::vector<size_t>& indices);
 signals:
     void partCreated(const QString& name);
+    void partSelectionChanged(const std::vector<size_t>& indices);
     void statusMessage(const QString& message);
 protected:
     QPaintEngine* paintEngine() const override;
