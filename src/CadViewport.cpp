@@ -296,6 +296,30 @@ void CadViewport::addBox() {
     emit partCreated(QString("Part %1").arg(partCount_));
     fitAll();
 }
+void CadViewport::addCylinder() {
+    initializeViewer();
+    const double x = partCount_ * 125.0;
+    constexpr double radius = 40.0;
+    constexpr double height = 80.0;
+    CadPart part;
+    part.geometryKind = CadPart::GeometryKind::GeneralBRep;
+    // Bounds are currently used to place the shared move/rotate manipulators.
+    part.min = {x - radius, -radius, 0.0};
+    part.max = {x + radius, radius, height};
+    part.shape = BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(x, 0, 0),
+        gp_Dir(0, 0, 1)), radius, height).Shape();
+    part.presentation = new AIS_Shape(part.shape);
+    part.presentation->SetColor(Quantity_NOC_LIGHTGRAY);
+    context_->Display(part.presentation, Standard_False);
+    context_->SetDisplayMode(part.presentation, AIS_Shaded, Standard_False);
+    context_->Deactivate(part.presentation);
+    context_->Activate(part.presentation, AIS_Shape::SelectionMode(TopAbs_FACE),
+        Standard_False);
+    boxes_.push_back(part);
+    ++partCount_;
+    emit partCreated(QString("Cylinder %1").arg(partCount_));
+    fitAll();
+}
 void CadViewport::duplicateSelectedParts() {
     initializeViewer();
     if (selectedPartIndices_.empty()) {
@@ -555,7 +579,30 @@ void CadViewport::movePartAlongSelectedFace() {
 void CadViewport::applyPartState(size_t index, const std::array<double, 3>& min,
                                  const std::array<double, 3>& max, const gp_Trsf& orientation) {
     if (index >= boxes_.size()) return;
-    boxes_[index].orientation = orientation;
+    auto& part = boxes_[index];
+    if (part.geometryKind == CadPart::GeometryKind::GeneralBRep) {
+        // The shape stays in local coordinates. Move the instance by the
+        // change in local bounds; rotate by the requested world transform.
+        const gp_Vec delta(min[0] - part.min[0], min[1] - part.min[1],
+                           min[2] - part.min[2]);
+        gp_Trsf localShift;
+        localShift.SetTranslation(delta);
+        part.orientation = orientation * localShift;
+        part.min = min;
+        part.max = max;
+        if (!context_.IsNull()) {
+            if (!batchingPartUpdates_) context_->ClearSelected(Standard_False);
+            part.presentation->SetLocalTransformation(part.orientation);
+            context_->Redisplay(part.presentation, Standard_False);
+            if (!batchingPartUpdates_) {
+                if (rotateMode_) updateRotationRings();
+                if (directMoveMode_) updateMoveAxes();
+                view_->Redraw();
+            }
+        }
+        return;
+    }
+    part.orientation = orientation;
     applyBoxBounds(index, min, max);
 }
 void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
