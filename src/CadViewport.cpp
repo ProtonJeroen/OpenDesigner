@@ -115,22 +115,27 @@ void CadViewport::initializeViewer() {
     viewer_->SetDefaultLights();
     viewer_->SetLightOn();
     context_ = new AIS_InteractiveContext(viewer_);
-    // Selected parts are cyan; hovered parts keep their material hue
-    // and receive a lighter, higher-intensity appearance.
-    Handle(Prs3d_Drawer) selectedStyle = new Prs3d_Drawer();
-    selectedStyle->SetColor(Quantity_Color(0.0, 0.95, 1.0, Quantity_TOC_RGB));
-    selectedStyle->SetDisplayMode(AIS_Shaded);
-    selectedStyle->SetTransparency(0.0);
-    context_->SetSelectionStyle(selectedStyle);
-
-    Handle(Prs3d_Drawer) hoverStyle = new Prs3d_Drawer();
-    hoverStyle->SetDisplayMode(AIS_Shaded);
-    hoverStyle->SetTransparency(0.0);
-    // Highlight intensity preserves the object's underlying color.
-    hoverStyle->SetColor(Quantity_NOC_WHITE);
-    hoverStyle->SetMethod(Aspect_TOHM_COLOR);
-    context_->SetHighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic, hoverStyle);
-    context_->SetHighlightStyle(Prs3d_TypeOfHighlight_Dynamic, hoverStyle);
+    // Configure OCCT's initialized drawers instead of replacing them with
+    // empty drawers: shaded highlights need valid material/aspect handles.
+    const Quantity_Color cyan(0.0, 0.95, 1.0, Quantity_TOC_RGB);
+    const Handle(Prs3d_Drawer) selectionStyle = context_->SelectionStyle();
+    if (!selectionStyle.IsNull()) {
+        selectionStyle->SetColor(cyan);
+        selectionStyle->SetDisplayMode(AIS_Shaded);
+    }
+    // A pale overlay gives a brighter preview without modifying part colors.
+    const Handle(Prs3d_Drawer) dynamicStyle =
+        context_->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic);
+    if (!dynamicStyle.IsNull()) {
+        dynamicStyle->SetColor(Quantity_Color(0.85, 0.85, 0.85, Quantity_TOC_RGB));
+        dynamicStyle->SetDisplayMode(AIS_Shaded);
+    }
+    const Handle(Prs3d_Drawer) localDynamicStyle =
+        context_->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic);
+    if (!localDynamicStyle.IsNull()) {
+        localDynamicStyle->SetColor(Quantity_Color(0.85, 0.85, 0.85, Quantity_TOC_RGB));
+        localDynamicStyle->SetDisplayMode(AIS_Shaded);
+    }
     view_ = viewer_->CreateView();
     Handle(Aspect_NeutralWindow) window = new Aspect_NeutralWindow();
     window->SetNativeHandle(static_cast<Aspect_Drawable>(winId()));
