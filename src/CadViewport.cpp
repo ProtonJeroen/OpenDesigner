@@ -847,7 +847,7 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
             (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
     const double radius = selectedPartIndices_.size() > 1 ? 60.0 : 0.65 * std::max({part.max[0]-part.min[0],
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
-    double best = 12.0;
+    double best = 16.0;
     int axisHit = -1;
     for (int axis = 0; axis < 3; ++axis) {
         const gp_Dir dir = gp_Dir(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0).Transformed(part.orientation);
@@ -966,8 +966,10 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             dragDimension_->hide();
         }
         const bool additiveSelection = (directMoveMode_ || rotateMode_) && (e->modifiers() & Qt::ControlModifier);
-        if (!additiveSelection && beginMoveAxisDrag(e->pos())) return;
+        // Prioritize curved rotation handles over the projected straight move axes.
+        // Their screen-space hit regions can overlap, especially with group selection.
         if (!additiveSelection && beginRotationDrag(e->pos())) return;
+        if (!additiveSelection && beginMoveAxisDrag(e->pos())) return;
         if (directMoveMode_ || rotateMode_) {
             // The combined gizmo takes precedence over the legacy face arrow.
         } else if (beginArrowDrag(e->pos())) return;
