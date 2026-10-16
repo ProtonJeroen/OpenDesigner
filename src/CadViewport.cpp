@@ -32,6 +32,8 @@
 #include <gp_Vec.hxx>
 #include <gp_Ax1.hxx>
 #include <TopLoc_Location.hxx>
+#include <Bnd_Box.hxx>
+#include <BRepBndLib.hxx>
 #include <QDialog>
 #include <QFormLayout>
 #include <QComboBox>
@@ -631,6 +633,58 @@ gp_Pnt CadViewport::selectionCenter() const {
     }
     return count ? gp_Pnt(x/count, y/count, z/count) : gp_Pnt(0, 0, 0);
 }
+void CadViewport::setPartVisible(size_t index, bool visible) {
+    if (index >= boxes_.size()) return;
+    auto& part = boxes_[index];
+    if (part.visible == visible) return;
+    part.visible = visible;
+    if (!context_.IsNull()) {
+        if (visible) {
+            context_->Display(part.presentation, Standard_False);
+            context_->Deactivate(part.presentation);
+            context_->Activate(part.presentation,
+                (directMoveMode_ || rotateMode_) ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE),
+                Standard_False);
+        } else {
+            context_->Erase(part.presentation, Standard_False);
+        }
+    }
+    std::vector<size_t> remaining;
+    for (const auto selected : selectedPartIndices_)
+        if (selected < boxes_.size() && boxes_[selected].visible)
+            remaining.push_back(selected);
+    selectParts(remaining);
+}
+bool CadViewport::isPartVisible(size_t index) const {
+    return index < boxes_.size() && boxes_[index].visible;
+}
+void CadViewport::fitSelection(const std::vector<size_t>& indices) {
+    if (view_.IsNull()) return;
+    Bnd_Box bounds;
+    for (const auto index : indices) {
+        if (index >= boxes_.size() || !boxes_[index].visible) continue;
+        const auto& part = boxes_[index];
+        BRepBndLib::Add(part.presentation->Shape().Moved(TopLoc_Location(part.orientation)), bounds);
+    }
+    if (bounds.IsVoid()) return;
+    view_->FitAll(bounds, 0.1, Standard_False);
+    view_->ZFitAll();
+    view_->Redraw();
+}
+void CadViewport::selectParts(const std::vector<size_t>& indices) {
+    selectedPartIndices_.clear();
+    for (const size_t index : indices) {
+        if (index < boxes_.size() && boxes_[index].visible &&
+            std::find(selectedPartIndices_.begin(), selectedPartIndices_.end(), index)
+                == selectedPartIndices_.end())
+            selectedPartIndices_.push_back(index);
+    }
+    hideFaceArrow();
+    hideMoveAxes();
+    hideRotationRings();
+    refreshPartSelection();
+    emit partSelectionChanged(selectedPartIndices_);
+}
 void CadViewport::refreshPartSelection() {
     if (context_.IsNull()) return;
     context_->ClearSelected(Standard_False);
@@ -695,6 +749,7 @@ void CadViewport::setTransformSelectionMode() {
         ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE);
     context_->ClearSelected(Standard_False);
     selectedPartIndices_.clear();
+    emit partSelectionChanged(selectedPartIndices_);
     for (auto& part : boxes_) {
         context_->Deactivate(part.presentation);
         context_->Activate(part.presentation, mode, Standard_False);
@@ -832,7 +887,7 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
             (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
     const double radius = selectedPartIndices_.size() > 1 ? 60.0 : 0.65 * std::max({part.max[0]-part.min[0],
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
-    double best = 12.0;
+    double best = 16.0;
     int axisHit = -1;
     for (int axis = 0; axis < 3; ++axis) {
         const gp_Dir dir = gp_Dir(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0).Transformed(part.orientation);
@@ -951,8 +1006,10 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             dragDimension_->hide();
         }
         const bool additiveSelection = (directMoveMode_ || rotateMode_) && (e->modifiers() & Qt::ControlModifier);
-        if (!additiveSelection && beginMoveAxisDrag(e->pos())) return;
+        // Prioritize curved rotation handles over the projected straight move axes.
+        // Their screen-space hit regions can overlap, especially with group selection.
         if (!additiveSelection && beginRotationDrag(e->pos())) return;
+        if (!additiveSelection && beginMoveAxisDrag(e->pos())) return;
         if (directMoveMode_ || rotateMode_) {
             // The combined gizmo takes precedence over the legacy face arrow.
         } else if (beginArrowDrag(e->pos())) return;
@@ -1000,6 +1057,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                 updateMoveAxes();
                 updateRotationRings();
             }
+            emit partSelectionChanged(selectedPartIndices_);
             const int count = static_cast<int>(selectedPartIndices_.size());
             emit statusMessage(count > 1
                 ? tr("%1 parts selected. Drag an axis to move the group.").arg(count)
