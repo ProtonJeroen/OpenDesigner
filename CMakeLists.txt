@@ -32,6 +32,7 @@ target_link_libraries(OpenDesigner PRIVATE
     TKTopAlgo
     TKGeomBase
     TKGeomAlgo
+    TKOffset
     TKG3d
     TKG2d
     TKMath
