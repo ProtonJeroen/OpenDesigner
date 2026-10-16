@@ -4,6 +4,7 @@
 class QLineEdit;
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
+#include <TopoDS_Shape.hxx>
 #include <gp_Trsf.hxx>
 #include <V3d_Viewer.hxx>
 #include <V3d_View.hxx>
@@ -45,7 +46,9 @@ protected:
     void mouseReleaseEvent(QMouseEvent*) override;
     void wheelEvent(QWheelEvent*) override;
 private:
-    struct BoxPart {
+    struct CadPart {
+        // Canonical local-space B-Rep. Box bounds are temporary editing metadata.
+        TopoDS_Shape shape;
         Handle(AIS_Shape) presentation;
         std::array<double, 3> min;
         std::array<double, 3> max;
@@ -95,7 +98,7 @@ private:
     int arrowAxis_ = 0;
     bool arrowMax_ = true;
     bool arrowVisible_ = false;
-    std::vector<BoxPart> boxes_;
+    std::vector<CadPart> boxes_;
     std::vector<size_t> selectedPartIndices_;
     std::vector<PullChange> groupMoveBefore_;
     gp_Dir groupMoveDirection_ = gp_Dir(1, 0, 0);
