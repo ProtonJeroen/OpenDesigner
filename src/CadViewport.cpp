@@ -785,7 +785,12 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
         } else if (beginArrowDrag(e->pos())) return;
         if ((e->modifiers() & Qt::ControlModifier) && beginFaceDrag(e->pos())) return;
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
-        context_->SelectDetected();
+        // Ctrl toggles an individual part in the current selection.
+        // OCCT keeps the selected faces highlighted while we collect a multi-part set.
+        const bool multiSelect = (e->modifiers() & Qt::ControlModifier)
+            && (directMoveMode_ || rotateMode_);
+        context_->SelectDetected(multiSelect ? AIS_SelectionScheme_XOR
+                                            : AIS_SelectionScheme_Replace);
         hideFaceArrow();
         if (directMoveMode_ || rotateMode_) {
             hideMoveAxes();
@@ -796,6 +801,11 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                 for (size_t i=0;i<boxes_.size();++i)
                     if (boxes_[i].presentation==selected) { moveIndex_=i; rotationIndex_=i; updateMoveAxes(); updateRotationRings(); break; }
             }
+            const int count = context_->NbSelected();
+            emit statusMessage(count > 1
+                ? tr("%1 faces selected. Multi-part transforms are not yet enabled.").arg(count)
+                : count == 1 ? tr("Part selected. Drag a transform arrow.")
+                             : tr("Selection cleared."));
             view_->Redraw();
             return;
         }
