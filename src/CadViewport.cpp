@@ -310,6 +310,7 @@ void CadViewport::duplicateSelectedParts() {
         if (index >= boxes_.size() || !boxes_[index].visible) continue;
         const CadPart original = boxes_[index];
         CadPart copy;
+        copy.geometryKind = original.geometryKind;
         copy.min = original.min;
         copy.max = original.max;
         copy.orientation = original.orientation;
@@ -318,11 +319,9 @@ void CadViewport::duplicateSelectedParts() {
         translation.SetTranslation(gp_Vec(offsetMm, 0.0, 0.0));
         copy.orientation = translation * original.orientation;
         copy.visible = true;
-        const TopoDS_Shape shape = BRepPrimAPI_MakeBox(
-            gp_Pnt(copy.min[0], copy.min[1], copy.min[2]),
-            copy.max[0] - copy.min[0], copy.max[1] - copy.min[1],
-            copy.max[2] - copy.min[2]).Shape();
-        copy.shape = shape;
+        // Preserve the source B-Rep instead of reconstructing a box.
+        // TopoDS_Shape is reference-counted and can be shared across instances.
+        copy.shape = original.shape;
         copy.presentation = new AIS_Shape(copy.shape);
         copy.presentation->SetColor(Quantity_NOC_LIGHTGRAY);
         copy.presentation->SetLocalTransformation(copy.orientation);
@@ -563,6 +562,8 @@ void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
                                  const std::array<double, 3>& max) {
     if (index >= boxes_.size() || context_.IsNull()) return;
     auto& part = boxes_[index];
+    // Box-only direct modeling must not overwrite an arbitrary imported B-Rep.
+    if (part.geometryKind != CadPart::GeometryKind::Box) return;
     TopoDS_Shape shape = BRepPrimAPI_MakeBox(
         gp_Pnt(min[0], min[1], min[2]),
         max[0] - min[0], max[1] - min[1], max[2] - min[2]).Shape();
