@@ -582,6 +582,7 @@ void CadViewport::setTransformSelectionMode() {
     const int mode = (directMoveMode_ || rotateMode_)
         ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE);
     context_->ClearSelected(Standard_False);
+    selectedPartIndices_.clear();
     for (auto& part : boxes_) {
         context_->Deactivate(part.presentation);
         context_->Activate(part.presentation, mode, Standard_False);
@@ -804,23 +805,38 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
         } else if (beginArrowDrag(e->pos())) return;
         if ((e->modifiers() & Qt::ControlModifier) && beginFaceDrag(e->pos())) return;
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
-        // Ctrl toggles an individual part in the current selection.
-        // OCCT keeps the selected faces highlighted while we collect a multi-part set.
-        const bool multiSelect = (e->modifiers() & Qt::ControlModifier)
-            && (directMoveMode_ || rotateMode_);
-        context_->SelectDetected(multiSelect ? AIS_SelectionScheme_XOR
-                                            : AIS_SelectionScheme_Replace);
-        hideFaceArrow();
         if (directMoveMode_ || rotateMode_) {
+            // Keep a separate set of part indices. OCCT selection owners are
+            // replaced during manipulator display updates and cannot be used
+            // as the sole source of truth for additive part selection.
+            const bool multiSelect = (e->modifiers() & Qt::ControlModifier);
+            const auto detected = context_->DetectedInteractive();
+            size_t hit = boxes_.size();
+            for (size_t i = 0; i < boxes_.size(); ++i)
+                if (boxes_[i].presentation == detected) { hit = i; break; }
+            if (!multiSelect) selectedPartIndices_.clear();
+            if (hit < boxes_.size()) {
+                const auto it = std::find(selectedPartIndices_.begin(),
+                                          selectedPartIndices_.end(), hit);
+                if (it != selectedPartIndices_.end()) {
+                    if (multiSelect) selectedPartIndices_.erase(it);
+                } else {
+                    selectedPartIndices_.push_back(hit);
+                }
+            }
+            hideFaceArrow();
             hideMoveAxes();
             hideRotationRings();
-            if (context_->NbSelected()==1) {
-                context_->InitSelected();
-                const auto selected=context_->SelectedInteractive();
-                for (size_t i=0;i<boxes_.size();++i)
-                    if (boxes_[i].presentation==selected) { moveIndex_=i; rotationIndex_=i; updateMoveAxes(); updateRotationRings(); break; }
+            context_->ClearSelected(Standard_False);
+            for (const size_t i : selectedPartIndices_)
+                context_->AddOrRemoveSelected(boxes_[i].presentation, Standard_False);
+            if (selectedPartIndices_.size() == 1) {
+                moveIndex_ = selectedPartIndices_.front();
+                rotationIndex_ = moveIndex_;
+                updateMoveAxes();
+                updateRotationRings();
             }
-            const int count = context_->NbSelected();
+            const int count = static_cast<int>(selectedPartIndices_.size());
             emit statusMessage(count > 1
                 ? tr("%1 parts selected. Multi-part transforms are not yet enabled.").arg(count)
                 : count == 1 ? tr("Part selected. Drag a transform arrow.")
@@ -828,6 +844,8 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             view_->Redraw();
             return;
         }
+        context_->SelectDetected(AIS_SelectionScheme_Replace);
+        hideFaceArrow();
         if (rotateMode_) {
             hideRotationRings();
             if (context_->NbSelected() == 1) {
