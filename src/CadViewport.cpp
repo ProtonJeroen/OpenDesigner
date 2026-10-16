@@ -19,6 +19,9 @@
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepOffsetAPI_MakePipe.hxx>
 #include <gp_Circ.hxx>
 #include <ElCLib.hxx>
 #include <BRep_Builder.hxx>
@@ -580,7 +583,7 @@ void CadViewport::setDirectMoveMode(bool enabled) {
             if (context_->MoreSelected()) {
                 const auto selected=context_->SelectedInteractive();
                 for (size_t i=0;i<boxes_.size();++i)
-                    if (boxes_[i].presentation==selected) { moveIndex_=i; updateMoveAxes(); break; }
+                    if (boxes_[i].presentation==selected) { moveIndex_=i; rotationIndex_=i; updateMoveAxes(); updateRotationRings(); break; }
             }
         }
     }
@@ -638,10 +641,40 @@ void CadViewport::updateRotationRings() {
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
     for (int axis = 0; axis < 3; ++axis) {
         const gp_Dir dir = gp_Dir(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0).Transformed(part.orientation);
-        rotationRings_[axis] = new AIS_Shape(BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(center,dir),radius)).Shape());
+        // A 120-degree curved arrow replaces the full 360-degree ring.
+        // The tip is tangent to the arc, indicating positive rotation.
+        // Keep the circle's zero-angle direction attached to the part's local frame.
+        // gp_Ax2(center, dir) alone chooses an arbitrary world-aligned X direction,
+        // so a curved arrow would appear stationary when rotating around its own axis.
+        const gp_Dir localReference = axis == 0 ? gp_Dir(0,1,0) : gp_Dir(1,0,0);
+        const gp_Dir reference = localReference.Transformed(part.orientation);
+        const gp_Circ circle(gp_Ax2(center,dir,reference),radius);
+        constexpr double pi = 3.14159265358979323846;
+        const double start = pi / 12.0;
+        const double finish = start + 2.0*pi/3.0;
+        // End the shaft at the cone base; the cone tip completes the curved arrow.
+        const double shaftFinish = finish - std::min(10.0 / radius, (finish-start)*0.35);
+        const gp_Pnt coneBase = ElCLib::Value(shaftFinish,circle);
+        const gp_Vec tangent(ElCLib::Value(shaftFinish-0.01,circle),coneBase);
+        BRep_Builder builder;
+        TopoDS_Compound arrow;
+        builder.MakeCompound(arrow);
+        // Sweep a circular profile along the arc: same solid, shaded style as move arrows.
+        const double shaftRadius = 1.7;
+        const gp_Pnt arcStart = ElCLib::Value(start, circle);
+        const gp_Vec startTangent(arcStart, ElCLib::Value(start+0.01, circle));
+        const TopoDS_Wire arcPath = BRepBuilderAPI_MakeWire(
+            BRepBuilderAPI_MakeEdge(circle, start, shaftFinish)).Wire();
+        const TopoDS_Wire profile = BRepBuilderAPI_MakeWire(
+            BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(arcStart, gp_Dir(startTangent)), shaftRadius))).Wire();
+        builder.Add(arrow, BRepOffsetAPI_MakePipe(arcPath, BRepBuilderAPI_MakeFace(profile).Face()).Shape());
+        builder.Add(arrow,BRepPrimAPI_MakeCone(gp_Ax2(coneBase,gp_Dir(tangent)),4.5,0.0,10.0).Shape());
+        rotationRings_[axis] = new AIS_Shape(arrow);
         rotationRings_[axis]->SetColor(axis == 0 ? Quantity_NOC_RED
             : axis == 1 ? Quantity_NOC_GREEN : Quantity_NOC_BLUE1);
         context_->Display(rotationRings_[axis], Standard_False);
+        context_->SetDisplayMode(rotationRings_[axis], AIS_Shaded, Standard_False);
+        context_->SetZLayer(rotationRings_[axis], Graphic3d_ZLayerId_Topmost);
         context_->Deactivate(rotationRings_[axis]);
     }
     view_->Redraw();
@@ -657,9 +690,15 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
     int axisHit = -1;
     for (int axis = 0; axis < 3; ++axis) {
         const gp_Dir dir = gp_Dir(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0).Transformed(part.orientation);
-        const gp_Circ circle(gp_Ax2(center,dir),radius);
-        for (int i = 0; i < 96; ++i) {
-            const gp_Pnt world = ElCLib::Value(i * 2.0 * 3.14159265358979323846 / 96.0, circle);
+        // Keep the circle's zero-angle direction attached to the part's local frame.
+        // gp_Ax2(center, dir) alone chooses an arbitrary world-aligned X direction,
+        // so a curved arrow would appear stationary when rotating around its own axis.
+        const gp_Dir localReference = axis == 0 ? gp_Dir(0,1,0) : gp_Dir(1,0,0);
+        const gp_Dir reference = localReference.Transformed(part.orientation);
+        const gp_Circ circle(gp_Ax2(center,dir,reference),radius);
+        for (int i = 0; i <= 96; ++i) {
+            const double angle = 3.14159265358979323846 / 12.0 + i * (2.0 * 3.14159265358979323846 / 3.0) / 96.0;
+            const gp_Pnt world = ElCLib::Value(angle, circle);
             Standard_Integer x,y;
             view_->Convert(world.X(),world.Y(),world.Z(),x,y);
             const double distance = std::hypot(point.x()-x,point.y()-y);
@@ -741,18 +780,21 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
         }
         if (beginMoveAxisDrag(e->pos())) return;
         if (beginRotationDrag(e->pos())) return;
-        if (beginArrowDrag(e->pos())) return;
+        if (directMoveMode_ || rotateMode_) {
+            // The combined gizmo takes precedence over the legacy face arrow.
+        } else if (beginArrowDrag(e->pos())) return;
         if ((e->modifiers() & Qt::ControlModifier) && beginFaceDrag(e->pos())) return;
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
         context_->SelectDetected();
         hideFaceArrow();
-        if (directMoveMode_) {
+        if (directMoveMode_ || rotateMode_) {
             hideMoveAxes();
+            hideRotationRings();
             if (context_->NbSelected()==1) {
                 context_->InitSelected();
                 const auto selected=context_->SelectedInteractive();
                 for (size_t i=0;i<boxes_.size();++i)
-                    if (boxes_[i].presentation==selected) { moveIndex_=i; updateMoveAxes(); break; }
+                    if (boxes_[i].presentation==selected) { moveIndex_=i; rotationIndex_=i; updateMoveAxes(); updateRotationRings(); break; }
             }
             view_->Redraw();
             return;
