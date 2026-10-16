@@ -575,11 +575,25 @@ void CadViewport::hideMoveAxes() {
         if (!axis.IsNull()) { context_->Remove(axis, Standard_False); axis.Nullify(); }
     }
 }
+gp_Pnt CadViewport::selectionCenter() const {
+    if (selectedPartIndices_.empty()) return gp_Pnt(0, 0, 0);
+    double x = 0, y = 0, z = 0;
+    size_t count = 0;
+    for (const size_t index : selectedPartIndices_) {
+        if (index >= boxes_.size()) continue;
+        const auto& part = boxes_[index];
+        const gp_Pnt p = gp_Pnt((part.min[0]+part.max[0])*0.5,
+            (part.min[1]+part.max[1])*0.5,
+            (part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
+        x += p.X(); y += p.Y(); z += p.Z(); ++count;
+    }
+    return count ? gp_Pnt(x/count, y/count, z/count) : gp_Pnt(0, 0, 0);
+}
 void CadViewport::updateMoveAxes() {
     hideMoveAxes();
     if (!directMoveMode_ || moveIndex_ >= boxes_.size() || context_.IsNull()) return;
     const auto& part = boxes_[moveIndex_];
-    const gp_Pnt center = gp_Pnt((part.min[0]+part.max[0])*0.5,
+    const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter() : gp_Pnt((part.min[0]+part.max[0])*0.5,
         (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
     for (int axis=0; axis<3; ++axis) {
         const gp_Dir direction = gp_Dir(axis==0?1:0,axis==1?1:0,axis==2?1:0).Transformed(part.orientation);
@@ -679,7 +693,7 @@ void CadViewport::updateRotationRings() {
     const auto& part = boxes_[rotationIndex_];
     const gp_Pnt center = gp_Pnt((part.min[0]+part.max[0])*0.5,
         (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
-    const double radius = 0.65 * std::max({part.max[0]-part.min[0],
+    const double radius = selectedPartIndices_.size() > 1 ? 60.0 : 0.65 * std::max({part.max[0]-part.min[0],
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
     for (int axis = 0; axis < 3; ++axis) {
         const gp_Dir dir = gp_Dir(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0).Transformed(part.orientation);
@@ -821,12 +835,13 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             rotationEditing_ = false;
             dragDimension_->hide();
         }
-        if (beginMoveAxisDrag(e->pos())) return;
-        if (beginRotationDrag(e->pos())) return;
+        const bool additiveSelection = (directMoveMode_ || rotateMode_) && (e->modifiers() & Qt::ControlModifier);
+        if (!additiveSelection && selectedPartIndices_.size() <= 1 && beginMoveAxisDrag(e->pos())) return;
+        if (!additiveSelection && selectedPartIndices_.size() <= 1 && beginRotationDrag(e->pos())) return;
         if (directMoveMode_ || rotateMode_) {
             // The combined gizmo takes precedence over the legacy face arrow.
         } else if (beginArrowDrag(e->pos())) return;
-        if ((e->modifiers() & Qt::ControlModifier) && beginFaceDrag(e->pos())) return;
+        if (!(directMoveMode_ || rotateMode_) && (e->modifiers() & Qt::ControlModifier) && beginFaceDrag(e->pos())) return;
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
         if (directMoveMode_ || rotateMode_) {
             // Keep a separate set of part indices. OCCT selection owners are
@@ -864,7 +879,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             context_->ClearSelected(Standard_False);
             for (const size_t i : selectedPartIndices_)
                 context_->AddOrRemoveSelected(boxes_[i].presentation, Standard_False);
-            if (selectedPartIndices_.size() == 1) {
+            if (!selectedPartIndices_.empty()) {
                 moveIndex_ = selectedPartIndices_.front();
                 rotationIndex_ = moveIndex_;
                 updateMoveAxes();
@@ -872,7 +887,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             }
             const int count = static_cast<int>(selectedPartIndices_.size());
             emit statusMessage(count > 1
-                ? tr("%1 parts selected. Multi-part transforms are not yet enabled.").arg(count)
+                ? tr("%1 parts selected. Shared gizmo preview; group transforms coming next.").arg(count)
                 : count == 1 ? tr("Part selected. Drag a transform arrow.")
                              : tr("Selection cleared."));
             view_->Redraw();
