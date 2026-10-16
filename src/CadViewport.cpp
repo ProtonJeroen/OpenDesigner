@@ -433,7 +433,7 @@ void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
     TopoDS_Shape shape = BRepPrimAPI_MakeBox(
         gp_Pnt(min[0], min[1], min[2]),
         max[0] - min[0], max[1] - min[1], max[2] - min[2]).Shape();
-    context_->ClearSelected(Standard_False);
+    if (!batchingPartUpdates_) context_->ClearSelected(Standard_False);
     part.presentation->SetShape(shape);
     part.presentation->SetLocalTransformation(part.orientation);
     context_->Redisplay(part.presentation, Standard_False);
@@ -443,10 +443,12 @@ void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
         Standard_False);
     part.min = min;
     part.max = max;
-    updateFaceArrow();
-    if (rotateMode_) updateRotationRings();
-    if (directMoveMode_) updateMoveAxes();
-    view_->Redraw();
+    if (!batchingPartUpdates_) {
+        updateFaceArrow();
+        if (rotateMode_) updateRotationRings();
+        if (directMoveMode_) updateMoveAxes();
+        view_->Redraw();
+    }
 }
 void CadViewport::undoPull() {
     if (undoStack_.empty()) {
@@ -456,8 +458,10 @@ void CadViewport::undoPull() {
     const PullChange change = undoStack_.back();
     undoStack_.pop_back();
     if (!change.groupedChanges.empty()) {
+        batchingPartUpdates_ = true;
         for (const auto& item : change.groupedChanges)
             applyPartState(item.partIndex, item.beforeMin, item.beforeMax, item.beforeOrientation);
+        batchingPartUpdates_ = false;
         refreshPartSelection();
     } else applyPartState(change.partIndex, change.beforeMin, change.beforeMax, change.beforeOrientation);
     redoStack_.push_back(change);
@@ -471,8 +475,10 @@ void CadViewport::redoPull() {
     const PullChange change = redoStack_.back();
     redoStack_.pop_back();
     if (!change.groupedChanges.empty()) {
+        batchingPartUpdates_ = true;
         for (const auto& item : change.groupedChanges)
             applyPartState(item.partIndex, item.afterMin, item.afterMax, item.afterOrientation);
+        batchingPartUpdates_ = false;
         refreshPartSelection();
     } else applyPartState(change.partIndex, change.afterMin, change.afterMax, change.afterOrientation);
     undoStack_.push_back(change);
@@ -634,6 +640,7 @@ void CadViewport::refreshPartSelection() {
 }
 void CadViewport::applyGroupMove(double distance) {
     const gp_Vec worldDelta(groupMoveDirection_);
+    batchingPartUpdates_ = true;
     for (const auto& before : groupMoveBefore_) {
         if (before.partIndex >= boxes_.size()) continue;
         const gp_Vec localDelta = worldDelta.Transformed(
@@ -646,6 +653,7 @@ void CadViewport::applyGroupMove(double distance) {
         }
         applyPartState(before.partIndex, min, max, before.beforeOrientation);
     }
+    batchingPartUpdates_ = false;
     refreshPartSelection();
 }
 void CadViewport::updateMoveAxes() {
