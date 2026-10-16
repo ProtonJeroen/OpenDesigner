@@ -3,6 +3,10 @@
 #include <QTreeWidget>
 #include <QSignalBlocker>
 #include <QAbstractItemView>
+#include <QMenu>
+#include <QHeaderView>
+#include <QBrush>
+#include <QColor>
 #include <QDockWidget>
 #include <QMenuBar>
 #include <QToolBar>
@@ -19,7 +23,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setCentralWidget(viewport_);
     auto* dock = new QDockWidget(tr("Structure Browser"), this);
     structure_ = new QTreeWidget(dock);
-    structure_->setHeaderLabel(tr("Model"));
+    structure_->setColumnCount(2);
+    structure_->setHeaderLabels({tr("Model"), tr("Visible")});
+    structure_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    structure_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    structure_->setContextMenuPolicy(Qt::CustomContextMenu);
+    structure_->setEditTriggers(QAbstractItemView::EditKeyPressed | QAbstractItemView::DoubleClicked);
     structure_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     auto* root = new QTreeWidgetItem(structure_, QStringList{tr("Assembly 1")});
     root->setExpanded(true);
@@ -113,6 +122,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(viewport_, &CadViewport::partCreated, this, [this, root](const QString& name) {
         auto* item = new QTreeWidgetItem(root, QStringList{name});
         item->setData(0, Qt::UserRole, root->childCount() - 1);
+        item->setFlags(item->flags() | Qt::ItemIsEditable);
+        item->setText(1, QStringLiteral("👁"));
         root->setExpanded(true);
         statusBar()->showMessage(name + tr(" created"), 3000);
     });
@@ -130,6 +141,41 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         for (const size_t index : indices) {
             if (index < static_cast<size_t>(root->childCount()))
                 root->child(static_cast<int>(index))->setSelected(true);
+        }
+    });
+    connect(structure_, &QTreeWidget::itemDoubleClicked, this,
+            [this, root](QTreeWidgetItem* item, int column) {
+        if (item->parent() != root || column != 1) return;
+        const size_t index = static_cast<size_t>(item->data(0, Qt::UserRole).toULongLong());
+        const bool visible = !viewport_->isPartVisible(index);
+        viewport_->setPartVisible(index, visible);
+        item->setText(1, visible ? QStringLiteral("👁") : QStringLiteral("—"));
+        item->setForeground(0, visible ? QBrush() : QBrush(QColor(Qt::gray)));
+    });
+    connect(structure_, &QWidget::customContextMenuRequested, this,
+            [this, root](const QPoint& pos) {
+        auto* item = structure_->itemAt(pos);
+        if (!item || item->parent() != root) return;
+        const size_t index = static_cast<size_t>(item->data(0, Qt::UserRole).toULongLong());
+        QMenu menu(structure_);
+        auto* select = menu.addAction(tr("Select"));
+        auto* rename = menu.addAction(tr("Rename (F2)"));
+        const bool visible = viewport_->isPartVisible(index);
+        auto* toggle = menu.addAction(visible ? tr("Hide") : tr("Show"));
+        auto* fit = menu.addAction(tr("Fit Selection"));
+        auto* chosen = menu.exec(structure_->viewport()->mapToGlobal(pos));
+        if (chosen == select) {
+            structure_->clearSelection();
+            item->setSelected(true);
+        } else if (chosen == rename) {
+            structure_->setCurrentItem(item, 0);
+            structure_->editItem(item, 0);
+        } else if (chosen == toggle) {
+            viewport_->setPartVisible(index, !visible);
+            item->setText(1, visible ? QStringLiteral("—") : QStringLiteral("👁"));
+            item->setForeground(0, visible ? QBrush(QColor(Qt::gray)) : QBrush());
+        } else if (chosen == fit) {
+            viewport_->fitSelection({index});
         }
     });
     connect(viewport_, &CadViewport::statusMessage, this, [this](const QString& msg) {
