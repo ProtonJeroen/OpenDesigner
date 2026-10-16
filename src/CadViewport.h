@@ -17,6 +17,7 @@ class CadViewport final : public QWidget {
 public:
     explicit CadViewport(QWidget* parent = nullptr);
     void addBox();
+    void addCylinder();
     void duplicateSelectedParts();
     void fitAll();
     void pullSelectedFace();
