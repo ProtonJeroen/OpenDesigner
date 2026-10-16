@@ -189,7 +189,9 @@ void CadViewport::addBox() {
     context_->SetDisplayMode(part.presentation, AIS_Shaded, Standard_False);
     // Disable global object selection (mode 0) before enabling subshape mode.
     context_->Deactivate(part.presentation);
-    context_->Activate(part.presentation, AIS_Shape::SelectionMode(TopAbs_FACE), Standard_False);
+    context_->Activate(part.presentation,
+        (directMoveMode_ || rotateMode_) ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE),
+        Standard_False);
     boxes_.push_back(part);
     ++partCount_;
     emit partCreated(QString("Part %1").arg(partCount_));
@@ -393,7 +395,9 @@ void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
     part.presentation->SetLocalTransformation(part.orientation);
     context_->Redisplay(part.presentation, Standard_False);
     context_->Deactivate(part.presentation);
-    context_->Activate(part.presentation, AIS_Shape::SelectionMode(TopAbs_FACE), Standard_False);
+    context_->Activate(part.presentation,
+        (directMoveMode_ || rotateMode_) ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE),
+        Standard_False);
     part.min = min;
     part.max = max;
     updateFaceArrow();
@@ -573,8 +577,22 @@ void CadViewport::updateMoveAxes() {
     }
     view_->Redraw();
 }
+void CadViewport::setTransformSelectionMode() {
+    if (context_.IsNull()) return;
+    const int mode = (directMoveMode_ || rotateMode_)
+        ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE);
+    context_->ClearSelected(Standard_False);
+    for (auto& part : boxes_) {
+        context_->Deactivate(part.presentation);
+        context_->Activate(part.presentation, mode, Standard_False);
+    }
+    hideMoveAxes();
+    hideRotationRings();
+    view_->Redraw();
+}
 void CadViewport::setDirectMoveMode(bool enabled) {
     directMoveMode_ = enabled;
+    setTransformSelectionMode();
     if (!enabled) hideMoveAxes();
     else {
         hideFaceArrow();
@@ -751,6 +769,7 @@ void CadViewport::applyRotationAngle(double degrees) {
 }
 void CadViewport::setRotateMode(bool enabled) {
     rotateMode_ = enabled;
+    setTransformSelectionMode();
     if (!enabled) hideRotationRings();
     else if (!context_.IsNull() && context_->NbSelected() == 1) {
         context_->InitSelected();
@@ -803,7 +822,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             }
             const int count = context_->NbSelected();
             emit statusMessage(count > 1
-                ? tr("%1 faces selected. Multi-part transforms are not yet enabled.").arg(count)
+                ? tr("%1 parts selected. Multi-part transforms are not yet enabled.").arg(count)
                 : count == 1 ? tr("Part selected. Drag a transform arrow.")
                              : tr("Selection cleared."));
             view_->Redraw();
