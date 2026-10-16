@@ -88,6 +88,7 @@ private:
     std::vector<PullChange> groupMoveBefore_;
     gp_Dir groupMoveDirection_ = gp_Dir(1, 0, 0);
     bool groupMoveDragging_ = false;
+    bool batchingPartUpdates_ = false;
     bool groupMoveEditing_ = false;
     std::vector<PullChange> undoStack_;
     std::vector<PullChange> redoStack_;
