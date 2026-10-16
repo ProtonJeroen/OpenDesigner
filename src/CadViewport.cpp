@@ -647,8 +647,10 @@ void CadViewport::updateRotationRings() {
         constexpr double pi = 3.14159265358979323846;
         const double start = pi / 12.0;
         const double finish = start + 2.0*pi/3.0;
-        const gp_Pnt arcEnd = ElCLib::Value(finish,circle);
-        const gp_Vec tangent(ElCLib::Value(finish-0.01,circle),arcEnd);
+        // End the shaft at the cone base; the cone tip completes the curved arrow.
+        const double shaftFinish = finish - std::min(10.0 / radius, (finish-start)*0.35);
+        const gp_Pnt coneBase = ElCLib::Value(shaftFinish,circle);
+        const gp_Vec tangent(ElCLib::Value(shaftFinish-0.01,circle),coneBase);
         BRep_Builder builder;
         TopoDS_Compound arrow;
         builder.MakeCompound(arrow);
@@ -657,11 +659,10 @@ void CadViewport::updateRotationRings() {
         const gp_Pnt arcStart = ElCLib::Value(start, circle);
         const gp_Vec startTangent(arcStart, ElCLib::Value(start+0.01, circle));
         const TopoDS_Wire arcPath = BRepBuilderAPI_MakeWire(
-            BRepBuilderAPI_MakeEdge(circle, start, finish)).Wire();
+            BRepBuilderAPI_MakeEdge(circle, start, shaftFinish)).Wire();
         const TopoDS_Wire profile = BRepBuilderAPI_MakeWire(
             BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(arcStart, gp_Dir(startTangent)), shaftRadius))).Wire();
         builder.Add(arrow, BRepOffsetAPI_MakePipe(arcPath, BRepBuilderAPI_MakeFace(profile).Face()).Shape());
-        const gp_Pnt coneBase = arcEnd.Translated(tangent.Normalized().Multiplied(-10.0));
         builder.Add(arrow,BRepPrimAPI_MakeCone(gp_Ax2(coneBase,gp_Dir(tangent)),4.5,0.0,10.0).Shape());
         rotationRings_[axis] = new AIS_Shape(arrow);
         rotationRings_[axis]->SetColor(axis == 0 ? Quantity_NOC_RED
@@ -783,7 +784,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                 context_->InitSelected();
                 const auto selected=context_->SelectedInteractive();
                 for (size_t i=0;i<boxes_.size();++i)
-                    if (boxes_[i].presentation==selected) { moveIndex_=i; updateMoveAxes(); break; }
+                    if (boxes_[i].presentation==selected) { moveIndex_=i; rotationIndex_=i; updateMoveAxes(); updateRotationRings(); break; }
             }
             view_->Redraw();
             return;
