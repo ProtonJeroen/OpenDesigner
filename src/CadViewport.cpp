@@ -64,7 +64,14 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
             const double angle = QLocale().toDouble(dragDimension_->text(), &ok);
             if (!ok) return;
             applyRotationAngle(angle);
-            if (!undoStack_.empty()) undoStack_.back().afterOrientation = boxes_[rotationIndex_].orientation;
+            if (!undoStack_.empty()) {
+                auto& change = undoStack_.back();
+                if (groupRotationEditing_ && !change.groupedChanges.empty()) {
+                    for (auto& item : change.groupedChanges)
+                        item.afterOrientation = boxes_[item.partIndex].orientation;
+                } else change.afterOrientation = boxes_[rotationIndex_].orientation;
+            }
+            groupRotationEditing_ = false;
             rotationEditing_ = false;
             dragDimension_->hide();
             updateRotationRings();
@@ -122,6 +129,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
         dragDimension_->hide();
         dimensionEditing_ = false;
         rotationEditing_ = false;
+        groupRotationEditing_ = false;
         groupMoveEditing_ = false;
         setFocus();
     });
@@ -819,9 +827,10 @@ void CadViewport::updateRotationRings() {
 bool CadViewport::beginRotationDrag(const QPoint& point) {
     if (!rotateMode_ || rotationIndex_ >= boxes_.size() || view_.IsNull()) return false;
     const auto& part = boxes_[rotationIndex_];
-    const gp_Pnt center = gp_Pnt((part.min[0]+part.max[0])*0.5,
-        (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
-    const double radius = 0.65 * std::max({part.max[0]-part.min[0],
+    const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter()
+        : gp_Pnt((part.min[0]+part.max[0])*0.5,
+            (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
+    const double radius = selectedPartIndices_.size() > 1 ? 60.0 : 0.65 * std::max({part.max[0]-part.min[0],
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
     double best = 12.0;
     int axisHit = -1;
@@ -844,6 +853,16 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
     }
     if (axisHit < 0) return false;
     rotationAxis_ = axisHit;
+    groupRotationDragging_ = selectedPartIndices_.size() > 1;
+    groupRotationBefore_.clear();
+    if (groupRotationDragging_) {
+        groupRotationCenter_ = center;
+        groupRotationDirection_ = gp_Dir(axisHit==0?1:0,axisHit==1?1:0,axisHit==2?1:0).Transformed(part.orientation);
+        for (const size_t index : selectedPartIndices_) {
+            const auto& item = boxes_[index];
+            groupRotationBefore_.push_back({index,item.min,item.max,item.min,item.max,item.orientation,item.orientation});
+        }
+    }
     rotationBefore_ = part.orientation;
     rotationAngle_ = 0.0;
     dragStart_ = point;
@@ -856,9 +875,10 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
 }
 double CadViewport::rotationCursorAngle(const QPoint& point, int axis, const gp_Trsf& orientation) const {
     const auto& part = boxes_[rotationIndex_];
-    const gp_Pnt center = gp_Pnt((part.min[0]+part.max[0])*0.5,
-        (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(orientation);
-    const double radius = 0.65 * std::max({part.max[0]-part.min[0],
+    const gp_Pnt center = groupRotationDragging_ ? groupRotationCenter_
+        : gp_Pnt((part.min[0]+part.max[0])*0.5,
+            (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(orientation);
+    const double radius = groupRotationDragging_ ? 60.0 : 0.65 * std::max({part.max[0]-part.min[0],
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
     const gp_Dir dir = gp_Dir(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0).Transformed(orientation);
     const gp_Circ circle(gp_Ax2(center,dir),radius);
@@ -876,6 +896,20 @@ double CadViewport::rotationCursorAngle(const QPoint& point, int axis, const gp_
     return result;
 }
 void CadViewport::applyRotationAngle(double degrees) {
+    if (groupRotationDragging_ || groupRotationEditing_) {
+        gp_Trsf rotation;
+        rotation.SetRotation(gp_Ax1(groupRotationCenter_,groupRotationDirection_),
+            degrees * 3.14159265358979323846 / 180.0);
+        batchingPartUpdates_ = true;
+        for (const auto& before : groupRotationBefore_) {
+            applyPartState(before.partIndex, before.beforeMin, before.beforeMax,
+                rotation * before.beforeOrientation);
+        }
+        batchingPartUpdates_ = false;
+        rotationAngle_ = degrees;
+        refreshPartSelection();
+        return;
+    }
     if (rotationIndex_ >= boxes_.size()) return;
     auto& part = boxes_[rotationIndex_];
     const gp_Pnt center = gp_Pnt((part.min[0]+part.max[0])*0.5,
@@ -918,7 +952,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
         }
         const bool additiveSelection = (directMoveMode_ || rotateMode_) && (e->modifiers() & Qt::ControlModifier);
         if (!additiveSelection && beginMoveAxisDrag(e->pos())) return;
-        if (!additiveSelection && selectedPartIndices_.size() <= 1 && beginRotationDrag(e->pos())) return;
+        if (!additiveSelection && beginRotationDrag(e->pos())) return;
         if (directMoveMode_ || rotateMode_) {
             // The combined gizmo takes precedence over the legacy face arrow.
         } else if (beginArrowDrag(e->pos())) return;
@@ -1107,9 +1141,19 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     if (e->button() == Qt::LeftButton && draggingRotation_) {
         draggingRotation_ = false;
         if (std::abs(rotationAngle_) < 0.0001) { dragDimension_->hide(); return; }
-        const auto& part = boxes_[rotationIndex_];
-        undoStack_.push_back({rotationIndex_,part.min,part.max,part.min,part.max,
-                              rotationBefore_,part.orientation});
+        if (groupRotationDragging_) {
+            groupRotationDragging_ = false;
+            PullChange group = groupRotationBefore_.front();
+            group.groupedChanges = groupRotationBefore_;
+            for (auto& item : group.groupedChanges)
+                item.afterOrientation = boxes_[item.partIndex].orientation;
+            undoStack_.push_back(group);
+            groupRotationEditing_ = true;
+        } else {
+            const auto& part = boxes_[rotationIndex_];
+            undoStack_.push_back({rotationIndex_,part.min,part.max,part.min,part.max,
+                                  rotationBefore_,part.orientation});
+        }
         redoStack_.clear();
         rotationEditing_ = true;
         updateRotationRings();
