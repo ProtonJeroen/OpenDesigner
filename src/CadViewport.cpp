@@ -1017,9 +1017,11 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
         if (directMoveMode_ || rotateMode_ || partPicking) {
             // Selection and active transform tools are separate.
         } else if (beginArrowDrag(e->pos())) return;
-        if (!(directMoveMode_ || rotateMode_) && (e->modifiers() & Qt::ControlModifier) && beginFaceDrag(e->pos())) return;
+        // Ctrl is reserved for additive face selection, not drag-to-pull.
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
         if (partPicking) {
+            if (!context_->SelectionStyle().IsNull())
+                context_->SelectionStyle()->SetDisplayMode(AIS_WireFrame);
             // Keep a separate set of part indices. OCCT selection owners are
             // replaced during manipulator display updates and cannot be used
             // as the sole source of truth for additive part selection.
@@ -1070,9 +1072,15 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             view_->Redraw();
             return;
         }
-        context_->SelectDetected(AIS_SelectionScheme_Replace);
+        // Use OCCT's additive selection scheme for Ctrl+click on faces.
+        // Highlight selected faces with a cyan shaded overlay, while whole
+        // parts retain the cyan edge-only style.
+        if (!context_->SelectionStyle().IsNull())
+            context_->SelectionStyle()->SetDisplayMode(AIS_Shaded);
+        context_->SelectDetected(additiveSelection
+            ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
         hideFaceArrow();
-        if (rotateMode_) {
+        if (rotateMode_ && !additiveSelection) {
             hideRotationRings();
             if (context_->NbSelected() == 1) {
                 context_->InitSelected();
