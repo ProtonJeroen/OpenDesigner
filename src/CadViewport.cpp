@@ -72,6 +72,25 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
             return;
         }
         if (!dimensionEditing_) return;
+        if (groupMoveEditing_) {
+            bool ok = false;
+            const double distance = QLocale().toDouble(dragDimension_->text(), &ok);
+            if (!ok) return;
+            applyGroupMove(distance);
+            if (!undoStack_.empty()) {
+                auto& change = undoStack_.back();
+                for (auto& item : change.groupedChanges) {
+                    const auto& part = boxes_[item.partIndex];
+                    item.afterMin = part.min;
+                    item.afterMax = part.max;
+                }
+            }
+            groupMoveEditing_ = false;
+            dimensionEditing_ = false;
+            dragDimension_->hide();
+            setFocus();
+            return;
+        }
         bool ok = false;
         const double distance = QLocale().toDouble(dragDimension_->text(), &ok);
         if (!ok) { emit statusMessage(tr("Enter a valid distance in mm.")); return; }
@@ -103,6 +122,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
         dragDimension_->hide();
         dimensionEditing_ = false;
         rotationEditing_ = false;
+        groupMoveEditing_ = false;
         setFocus();
     });
 }
@@ -435,7 +455,11 @@ void CadViewport::undoPull() {
     }
     const PullChange change = undoStack_.back();
     undoStack_.pop_back();
-    applyPartState(change.partIndex, change.beforeMin, change.beforeMax, change.beforeOrientation);
+    if (!change.groupedChanges.empty()) {
+        for (const auto& item : change.groupedChanges)
+            applyPartState(item.partIndex, item.beforeMin, item.beforeMax, item.beforeOrientation);
+        refreshPartSelection();
+    } else applyPartState(change.partIndex, change.beforeMin, change.beforeMax, change.beforeOrientation);
     redoStack_.push_back(change);
     emit statusMessage(tr("Pull Face undone."));
 }
@@ -446,7 +470,11 @@ void CadViewport::redoPull() {
     }
     const PullChange change = redoStack_.back();
     redoStack_.pop_back();
-    applyPartState(change.partIndex, change.afterMin, change.afterMax, change.afterOrientation);
+    if (!change.groupedChanges.empty()) {
+        for (const auto& item : change.groupedChanges)
+            applyPartState(item.partIndex, item.afterMin, item.afterMax, item.afterOrientation);
+        refreshPartSelection();
+    } else applyPartState(change.partIndex, change.afterMin, change.afterMax, change.afterOrientation);
     undoStack_.push_back(change);
     emit statusMessage(tr("Pull Face redone."));
 }
@@ -589,6 +617,37 @@ gp_Pnt CadViewport::selectionCenter() const {
     }
     return count ? gp_Pnt(x/count, y/count, z/count) : gp_Pnt(0, 0, 0);
 }
+void CadViewport::refreshPartSelection() {
+    if (context_.IsNull()) return;
+    context_->ClearSelected(Standard_False);
+    for (const size_t index : selectedPartIndices_) {
+        if (index < boxes_.size())
+            context_->AddOrRemoveSelected(boxes_[index].presentation, Standard_False);
+    }
+    if (!selectedPartIndices_.empty()) {
+        moveIndex_ = selectedPartIndices_.front();
+        rotationIndex_ = moveIndex_;
+        if (directMoveMode_) updateMoveAxes();
+        if (rotateMode_) updateRotationRings();
+    }
+    view_->Redraw();
+}
+void CadViewport::applyGroupMove(double distance) {
+    const gp_Vec worldDelta(groupMoveDirection_);
+    for (const auto& before : groupMoveBefore_) {
+        if (before.partIndex >= boxes_.size()) continue;
+        const gp_Vec localDelta = worldDelta.Transformed(
+            before.beforeOrientation.Inverted()).Multiplied(distance);
+        auto min = before.beforeMin;
+        auto max = before.beforeMax;
+        for (int axis = 0; axis < 3; ++axis) {
+            min[axis] += localDelta.Coord(axis + 1);
+            max[axis] += localDelta.Coord(axis + 1);
+        }
+        applyPartState(before.partIndex, min, max, before.beforeOrientation);
+    }
+    refreshPartSelection();
+}
 void CadViewport::updateMoveAxes() {
     hideMoveAxes();
     if (!directMoveMode_ || moveIndex_ >= boxes_.size() || context_.IsNull()) return;
@@ -649,8 +708,9 @@ void CadViewport::setDirectMoveMode(bool enabled) {
 bool CadViewport::beginMoveAxisDrag(const QPoint& point) {
     if (!directMoveMode_ || moveIndex_>=boxes_.size() || view_.IsNull()) return false;
     const auto& part=boxes_[moveIndex_];
-    const gp_Pnt center=gp_Pnt((part.min[0]+part.max[0])*0.5,
-        (part.min[1]+part.max[1])*0.5,(part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
+    const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter()
+        : gp_Pnt((part.min[0]+part.max[0])*0.5,
+            (part.min[1]+part.max[1])*0.5,(part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
     double best=12.0;
     int hit=-1;
     double bestDx=0.0,bestDy=0.0,bestPixels=0.0;
@@ -679,6 +739,17 @@ bool CadViewport::beginMoveAxisDrag(const QPoint& point) {
     dragScreenY_=bestDy/bestPixels;
     dragMmPerPixel_=52.0/bestPixels;
     draggingFace_=true;
+    groupMoveDragging_ = selectedPartIndices_.size() > 1;
+    groupMoveBefore_.clear();
+    if (groupMoveDragging_) {
+        groupMoveDirection_ = gp_Dir(hit==0?1:0, hit==1?1:0, hit==2?1:0)
+            .Transformed(part.orientation);
+        for (const size_t index : selectedPartIndices_) {
+            const auto& item = boxes_[index];
+            groupMoveBefore_.push_back({index, item.min, item.max,
+                item.min, item.max, item.orientation, item.orientation});
+        }
+    }
     return true;
 }
 void CadViewport::hideRotationRings() {
@@ -838,7 +909,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             dragDimension_->hide();
         }
         const bool additiveSelection = (directMoveMode_ || rotateMode_) && (e->modifiers() & Qt::ControlModifier);
-        if (!additiveSelection && selectedPartIndices_.size() <= 1 && beginMoveAxisDrag(e->pos())) return;
+        if (!additiveSelection && beginMoveAxisDrag(e->pos())) return;
         if (!additiveSelection && selectedPartIndices_.size() <= 1 && beginRotationDrag(e->pos())) return;
         if (directMoveMode_ || rotateMode_) {
             // The combined gizmo takes precedence over the legacy face arrow.
@@ -889,7 +960,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             }
             const int count = static_cast<int>(selectedPartIndices_.size());
             emit statusMessage(count > 1
-                ? tr("%1 parts selected. Shared gizmo preview; group transforms coming next.").arg(count)
+                ? tr("%1 parts selected. Drag an axis to move the group.").arg(count)
                 : count == 1 ? tr("Part selected. Drag a transform arrow.")
                              : tr("Selection cleared."));
             view_->Redraw();
@@ -991,6 +1062,16 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
         const double requested = snapping
             ? std::round(rawDistance / snapStepMm_) * snapStepMm_
             : rawDistance;
+        if (groupMoveDragging_) {
+            if (std::abs(requested - dragDistance_) > 0.0001) {
+                dragDistance_ = requested;
+                applyGroupMove(requested);
+                showDragDimension(p);
+                emit statusMessage(tr("Group Move: %1 mm").arg(requested, 0, 'f', 1));
+            }
+            previous_ = p;
+            return;
+        }
         auto min = dragMin_;
         auto max = dragMaxBounds_;
         if (dragMovesPart_) {
@@ -1032,6 +1113,25 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     }
     if (e->button() != Qt::LeftButton || !draggingFace_) return;
     draggingFace_ = false;
+    if (groupMoveDragging_) {
+        groupMoveDragging_ = false;
+        if (std::abs(dragDistance_) < 0.0001) { dragDimension_->hide(); return; }
+        PullChange group = groupMoveBefore_.front();
+        group.groupedChanges = groupMoveBefore_;
+        for (auto& item : group.groupedChanges) {
+            item.afterMin = boxes_[item.partIndex].min;
+            item.afterMax = boxes_[item.partIndex].max;
+        }
+        undoStack_.push_back(group);
+        redoStack_.clear();
+        groupMoveEditing_ = true;
+        dimensionEditing_ = true;
+        showDragDimension(e->pos());
+        dragDimension_->setFocus();
+        dragDimension_->selectAll();
+        emit statusMessage(tr("Group moved. Enter exact mm or Esc to keep."));
+        return;
+    }
     if (std::abs(dragDistance_) < 0.0001) { dragDimension_->hide(); return; }
     const auto& part = boxes_[dragIndex_];
     undoStack_.push_back({dragIndex_, dragMin_, dragMaxBounds_, part.min, part.max, part.orientation, part.orientation});
