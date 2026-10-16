@@ -143,25 +143,43 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 root->child(static_cast<int>(index))->setSelected(true);
         }
     });
-    connect(structure_, &QTreeWidget::itemDoubleClicked, this,
-            [this, root](QTreeWidgetItem* item, int column) {
+    // Visibility is a one-click control. Apply it to all selected parts when
+    // clicking the eye of an already selected part, otherwise to that part only.
+    auto setVisibility = [this, root](const QList<QTreeWidgetItem*>& items, bool visible) {
+        const QSignalBlocker blocker(structure_);
+        for (auto* item : items) {
+            if (!item || item->parent() != root) continue;
+            const size_t index = static_cast<size_t>(item->data(0, Qt::UserRole).toULongLong());
+            viewport_->setPartVisible(index, visible);
+            item->setText(1, visible ? QStringLiteral("👁") : QStringLiteral("—"));
+            item->setForeground(0, visible ? QBrush() : QBrush(QColor(Qt::gray)));
+        }
+    };
+    connect(structure_, &QTreeWidget::itemClicked, this,
+            [this, root, setVisibility](QTreeWidgetItem* item, int column) {
         if (item->parent() != root || column != 1) return;
         const size_t index = static_cast<size_t>(item->data(0, Qt::UserRole).toULongLong());
         const bool visible = !viewport_->isPartVisible(index);
-        viewport_->setPartVisible(index, visible);
-        item->setText(1, visible ? QStringLiteral("👁") : QStringLiteral("—"));
-        item->setForeground(0, visible ? QBrush() : QBrush(QColor(Qt::gray)));
+        setVisibility({item}, visible);
     });
     connect(structure_, &QWidget::customContextMenuRequested, this,
-            [this, root](const QPoint& pos) {
+            [this, root, setVisibility](const QPoint& pos) {
         auto* item = structure_->itemAt(pos);
         if (!item || item->parent() != root) return;
+        QList<QTreeWidgetItem*> targets;
+        if (item->isSelected()) {
+            for (auto* selected : structure_->selectedItems())
+                if (selected->parent() == root) targets.append(selected);
+        }
+        if (targets.isEmpty()) targets.append(item);
         const size_t index = static_cast<size_t>(item->data(0, Qt::UserRole).toULongLong());
         QMenu menu(structure_);
         auto* select = menu.addAction(tr("Select"));
         auto* rename = menu.addAction(tr("Rename (F2)"));
-        const bool visible = viewport_->isPartVisible(index);
-        auto* toggle = menu.addAction(visible ? tr("Hide") : tr("Show"));
+        menu.addSeparator();
+        auto* hide = menu.addAction(targets.size() > 1 ? tr("Hide Selected Parts") : tr("Hide"));
+        auto* show = menu.addAction(targets.size() > 1 ? tr("Show Selected Parts") : tr("Show"));
+        menu.addSeparator();
         auto* fit = menu.addAction(tr("Fit Selection"));
         auto* chosen = menu.exec(structure_->viewport()->mapToGlobal(pos));
         if (chosen == select) {
@@ -170,12 +188,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         } else if (chosen == rename) {
             structure_->setCurrentItem(item, 0);
             structure_->editItem(item, 0);
-        } else if (chosen == toggle) {
-            viewport_->setPartVisible(index, !visible);
-            item->setText(1, visible ? QStringLiteral("—") : QStringLiteral("👁"));
-            item->setForeground(0, visible ? QBrush(QColor(Qt::gray)) : QBrush());
+        } else if (chosen == hide) {
+            setVisibility(targets, false);
+        } else if (chosen == show) {
+            setVisibility(targets, true);
         } else if (chosen == fit) {
-            viewport_->fitSelection({index});
+            std::vector<size_t> indices;
+            for (auto* target : targets)
+                indices.push_back(static_cast<size_t>(target->data(0, Qt::UserRole).toULongLong()));
+            viewport_->fitSelection(indices);
         }
     });
     connect(viewport_, &CadViewport::statusMessage, this, [this](const QString& msg) {
