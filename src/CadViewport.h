@@ -63,6 +63,7 @@ private:
     void initializeViewer();
     void updateRotationRings();
     void updateMoveAxes();
+    gp_Pnt selectionCenter() const;
     void setTransformSelectionMode();
     void hideMoveAxes();
     bool beginMoveAxisDrag(const QPoint& point);
