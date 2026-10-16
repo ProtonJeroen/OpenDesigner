@@ -128,12 +128,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         statusBar()->showMessage(name + tr(" created"), 3000);
     });
     connect(structure_, &QTreeWidget::itemSelectionChanged, this, [this, root]() {
-        std::vector<size_t> indices;
+        std::vector<size_t> visibleIndices;
         for (auto* item : structure_->selectedItems()) {
             if (item->parent() != root) continue;
-            indices.push_back(static_cast<size_t>(item->data(0, Qt::UserRole).toULongLong()));
+            const size_t index = static_cast<size_t>(item->data(0, Qt::UserRole).toULongLong());
+            // Hidden items stay selected in the browser for batch Show/Hide,
+            // but are excluded from the 3D manipulator.
+            if (viewport_->isPartVisible(index)) visibleIndices.push_back(index);
         }
-        viewport_->selectParts(indices);
+        // The viewport emits partSelectionChanged when its selection changes.
+        // Do not let that signal clear the hidden browser-only selection.
+        const QSignalBlocker blocker(viewport_);
+        viewport_->selectParts(visibleIndices);
     });
     connect(viewport_, &CadViewport::partSelectionChanged, this, [this, root](const std::vector<size_t>& indices) {
         const QSignalBlocker blocker(structure_);
