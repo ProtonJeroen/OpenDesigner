@@ -96,9 +96,16 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
                     change.afterMax = boxes_[change.partIndex].max;
                 }
             }
+            // The old OCCT face owners are invalid after rebuilding the B-Reps.
+            // Finish the operation cleanly: require a fresh selection for another pull.
+            clearMultiFaceHighlight();
+            hideFaceArrow();
+            context_->ClearSelected(Standard_False);
+            multiFaceParts_.clear();
             multiFaceEditing_ = false;
             dimensionEditing_ = false;
             dragDimension_->hide();
+            view_->Redraw();
             setFocus();
             return;
         }
@@ -154,7 +161,13 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
         rotationEditing_ = false;
         groupRotationEditing_ = false;
         groupMoveEditing_ = false;
-        clearMultiFaceHighlight();
+        if (multiFaceEditing_) {
+            clearMultiFaceHighlight();
+            hideFaceArrow();
+            if (!context_.IsNull()) context_->ClearSelected(Standard_False);
+            multiFaceParts_.clear();
+            if (!view_.IsNull()) view_->Redraw();
+        }
         multiFaceEditing_ = false;
         setFocus();
     });
@@ -1421,8 +1434,12 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     draggingFace_ = false;
     if (multiFaceDragging_) {
         multiFaceDragging_ = false;
-        clearMultiFaceHighlight();
-        if (std::abs(dragDistance_) < 0.0001) { dragDimension_->hide(); return; }
+        // Keep the live overlay visible while the exact distance is being edited.
+        if (std::abs(dragDistance_) < 0.0001) {
+            clearMultiFaceHighlight();
+            dragDimension_->hide();
+            return;
+        }
         PullChange operation = multiFaceParts_.front().before;
         operation.groupedChanges.clear();
         for (const auto& item : multiFaceParts_) {
