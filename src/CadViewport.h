@@ -90,6 +90,11 @@ private:
     bool groupMoveDragging_ = false;
     bool batchingPartUpdates_ = false;
     bool groupMoveEditing_ = false;
+    bool groupRotationDragging_ = false;
+    bool groupRotationEditing_ = false;
+    std::vector<PullChange> groupRotationBefore_;
+    gp_Pnt groupRotationCenter_;
+    gp_Dir groupRotationDirection_ = gp_Dir(1, 0, 0);
     std::vector<PullChange> undoStack_;
     std::vector<PullChange> redoStack_;
     QPoint previous_;
