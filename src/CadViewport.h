@@ -61,6 +61,10 @@ private:
     void applyPartState(size_t index, const std::array<double, 3>& min,
                         const std::array<double, 3>& max, const gp_Trsf& orientation);
     void applyGroupMove(double distance);
+    bool prepareMultiFaceDrag();
+    bool applyMultiFaceDrag(double distance);
+    void updateMultiFaceHighlight();
+    void clearMultiFaceHighlight();
     void refreshPartSelection();
     void applyBoxBounds(size_t index, const std::array<double, 3>& min,
                         const std::array<double, 3>& max);
@@ -85,6 +89,7 @@ private:
     Handle(V3d_View) view_;
     Handle(AIS_InteractiveContext) context_;
     Handle(AIS_Shape) faceArrow_;
+    Handle(AIS_Shape) multiFaceHighlight_;
     size_t arrowPartIndex_ = 0;
     int arrowAxis_ = 0;
     bool arrowMax_ = true;
@@ -94,6 +99,13 @@ private:
     std::vector<PullChange> groupMoveBefore_;
     gp_Dir groupMoveDirection_ = gp_Dir(1, 0, 0);
     bool groupMoveDragging_ = false;
+    bool multiFaceDragging_ = false;
+    bool multiFaceEditing_ = false;
+    struct FaceDragPart {
+        PullChange before;
+        std::array<bool, 6> sides{};
+    };
+    std::vector<FaceDragPart> multiFaceParts_;
     bool batchingPartUpdates_ = false;
     bool groupMoveEditing_ = false;
     bool groupRotationDragging_ = false;

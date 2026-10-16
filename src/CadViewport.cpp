@@ -23,6 +23,8 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
+#include <TopExp_Explorer.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
 #include <gp_Circ.hxx>
 #include <ElCLib.hxx>
@@ -81,6 +83,32 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
             return;
         }
         if (!dimensionEditing_) return;
+        if (multiFaceEditing_) {
+            bool ok = false;
+            const double distance = QLocale().toDouble(dragDimension_->text(), &ok);
+            if (!ok || !applyMultiFaceDrag(distance)) {
+                emit statusMessage(tr("Invalid distance: one or more boxes would collapse."));
+                return;
+            }
+            if (!undoStack_.empty()) {
+                for (auto& change : undoStack_.back().groupedChanges) {
+                    change.afterMin = boxes_[change.partIndex].min;
+                    change.afterMax = boxes_[change.partIndex].max;
+                }
+            }
+            // The old OCCT face owners are invalid after rebuilding the B-Reps.
+            // Finish the operation cleanly: require a fresh selection for another pull.
+            clearMultiFaceHighlight();
+            hideFaceArrow();
+            context_->ClearSelected(Standard_False);
+            multiFaceParts_.clear();
+            multiFaceEditing_ = false;
+            dimensionEditing_ = false;
+            dragDimension_->hide();
+            view_->Redraw();
+            setFocus();
+            return;
+        }
         if (groupMoveEditing_) {
             bool ok = false;
             const double distance = QLocale().toDouble(dragDimension_->text(), &ok);
@@ -133,6 +161,14 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
         rotationEditing_ = false;
         groupRotationEditing_ = false;
         groupMoveEditing_ = false;
+        if (multiFaceEditing_) {
+            clearMultiFaceHighlight();
+            hideFaceArrow();
+            if (!context_.IsNull()) context_->ClearSelected(Standard_False);
+            multiFaceParts_.clear();
+            if (!view_.IsNull()) view_->Redraw();
+        }
+        multiFaceEditing_ = false;
         setFocus();
     });
 }
@@ -260,78 +296,108 @@ void CadViewport::addBox() {
     fitAll();
 }
 void CadViewport::pullSelectedFace() {
-    if (context_.IsNull() || context_->NbSelected() != 1) {
-        emit statusMessage(tr("Select exactly one box face first."));
+    if (context_.IsNull() || context_->NbSelected() == 0) {
+        emit statusMessage(tr("Select one or more planar box faces first."));
         return;
     }
-    // OCCT SelectedOwner(), SelectedShape() and SelectedInteractive() refer to
-    // the CURRENT selection iterator. Initialize it before reading any value.
-    context_->InitSelected();
-    if (!context_->MoreSelected()) {
-        emit statusMessage(tr("Selection iterator is empty."));
-        return;
+
+    // Collect every selected boundary before modifying any geometry.
+    // A part can contribute multiple faces, but must be rebuilt only once.
+    struct Pending {
+        size_t index;
+        std::array<double, 3> min, max;
+        std::array<bool, 6> sides{};
+    };
+    std::vector<Pending> pending;
+    int faceCount = 0;
+    for (context_->InitSelected(); context_->MoreSelected(); context_->NextSelected()) {
+        const Handle(StdSelect_BRepOwner) owner =
+            Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
+        if (owner.IsNull() || owner->Shape().IsNull()
+            || owner->Shape().ShapeType() != TopAbs_FACE) {
+            emit statusMessage(tr("Pull requires face selection (not whole parts)."));
+            return;
+        }
+        const Handle(AIS_InteractiveObject) object = context_->SelectedInteractive();
+        size_t index = 0;
+        while (index < boxes_.size() && boxes_[index].presentation != object) ++index;
+        if (index == boxes_.size()) {
+            emit statusMessage(tr("Selected face does not belong to an editable box."));
+            return;
+        }
+        const BRepAdaptor_Surface surface(TopoDS::Face(owner->Shape()));
+        if (surface.GetType() != GeomAbs_Plane) {
+            emit statusMessage(tr("Only planar box faces are supported."));
+            return;
+        }
+        const gp_Dir normal = surface.Plane().Axis().Direction();
+        const double components[3] = {normal.X(), normal.Y(), normal.Z()};
+        int axis = 0;
+        for (int k = 1; k < 3; ++k)
+            if (std::abs(components[k]) > std::abs(components[axis])) axis = k;
+        if (std::abs(components[axis]) < 0.999) {
+            emit statusMessage(tr("Only box boundary faces are supported."));
+            return;
+        }
+        const auto& part = boxes_[index];
+        const double position = surface.Plane().Location().Coord(axis + 1);
+        const bool onMax = std::abs(position - part.max[axis]) < 0.001;
+        const bool onMin = std::abs(position - part.min[axis]) < 0.001;
+        if (!onMax && !onMin) {
+            emit statusMessage(tr("Could not match a selected face to a box boundary."));
+            return;
+        }
+        auto it = std::find_if(pending.begin(), pending.end(),
+            [index](const Pending& p) { return p.index == index; });
+        if (it == pending.end()) {
+            pending.push_back({index, part.min, part.max, {}});
+            it = std::prev(pending.end());
+        }
+        const int side = axis * 2 + (onMax ? 1 : 0);
+        if (!it->sides[side]) {
+            it->sides[side] = true;
+            ++faceCount;
+        }
     }
-    // The selection owner holds the picked B-Rep subshape.
-    Handle(StdSelect_BRepOwner) faceOwner =
-        Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
-    if (faceOwner.IsNull()) {
-        emit statusMessage(tr("No B-Rep face owner selected (check face selection mode)."));
-        return;
-    }
-    const TopoDS_Shape faceShape = faceOwner->Shape();
-    if (faceShape.IsNull() || faceShape.ShapeType() != TopAbs_FACE) {
-        emit statusMessage(tr("Selected shape type: %1 (expected FACE = %2).")
-            .arg(static_cast<int>(faceShape.IsNull() ? TopAbs_SHAPE : faceShape.ShapeType()))
-            .arg(static_cast<int>(TopAbs_FACE)));
-        return;
-    }
-    Handle(AIS_InteractiveObject) selectedObject = context_->SelectedInteractive();
-    auto partIt = boxes_.end();
-    for (auto it = boxes_.begin(); it != boxes_.end(); ++it) {
-        if (it->presentation == selectedObject) { partIt = it; break; }
-    }
-    if (partIt == boxes_.end()) {
-        emit statusMessage(tr("This face is not part of an editable box."));
-        return;
-    }
-    const BRepAdaptor_Surface surface(TopoDS::Face(faceShape));
-    if (surface.GetType() != GeomAbs_Plane) {
-        emit statusMessage(tr("Only planar box faces are supported."));
-        return;
-    }
-    const gp_Dir normal = surface.Plane().Axis().Direction();
-    const double components[3] = {normal.X(), normal.Y(), normal.Z()};
-    int axis = 0;
-    for (int i = 1; i < 3; ++i)
-        if (std::abs(components[i]) > std::abs(components[axis])) axis = i;
-    if (std::abs(components[axis]) < 0.999) {
-        emit statusMessage(tr("Only axis-aligned box faces are supported."));
-        return;
-    }
-    const double position = surface.Plane().Location().Coord(axis + 1);
-    const bool onMax = std::abs(position - partIt->max[axis]) < 0.001;
-    const bool onMin = std::abs(position - partIt->min[axis]) < 0.001;
-    if (!onMax && !onMin) {
-        emit statusMessage(tr("Could not match selected face to box boundary."));
-        return;
-    }
+    if (pending.empty()) return;
+
     bool ok = false;
-    const double distance = QInputDialog::getDouble(this, tr("Pull Face"),
-        tr("Outward distance (mm; negative = inward):"), 20.0, -100000.0, 100000.0, 2, &ok);
-    if (!ok || distance == 0.0) return;
-    auto nextMin = partIt->min;
-    auto nextMax = partIt->max;
-    if (onMax) nextMax[axis] += distance;
-    else nextMin[axis] -= distance;
-    if (nextMax[axis] - nextMin[axis] <= 0.001) {
-        emit statusMessage(tr("Pull distance would collapse or invert the box."));
-        return;
+    const double distance = QInputDialog::getDouble(this, tr("Pull Selected Faces"),
+        tr("Outward distance for all selected faces (mm; negative = inward):"),
+        20.0, -100000.0, 100000.0, 2, &ok);
+    if (!ok || std::abs(distance) < 0.000001) return;
+
+    std::vector<PullChange> changes;
+    for (auto& item : pending) {
+        const auto& part = boxes_[item.index];
+        for (int axis = 0; axis < 3; ++axis) {
+            if (item.sides[axis * 2]) item.min[axis] -= distance;
+            if (item.sides[axis * 2 + 1]) item.max[axis] += distance;
+            if (item.max[axis] - item.min[axis] <= 0.001) {
+                emit statusMessage(tr("Pull would collapse or invert a selected box. No changes applied."));
+                return;
+            }
+        }
+        changes.push_back({item.index, part.min, part.max, item.min, item.max,
+                           part.orientation, part.orientation});
     }
-    const size_t index = static_cast<size_t>(partIt - boxes_.begin());
-    undoStack_.push_back({index, partIt->min, partIt->max, nextMin, nextMax, partIt->orientation, partIt->orientation});
+
+    // Store a single grouped undo operation even when only one part has
+    // multiple selected faces.
+    PullChange operation = changes.front();
+    if (changes.size() > 1) operation.groupedChanges = changes;
+    undoStack_.push_back(operation);
     redoStack_.clear();
-    applyBoxBounds(index, nextMin, nextMax);
-    emit statusMessage(tr("Face pulled by %1 mm").arg(distance));
+    hideFaceArrow();
+    batchingPartUpdates_ = true;
+    for (const auto& change : changes)
+        applyPartState(change.partIndex, change.afterMin, change.afterMax,
+                       change.afterOrientation);
+    batchingPartUpdates_ = false;
+    context_->ClearSelected(Standard_False); // Old face owners refer to replaced geometry.
+    view_->Redraw();
+    emit statusMessage(tr("%1 selected face(s) pulled by %2 mm across %3 part(s).")
+        .arg(faceCount).arg(distance).arg(changes.size()));
 }
 void CadViewport::rotateSelectedPart() {
     if (context_.IsNull() || context_->NbSelected() != 1) {
@@ -560,6 +626,8 @@ bool CadViewport::beginFaceDrag(const QPoint& origin) {
     dragScreenY_ = dy / pixels;
     dragMmPerPixel_ = 100.0 / pixels;
     dragMovesPart_ = movePartMode_;
+    multiFaceDragging_ = !dragMovesPart_ && prepareMultiFaceDrag();
+    if (multiFaceDragging_) updateMultiFaceHighlight();
     draggingFace_ = true;
     emit statusMessage(dragMovesPart_
         ? tr("Drag to move the entire part along the face normal.")
@@ -606,12 +674,137 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
     dragScreenY_ = dy / pixels;
     dragMmPerPixel_ = 31.0 / pixels;
     dragMovesPart_ = movePartMode_;
+    multiFaceDragging_ = !dragMovesPart_ && prepareMultiFaceDrag();
+    if (multiFaceDragging_) {
+        // Preserve face identities in multiFaceParts_ before clearing OCCT owners.
+        // The old selection highlight otherwise remains at its original position.
+        context_->ClearSelected(Standard_False);
+        updateMultiFaceHighlight();
+        view_->Redraw();
+    }
     draggingFace_ = true;
     emit statusMessage(dragMovesPart_
         ? tr("Drag arrow to move the entire part.")
-        : tr("Drag arrow along face normal; release to commit."));
+        : multiFaceDragging_
+            ? tr("Drag arrow to pull all selected faces together.")
+            : tr("Drag arrow along face normal; release to commit."));
     return true;
 }
+bool CadViewport::prepareMultiFaceDrag() {
+    multiFaceParts_.clear();
+    if (context_.IsNull() || context_->NbSelected() < 2) return false;
+    for (context_->InitSelected(); context_->MoreSelected(); context_->NextSelected()) {
+        const auto owner = Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
+        if (owner.IsNull() || owner->Shape().IsNull() || owner->Shape().ShapeType() != TopAbs_FACE) {
+            multiFaceParts_.clear();
+            return false;
+        }
+        const auto object = context_->SelectedInteractive();
+        size_t index = 0;
+        while (index < boxes_.size() && boxes_[index].presentation != object) ++index;
+        if (index == boxes_.size()) { multiFaceParts_.clear(); return false; }
+        const auto surface = BRepAdaptor_Surface(TopoDS::Face(owner->Shape()));
+        if (surface.GetType() != GeomAbs_Plane) { multiFaceParts_.clear(); return false; }
+        const gp_Dir normal = surface.Plane().Axis().Direction();
+        const double n[3] = {normal.X(), normal.Y(), normal.Z()};
+        int axis = 0;
+        for (int k = 1; k < 3; ++k) if (std::abs(n[k]) > std::abs(n[axis])) axis = k;
+        if (std::abs(n[axis]) < 0.999) { multiFaceParts_.clear(); return false; }
+        const auto& part = boxes_[index];
+        const double position = surface.Plane().Location().Coord(axis + 1);
+        const bool onMax = std::abs(position - part.max[axis]) < 0.001;
+        const bool onMin = std::abs(position - part.min[axis]) < 0.001;
+        if (!onMax && !onMin) { multiFaceParts_.clear(); return false; }
+        auto it = std::find_if(multiFaceParts_.begin(), multiFaceParts_.end(),
+            [index](const FaceDragPart& item) { return item.before.partIndex == index; });
+        if (it == multiFaceParts_.end()) {
+            PullChange before{index, part.min, part.max, part.min, part.max,
+                              part.orientation, part.orientation};
+            multiFaceParts_.push_back({before, {}});
+            it = std::prev(multiFaceParts_.end());
+        }
+        it->sides[axis * 2 + (onMax ? 1 : 0)] = true;
+    }
+    return !multiFaceParts_.empty();
+}
+
+void CadViewport::clearMultiFaceHighlight() {
+    if (!multiFaceHighlight_.IsNull() && !context_.IsNull()) {
+        context_->Remove(multiFaceHighlight_, Standard_False);
+        multiFaceHighlight_.Nullify();
+    }
+}
+
+void CadViewport::updateMultiFaceHighlight() {
+    if (context_.IsNull()) return;
+    BRep_Builder builder;
+    TopoDS_Compound edges;
+    builder.MakeCompound(edges);
+    int count = 0;
+    for (const auto& item : multiFaceParts_) {
+        if (item.before.partIndex >= boxes_.size()) continue;
+        const auto& part = boxes_[item.before.partIndex];
+        for (TopExp_Explorer faces(part.presentation->Shape(), TopAbs_FACE); faces.More(); faces.Next()) {
+            const TopoDS_Face face = TopoDS::Face(faces.Current());
+            const BRepAdaptor_Surface surface(face);
+            if (surface.GetType() != GeomAbs_Plane) continue;
+            const gp_Dir normal = surface.Plane().Axis().Direction();
+            const double n[3] = {normal.X(), normal.Y(), normal.Z()};
+            int axis = 0;
+            for (int k = 1; k < 3; ++k)
+                if (std::abs(n[k]) > std::abs(n[axis])) axis = k;
+            if (std::abs(n[axis]) < 0.999) continue;
+            const double pos = surface.Plane().Location().Coord(axis + 1);
+            const bool onMax = std::abs(pos - part.max[axis]) < 0.001;
+            const bool onMin = std::abs(pos - part.min[axis]) < 0.001;
+            if (!((onMax && item.sides[axis * 2 + 1]) ||
+                  (onMin && item.sides[axis * 2]))) continue;
+            for (TopExp_Explorer edge(face, TopAbs_EDGE); edge.More(); edge.Next()) {
+                builder.Add(edges, BRepBuilderAPI_Transform(
+                    edge.Current(), part.orientation, true).Shape());
+                ++count;
+            }
+        }
+    }
+    if (count == 0) { clearMultiFaceHighlight(); return; }
+    if (multiFaceHighlight_.IsNull()) {
+        multiFaceHighlight_ = new AIS_Shape(edges);
+        multiFaceHighlight_->SetColor(Quantity_Color(0.0, 0.95, 1.0, Quantity_TOC_RGB));
+        context_->Display(multiFaceHighlight_, Standard_False);
+        context_->SetDisplayMode(multiFaceHighlight_, AIS_WireFrame, Standard_False);
+        context_->Deactivate(multiFaceHighlight_);
+    } else {
+        multiFaceHighlight_->SetShape(edges);
+        context_->Redisplay(multiFaceHighlight_, Standard_False);
+        context_->Deactivate(multiFaceHighlight_);
+    }
+    context_->SetZLayer(multiFaceHighlight_, Graphic3d_ZLayerId_Topmost);
+}
+
+bool CadViewport::applyMultiFaceDrag(double distance) {
+    // Validate the complete group before applying any geometry.
+    std::vector<PullChange> changes;
+    for (const auto& item : multiFaceParts_) {
+        auto change = item.before;
+        for (int axis = 0; axis < 3; ++axis) {
+            if (item.sides[axis * 2]) change.afterMin[axis] -= distance;
+            if (item.sides[axis * 2 + 1]) change.afterMax[axis] += distance;
+            if (change.afterMax[axis] - change.afterMin[axis] <= 0.001) return false;
+        }
+        changes.push_back(change);
+    }
+    batchingPartUpdates_ = true;
+    for (const auto& change : changes)
+        applyPartState(change.partIndex, change.afterMin, change.afterMax, change.afterOrientation);
+    batchingPartUpdates_ = false;
+    // Rebuilt B-Reps invalidate OCCT's old selected face owners. Show a
+    // temporary cyan edge overlay reconstructed from the current geometry.
+    updateMultiFaceHighlight();
+    updateFaceArrow();
+    view_->Redraw();
+    return true;
+}
+
 void CadViewport::showDragDimension(const QPoint& position) {
     if (!dragDimension_) return;
     dragDimension_->setText(QLocale().toString(dragDistance_, 'f', 2));
@@ -990,27 +1183,27 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
     if (rotating_ && !view_.IsNull()) view_->StartRotation(previous_.x(), previous_.y());
     if (e->button() == Qt::LeftButton && !context_.IsNull()) {
         if (dimensionEditing_ || rotationEditing_) {
+            clearMultiFaceHighlight();
+            multiFaceEditing_ = false;
             dimensionEditing_ = false;
             rotationEditing_ = false;
             dragDimension_->hide();
         }
         const bool partPicking = (e->modifiers() & Qt::AltModifier);
         const bool additiveSelection = (e->modifiers() & Qt::ControlModifier);
-        // Alt temporarily picks complete parts; ordinary clicks always pick faces.
-        // Keep the existing part selection independent of the active tool.
+        // Start manipulator drags BEFORE changing OCCT selection modes:
+        // Deactivate/Activate may discard selected subshape owners.
+        if (!partPicking && !additiveSelection && beginRotationDrag(e->pos())) return;
+        if (!partPicking && !additiveSelection && beginMoveAxisDrag(e->pos())) return;
+        if (!partPicking && !additiveSelection && !directMoveMode_ && !rotateMode_
+            && beginArrowDrag(e->pos())) return;
+        // Only reconfigure picking when actually selecting geometry.
         for (auto& part : boxes_) {
             if (!part.visible) continue;
             context_->Deactivate(part.presentation);
             context_->Activate(part.presentation,
                 partPicking ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE), Standard_False);
         }
-        // Prioritize curved rotation handles over the projected straight move axes.
-        // Their screen-space hit regions can overlap, especially with group selection.
-        if (!partPicking && !additiveSelection && beginRotationDrag(e->pos())) return;
-        if (!partPicking && !additiveSelection && beginMoveAxisDrag(e->pos())) return;
-        if (directMoveMode_ || rotateMode_ || partPicking) {
-            // Selection and active transform tools are separate.
-        } else if (beginArrowDrag(e->pos())) return;
         // Ctrl is reserved for additive face selection, not drag-to-pull.
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
         if (partPicking) {
@@ -1086,7 +1279,9 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                     }
             }
         }
-        if (context_->NbSelected() == 1) {
+        // Keep one manipulation arrow as an anchor for a multi-face selection.
+        // The grouped drag operation will use all selected face owners.
+        if (context_->NbSelected() >= 1) {
             context_->InitSelected();
             Handle(StdSelect_BRepOwner) arrowOwner =
                 Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
@@ -1167,6 +1362,15 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
         const double requested = snapping
             ? std::round(rawDistance / snapStepMm_) * snapStepMm_
             : rawDistance;
+        if (multiFaceDragging_) {
+            if (std::abs(requested - dragDistance_) > 0.0001 && applyMultiFaceDrag(requested)) {
+                dragDistance_ = requested;
+                showDragDimension(p);
+                emit statusMessage(tr("Multi-Face Pull: %1 mm").arg(requested, 0, 'f', 1));
+            }
+            previous_ = p;
+            return;
+        }
         if (groupMoveDragging_) {
             if (std::abs(requested - dragDistance_) > 0.0001) {
                 dragDistance_ = requested;
@@ -1228,6 +1432,32 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     }
     if (e->button() != Qt::LeftButton || !draggingFace_) return;
     draggingFace_ = false;
+    if (multiFaceDragging_) {
+        multiFaceDragging_ = false;
+        // Keep the live overlay visible while the exact distance is being edited.
+        if (std::abs(dragDistance_) < 0.0001) {
+            clearMultiFaceHighlight();
+            dragDimension_->hide();
+            return;
+        }
+        PullChange operation = multiFaceParts_.front().before;
+        operation.groupedChanges.clear();
+        for (const auto& item : multiFaceParts_) {
+            auto change = item.before;
+            change.afterMin = boxes_[change.partIndex].min;
+            change.afterMax = boxes_[change.partIndex].max;
+            operation.groupedChanges.push_back(change);
+        }
+        undoStack_.push_back(operation);
+        redoStack_.clear();
+        multiFaceEditing_ = true;
+        dimensionEditing_ = true;
+        showDragDimension(e->pos());
+        dragDimension_->setFocus();
+        dragDimension_->selectAll();
+        emit statusMessage(tr("Multi-Face Pull: enter exact mm or Esc to keep."));
+        return;
+    }
     if (groupMoveDragging_) {
         groupMoveDragging_ = false;
         if (std::abs(dragDistance_) < 0.0001) { dragDimension_->hide(); return; }
