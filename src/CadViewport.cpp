@@ -109,6 +109,26 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
             setFocus();
             return;
         }
+        if (cylinderPullEditing_) {
+            bool ok = false;
+            const double distance = QLocale().toDouble(dragDimension_->text(), &ok);
+            if (!ok || !applyCylinderPull(distance)) return;
+            if (!undoStack_.empty()) {
+                auto& last = undoStack_.back();
+                const auto& part = boxes_[last.partIndex];
+                last.afterShape = part.shape;
+                last.afterRadius = part.cylinderRadius;
+                last.afterHeight = part.cylinderHeight;
+                last.afterBaseOffset = part.cylinderBaseOffset;
+                last.afterMin = part.min;
+                last.afterMax = part.max;
+            }
+            cylinderPullEditing_ = false;
+            dimensionEditing_ = false;
+            dragDimension_->hide();
+            setFocus();
+            return;
+        }
         if (groupMoveEditing_) {
             bool ok = false;
             const double distance = QLocale().toDouble(dragDimension_->text(), &ok);
@@ -120,6 +140,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
                     const auto& part = boxes_[item.partIndex];
                     item.afterMin = part.min;
                     item.afterMax = part.max;
+                    item.afterOrientation = part.orientation;
                 }
             }
             groupMoveEditing_ = false;
@@ -146,7 +167,15 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
             emit statusMessage(tr("Distance would collapse or invert the box."));
             return;
         }
-        applyBoxBounds(last.partIndex, min, max);
+        if (dragMovesPart_ && boxes_[last.partIndex].geometryKind == CadPart::GeometryKind::GeneralBRep) {
+            gp_Trsf shift;
+            shift.SetTranslation(gp_Vec(min[0] - last.beforeMin[0],
+                min[1] - last.beforeMin[1], min[2] - last.beforeMin[2]));
+            applyPartState(last.partIndex, min, max, last.beforeOrientation * shift);
+            last.afterOrientation = boxes_[last.partIndex].orientation;
+        } else {
+            applyBoxBounds(last.partIndex, min, max);
+        }
         last.afterMin = min;
         last.afterMax = max;
         dragDimension_->hide();
@@ -161,6 +190,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
         rotationEditing_ = false;
         groupRotationEditing_ = false;
         groupMoveEditing_ = false;
+        cylinderPullEditing_ = false;
         if (multiFaceEditing_) {
             clearMultiFaceHighlight();
             hideFaceArrow();
@@ -244,14 +274,15 @@ void CadViewport::hideFaceArrow() {
 void CadViewport::updateFaceArrow() {
     if (!arrowVisible_ || arrowPartIndex_ >= boxes_.size() || context_.IsNull()) return;
     const auto& part = boxes_[arrowPartIndex_];
-    gp_Pnt center(
-        (part.min[0] + part.max[0]) * 0.5,
-        (part.min[1] + part.max[1]) * 0.5,
-        (part.min[2] + part.max[2]) * 0.5);
-    center.SetCoord(arrowAxis_ + 1,
-                    arrowMax_ ? part.max[arrowAxis_] : part.min[arrowAxis_]);
-    gp_Vec direction(0, 0, 0);
-    direction.SetCoord(arrowAxis_ + 1, arrowMax_ ? 1.0 : -1.0);
+    gp_Pnt center = part.cylinderPrimitive && !movePartMode_ ? cylinderArrowOrigin_ :
+        gp_Pnt((part.min[0]+part.max[0])*0.5,(part.min[1]+part.max[1])*0.5,
+               (part.min[2]+part.max[2])*0.5);
+    gp_Vec direction = part.cylinderPrimitive && !movePartMode_ ?
+        gp_Vec(cylinderArrowDirection_) : gp_Vec(0,0,0);
+    if (!part.cylinderPrimitive || movePartMode_) {
+        center.SetCoord(arrowAxis_+1,arrowMax_?part.max[arrowAxis_]:part.min[arrowAxis_]);
+        direction.SetCoord(arrowAxis_+1,arrowMax_?1.0:-1.0);
+    }
     const double shaftLength = 22.0;
     center.Transform(part.orientation);
     direction.Transform(part.orientation);
@@ -296,8 +327,50 @@ void CadViewport::addBox() {
     emit partCreated(QString("Part %1").arg(partCount_));
     fitAll();
 }
+void CadViewport::addCylinder() {
+    initializeViewer();
+    const double x = partCount_ * 125.0;
+    constexpr double radius = 40.0;
+    constexpr double height = 80.0;
+    CadPart part;
+    part.geometryKind = CadPart::GeometryKind::GeneralBRep;
+    part.cylinderPrimitive = true;
+    part.cylinderRadius = radius;
+    part.cylinderHeight = height;
+    // Bounds are currently used to place the shared move/rotate manipulators.
+    part.min = {x - radius, -radius, 0.0};
+    part.max = {x + radius, radius, height};
+    part.baseMin = part.min;
+    part.baseMax = part.max;
+    part.shape = BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(x, 0, 0),
+        gp_Dir(0, 0, 1)), radius, height).Shape();
+    part.presentation = new AIS_Shape(part.shape);
+    part.presentation->SetColor(Quantity_NOC_LIGHTGRAY);
+    context_->Display(part.presentation, Standard_False);
+    context_->SetDisplayMode(part.presentation, AIS_Shaded, Standard_False);
+    context_->Deactivate(part.presentation);
+    context_->Activate(part.presentation, AIS_Shape::SelectionMode(TopAbs_FACE),
+        Standard_False);
+    boxes_.push_back(part);
+    ++partCount_;
+    emit partCreated(QString("Cylinder %1").arg(partCount_));
+    fitAll();
+}
 void CadViewport::duplicateSelectedParts() {
     initializeViewer();
+    // A face selection identifies its owning part as well. Allow Ctrl+D
+    // directly after clicking a cylinder face, without requiring Alt+click.
+    if (selectedPartIndices_.empty() && !context_.IsNull()) {
+        for (context_->InitSelected(); context_->MoreSelected(); context_->NextSelected()) {
+            const auto object = context_->SelectedInteractive();
+            for (size_t i = 0; i < boxes_.size(); ++i) {
+                if (boxes_[i].presentation == object &&
+                    std::find(selectedPartIndices_.begin(), selectedPartIndices_.end(), i)
+                        == selectedPartIndices_.end())
+                    selectedPartIndices_.push_back(i);
+            }
+        }
+    }
     if (selectedPartIndices_.empty()) {
         emit statusMessage(tr("Select one or more parts with Alt+click or in the Structure Browser."));
         return;
@@ -311,8 +384,14 @@ void CadViewport::duplicateSelectedParts() {
         const CadPart original = boxes_[index];
         CadPart copy;
         copy.geometryKind = original.geometryKind;
+        copy.cylinderPrimitive = original.cylinderPrimitive;
+        copy.cylinderRadius = original.cylinderRadius;
+        copy.cylinderHeight = original.cylinderHeight;
+        copy.cylinderBaseOffset = original.cylinderBaseOffset;
         copy.min = original.min;
         copy.max = original.max;
+        copy.baseMin = original.baseMin;
+        copy.baseMax = original.baseMax;
         copy.orientation = original.orientation;
         // Translate in world X without altering the part's local dimensions or rotation.
         gp_Trsf translation;
@@ -552,10 +631,39 @@ void CadViewport::movePartAlongSelectedFace() {
     applyBoxBounds(index, afterMin, afterMax);
     emit statusMessage(tr("Part translated %1 mm; dimensions unchanged.").arg(distance));
 }
+gp_Pnt CadViewport::partLocalCenter(const CadPart& part) const {
+    const auto& min = part.geometryKind == CadPart::GeometryKind::GeneralBRep
+        ? part.baseMin : part.min;
+    const auto& max = part.geometryKind == CadPart::GeometryKind::GeneralBRep
+        ? part.baseMax : part.max;
+    return gp_Pnt((min[0] + max[0]) * 0.5,
+                  (min[1] + max[1]) * 0.5,
+                  (min[2] + max[2]) * 0.5);
+}
 void CadViewport::applyPartState(size_t index, const std::array<double, 3>& min,
                                  const std::array<double, 3>& max, const gp_Trsf& orientation) {
     if (index >= boxes_.size()) return;
-    boxes_[index].orientation = orientation;
+    auto& part = boxes_[index];
+    if (part.geometryKind == CadPart::GeometryKind::GeneralBRep) {
+        // The caller supplies the complete target instance transform.
+        // Never derive it from the previous frame's bounds: doing so
+        // compounds translation during grouped moves and undo/redo.
+        part.orientation = orientation;
+        part.min = min;
+        part.max = max;
+        if (!context_.IsNull()) {
+            if (!batchingPartUpdates_) context_->ClearSelected(Standard_False);
+            part.presentation->SetLocalTransformation(part.orientation);
+            context_->Redisplay(part.presentation, Standard_False);
+            if (!batchingPartUpdates_) {
+                if (rotateMode_) updateRotationRings();
+                if (directMoveMode_) updateMoveAxes();
+                view_->Redraw();
+            }
+        }
+        return;
+    }
+    part.orientation = orientation;
     applyBoxBounds(index, min, max);
 }
 void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
@@ -595,10 +703,10 @@ void CadViewport::undoPull() {
     if (!change.groupedChanges.empty()) {
         batchingPartUpdates_ = true;
         for (const auto& item : change.groupedChanges)
-            applyPartState(item.partIndex, item.beforeMin, item.beforeMax, item.beforeOrientation);
+            restorePullChange(item, false);
         batchingPartUpdates_ = false;
         refreshPartSelection();
-    } else applyPartState(change.partIndex, change.beforeMin, change.beforeMax, change.beforeOrientation);
+    } else restorePullChange(change, false);
     redoStack_.push_back(change);
     emit statusMessage(tr("Pull Face undone."));
 }
@@ -612,10 +720,10 @@ void CadViewport::redoPull() {
     if (!change.groupedChanges.empty()) {
         batchingPartUpdates_ = true;
         for (const auto& item : change.groupedChanges)
-            applyPartState(item.partIndex, item.afterMin, item.afterMax, item.afterOrientation);
+            restorePullChange(item, true);
         batchingPartUpdates_ = false;
         refreshPartSelection();
-    } else applyPartState(change.partIndex, change.afterMin, change.afterMax, change.afterOrientation);
+    } else restorePullChange(change, true);
     undoStack_.push_back(change);
     emit statusMessage(tr("Pull Face redone."));
 }
@@ -688,15 +796,16 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
     if (!arrowVisible_ || faceArrow_.IsNull() || view_.IsNull()
         || arrowPartIndex_ >= boxes_.size()) return false;
     const auto& part = boxes_[arrowPartIndex_];
-    gp_Pnt center(
-        (part.min[0] + part.max[0]) * 0.5,
-        (part.min[1] + part.max[1]) * 0.5,
-        (part.min[2] + part.max[2]) * 0.5);
-    center.SetCoord(arrowAxis_ + 1,
-                    arrowMax_ ? part.max[arrowAxis_] : part.min[arrowAxis_]);
-    gp_Pnt tip = center;
-    tip.SetCoord(arrowAxis_ + 1, center.Coord(arrowAxis_ + 1)
-                    + (arrowMax_ ? 31.0 : -31.0));
+    gp_Pnt center = part.cylinderPrimitive && !movePartMode_ ? cylinderArrowOrigin_ :
+        gp_Pnt((part.min[0]+part.max[0])*0.5,(part.min[1]+part.max[1])*0.5,
+               (part.min[2]+part.max[2])*0.5);
+    gp_Vec outward = part.cylinderPrimitive && !movePartMode_ ?
+        gp_Vec(cylinderArrowDirection_) : gp_Vec(0,0,0);
+    if (!part.cylinderPrimitive || movePartMode_) {
+        center.SetCoord(arrowAxis_+1,arrowMax_?part.max[arrowAxis_]:part.min[arrowAxis_]);
+        outward.SetCoord(arrowAxis_+1,arrowMax_?1.0:-1.0);
+    }
+    gp_Pnt tip = center.Translated(outward.Multiplied(31.0));
     center.Transform(part.orientation);
     tip.Transform(part.orientation);
     Standard_Integer x0, y0, x1, y1;
@@ -712,6 +821,26 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
     const double distance = std::hypot(origin.x() - (x0 + t * dx),
                                        origin.y() - (y0 + t * dy));
     if (distance > 12.0) return false;
+    if (part.cylinderPrimitive && !movePartMode_) {
+        cylinderPullDragging_ = true;
+        cylinderPullBefore_ = {arrowPartIndex_,part.min,part.max,part.min,part.max,
+            part.orientation,part.orientation};
+        cylinderPullBefore_.beforeShape = part.shape;
+        cylinderPullBefore_.beforeRadius = part.cylinderRadius;
+        cylinderPullBefore_.beforeHeight = part.cylinderHeight;
+        cylinderPullBefore_.beforeBaseOffset = part.cylinderBaseOffset;
+        dragIndex_ = arrowPartIndex_;
+        dragStart_ = origin;
+        dragDistance_ = 0.0;
+        const double pixels = std::sqrt(lengthSquared);
+        dragScreenX_ = dx/pixels;
+        dragScreenY_ = dy/pixels;
+        dragMmPerPixel_ = 31.0/pixels;
+        draggingFace_ = true;
+        context_->ClearSelected(Standard_False);
+        context_->MoveTo(-1,-1,view_,Standard_False);
+        return true;
+    }
     dragIndex_ = arrowPartIndex_;
     dragAxis_ = arrowAxis_;
     dragMax_ = arrowMax_;
@@ -878,9 +1007,7 @@ gp_Pnt CadViewport::selectionCenter() const {
     for (const size_t index : selectedPartIndices_) {
         if (index >= boxes_.size()) continue;
         const auto& part = boxes_[index];
-        const gp_Pnt p = gp_Pnt((part.min[0]+part.max[0])*0.5,
-            (part.min[1]+part.max[1])*0.5,
-            (part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
+        const gp_Pnt p = partLocalCenter(part).Transformed(part.orientation);
         x += p.X(); y += p.Y(); z += p.Z(); ++count;
     }
     return count ? gp_Pnt(x/count, y/count, z/count) : gp_Pnt(0, 0, 0);
@@ -952,6 +1079,76 @@ void CadViewport::refreshPartSelection() {
     }
     view_->Redraw();
 }
+bool CadViewport::applyCylinderPull(double distance) {
+    if (dragIndex_ >= boxes_.size() || context_.IsNull()) return false;
+    auto& part = boxes_[dragIndex_];
+    if (!part.cylinderPrimitive) return false;
+    const double radius = cylinderPullBefore_.beforeRadius +
+        (cylinderRadialArrow_ ? distance : 0.0);
+    const double height = cylinderPullBefore_.beforeHeight +
+        (cylinderRadialArrow_ ? 0.0 : distance);
+    if (radius <= 0.01 || height <= 0.01) return false;
+    // A negative-Z cap pull moves the bottom down; the top stays fixed.
+    const bool bottomCap = !cylinderRadialArrow_ && cylinderArrowDirection_.Z() < 0;
+    const double baseOffset = cylinderPullBefore_.beforeBaseOffset -
+        (bottomCap ? distance : 0.0);
+    const gp_Pnt base((part.baseMin[0]+part.baseMax[0])*0.5,
+        (part.baseMin[1]+part.baseMax[1])*0.5,part.baseMin[2]+baseOffset);
+    const TopoDS_Shape shape =
+        BRepPrimAPI_MakeCylinder(gp_Ax2(base,gp_Dir(0,0,1)),radius,height).Shape();
+    part.shape = shape;
+    part.cylinderRadius = radius;
+    part.cylinderHeight = height;
+    part.cylinderBaseOffset = baseOffset;
+    part.min = cylinderPullBefore_.beforeMin;
+    part.max = cylinderPullBefore_.beforeMax;
+    if (cylinderRadialArrow_) {
+        const double change = radius-cylinderPullBefore_.beforeRadius;
+        part.min[0] -= change;
+        part.min[1] -= change;
+        part.max[0] += change;
+        part.max[1] += change;
+    } else if (bottomCap) {
+        part.min[2] -= distance;
+    } else {
+        part.max[2] += distance;
+    }
+    context_->ClearSelected(Standard_False);
+    part.presentation->SetShape(shape);
+    part.presentation->SetLocalTransformation(part.orientation);
+    context_->Redisplay(part.presentation,Standard_False);
+    context_->Deactivate(part.presentation);
+    context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
+    if (cylinderRadialArrow_) {
+        cylinderArrowOrigin_ = gp_Pnt(
+            base.X()+cylinderArrowDirection_.X()*radius,
+            base.Y()+cylinderArrowDirection_.Y()*radius,
+            base.Z()+height*0.5);
+    } else {
+        cylinderArrowOrigin_.SetZ(cylinderArrowDirection_.Z()>0 ?
+            base.Z()+height : base.Z());
+    }
+    updateFaceArrow();
+    view_->Redraw();
+    return true;
+}
+void CadViewport::restorePullChange(const PullChange& change, bool after) {
+    applyPartState(change.partIndex,after?change.afterMin:change.beforeMin,
+        after?change.afterMax:change.beforeMax,
+        after?change.afterOrientation:change.beforeOrientation);
+    if (change.beforeShape.IsNull() || change.partIndex>=boxes_.size()) return;
+    auto& part=boxes_[change.partIndex];
+    part.shape=after?change.afterShape:change.beforeShape;
+    part.cylinderRadius=after?change.afterRadius:change.beforeRadius;
+    part.cylinderHeight=after?change.afterHeight:change.beforeHeight;
+    part.cylinderBaseOffset=after?change.afterBaseOffset:change.beforeBaseOffset;
+    part.presentation->SetShape(part.shape);
+    context_->Redisplay(part.presentation,Standard_False);
+    context_->Deactivate(part.presentation);
+    context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
+    hideFaceArrow();
+    view_->Redraw();
+}
 void CadViewport::applyGroupMove(double distance) {
     const gp_Vec worldDelta(groupMoveDirection_);
     batchingPartUpdates_ = true;
@@ -965,7 +1162,13 @@ void CadViewport::applyGroupMove(double distance) {
             min[axis] += localDelta.Coord(axis + 1);
             max[axis] += localDelta.Coord(axis + 1);
         }
-        applyPartState(before.partIndex, min, max, before.beforeOrientation);
+        if (boxes_[before.partIndex].geometryKind == CadPart::GeometryKind::GeneralBRep) {
+            gp_Trsf shift;
+            shift.SetTranslation(worldDelta.Multiplied(distance));
+            applyPartState(before.partIndex, min, max, shift * before.beforeOrientation);
+        } else {
+            applyPartState(before.partIndex, min, max, before.beforeOrientation);
+        }
     }
     batchingPartUpdates_ = false;
     refreshPartSelection();
@@ -974,8 +1177,7 @@ void CadViewport::updateMoveAxes() {
     hideMoveAxes();
     if (!directMoveMode_ || moveIndex_ >= boxes_.size() || context_.IsNull()) return;
     const auto& part = boxes_[moveIndex_];
-    const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter() : gp_Pnt((part.min[0]+part.max[0])*0.5,
-        (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
+    const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter() : partLocalCenter(part).Transformed(part.orientation);
     for (int axis=0; axis<3; ++axis) {
         const gp_Dir direction = gp_Dir(axis==0?1:0,axis==1?1:0,axis==2?1:0).Transformed(part.orientation);
         const gp_Ax2 arrowAxis(center,direction);
@@ -1021,8 +1223,7 @@ bool CadViewport::beginMoveAxisDrag(const QPoint& point) {
     if (!directMoveMode_ || moveIndex_>=boxes_.size() || view_.IsNull()) return false;
     const auto& part=boxes_[moveIndex_];
     const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter()
-        : gp_Pnt((part.min[0]+part.max[0])*0.5,
-            (part.min[1]+part.max[1])*0.5,(part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
+        : partLocalCenter(part).Transformed(part.orientation);
     double best=12.0;
     int hit=-1;
     double bestDx=0.0,bestDy=0.0,bestPixels=0.0;
@@ -1045,12 +1246,17 @@ bool CadViewport::beginMoveAxisDrag(const QPoint& point) {
     dragMovesPart_=true;
     dragMin_=part.min;
     dragMaxBounds_=part.max;
+    dragBeforeOrientation_ = part.orientation;
     dragStart_=point;
     dragDistance_=0.0;
     dragScreenX_=bestDx/bestPixels;
     dragScreenY_=bestDy/bestPixels;
     dragMmPerPixel_=52.0/bestPixels;
     draggingFace_=true;
+    // The cursor was hovering over the old cylinder face before grabbing
+    // the move gizmo. Drop OCCT's dynamic highlight now so its white edge
+    // presentation cannot remain at the pre-drag position.
+    context_->MoveTo(-1, -1, view_, Standard_False);
     groupMoveDragging_ = selectedPartIndices_.size() > 1;
     groupMoveBefore_.clear();
     if (groupMoveDragging_) {
@@ -1075,9 +1281,7 @@ void CadViewport::updateRotationRings() {
     if (!rotateMode_ || rotationIndex_ >= boxes_.size() || context_.IsNull()) return;
     const auto& part = boxes_[rotationIndex_];
     const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter()
-        : gp_Pnt((part.min[0]+part.max[0])*0.5,
-            (part.min[1]+part.max[1])*0.5,
-            (part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
+        : partLocalCenter(part).Transformed(part.orientation);
     const double radius = selectedPartIndices_.size() > 1 ? 60.0 : 0.65 * std::max({part.max[0]-part.min[0],
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
     for (int axis = 0; axis < 3; ++axis) {
@@ -1124,8 +1328,7 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
     if (!rotateMode_ || rotationIndex_ >= boxes_.size() || view_.IsNull()) return false;
     const auto& part = boxes_[rotationIndex_];
     const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter()
-        : gp_Pnt((part.min[0]+part.max[0])*0.5,
-            (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(part.orientation);
+        : partLocalCenter(part).Transformed(part.orientation);
     const double radius = selectedPartIndices_.size() > 1 ? 60.0 : 0.65 * std::max({part.max[0]-part.min[0],
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
     double best = 16.0;
@@ -1169,13 +1372,18 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
     rotationAccumulatedAngle_ = 0.0;
     draggingRotation_ = true;
     hideFaceArrow();
+    // Match direct-move startup: remove the previous OCCT hover outline
+    // before changing the part's local transformation.
+    if (!context_.IsNull()) {
+        context_->MoveTo(-1, -1, view_, Standard_False);
+        view_->Redraw();
+    }
     return true;
 }
 double CadViewport::rotationCursorAngle(const QPoint& point, int axis, const gp_Trsf& orientation) const {
     const auto& part = boxes_[rotationIndex_];
     const gp_Pnt center = groupRotationDragging_ ? groupRotationCenter_
-        : gp_Pnt((part.min[0]+part.max[0])*0.5,
-            (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(orientation);
+        : partLocalCenter(part).Transformed(orientation);
     const double radius = groupRotationDragging_ ? 60.0 : 0.65 * std::max({part.max[0]-part.min[0],
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
     const gp_Dir dir = gp_Dir(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0).Transformed(orientation);
@@ -1215,8 +1423,7 @@ void CadViewport::applyRotationAngle(double degrees) {
     }
     if (rotationIndex_ >= boxes_.size()) return;
     auto& part = boxes_[rotationIndex_];
-    const gp_Pnt center = gp_Pnt((part.min[0]+part.max[0])*0.5,
-        (part.min[1]+part.max[1])*0.5, (part.min[2]+part.max[2])*0.5).Transformed(rotationBefore_);
+    const gp_Pnt center = partLocalCenter(part).Transformed(rotationBefore_);
     const gp_Dir dir = gp_Dir(rotationAxis_ == 0 ? 1 : 0, rotationAxis_ == 1 ? 1 : 0, rotationAxis_ == 2 ? 1 : 0).Transformed(rotationBefore_);
     gp_Trsf rotation;
     rotation.SetRotation(gp_Ax1(center,dir),degrees * 3.14159265358979323846 / 180.0);
@@ -1323,6 +1530,30 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
         context_->SelectDetected(additiveSelection
             ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
         hideFaceArrow();
+        // For a general B-Rep in transform mode, a normal click should
+        // select its whole part, just like Alt+click/Structure Browser.
+        // This keeps both enabled gizmos visible immediately instead of
+        // showing only rotation until the first drag refreshes selection.
+        if (!additiveSelection && (directMoveMode_ || rotateMode_)
+            && context_->NbSelected() == 1) {
+            context_->InitSelected();
+            if (context_->MoreSelected()) {
+                const auto object = context_->SelectedInteractive();
+                for (size_t i = 0; i < boxes_.size(); ++i) {
+                    if (boxes_[i].presentation == object
+                        && boxes_[i].geometryKind == CadPart::GeometryKind::GeneralBRep) {
+                        selectParts({i});
+                        // Clear the face's dynamic hover outline. The cylinder
+                        // remains selected in our part model and both gizmos
+                        // stay visible, but the stale white OCCT face outline
+                        // should not linger while manipulating the part.
+                        context_->MoveTo(-1, -1, view_, Standard_False);
+                        view_->Redraw();
+                        return;
+                    }
+                }
+            }
+        }
         if (rotateMode_ && !additiveSelection) {
             hideRotationRings();
             if (context_->NbSelected() == 1) {
@@ -1348,6 +1579,49 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                 for (size_t i = 0; i < boxes_.size(); ++i) {
                     if (boxes_[i].presentation != selected) continue;
                     const BRepAdaptor_Surface surf(TopoDS::Face(arrowOwner->Shape()));
+                    if (boxes_[i].cylinderPrimitive && !movePartMode_) {
+                        const auto& part = boxes_[i];
+                        const gp_Pnt base((part.baseMin[0]+part.baseMax[0])*0.5,
+                            (part.baseMin[1]+part.baseMax[1])*0.5,part.baseMin[2]+part.cylinderBaseOffset);
+                        cylinderRadialArrow_ = surf.GetType() == GeomAbs_Cylinder;
+                        if (!cylinderRadialArrow_ && surf.GetType() != GeomAbs_Plane) break;
+                        if (cylinderRadialArrow_) {
+                            // Choose a stable outward radial arrow based on cursor position.
+                            // Project the cursor ray into the cylinder's local XY plane.
+                            // AIS_InteractiveContext::DetectedPoint is not available
+                            // in the OCCT version shipped by Fedora.
+                            Standard_Real eyeX, eyeY, eyeZ, rayX, rayY, rayZ;
+                            view_->ConvertWithProj(e->pos().x(), e->pos().y(),
+                                eyeX, eyeY, eyeZ, rayX, rayY, rayZ);
+                            const gp_Pnt rayOrigin = gp_Pnt(eyeX,eyeY,eyeZ)
+                                .Transformed(part.orientation.Inverted());
+                            const gp_Vec rayDirection = gp_Vec(rayX,rayY,rayZ)
+                                .Transformed(part.orientation.Inverted());
+                            const double middleZ = base.Z()+part.cylinderHeight*0.5;
+                            double t = 0.0;
+                            if (std::abs(rayDirection.Z()) > 1.0e-8)
+                                t = (middleZ-rayOrigin.Z())/rayDirection.Z();
+                            const gp_Pnt hit = rayOrigin.Translated(rayDirection.Multiplied(t));
+                            const gp_Vec radial(base,gp_Pnt(hit.X(),hit.Y(),base.Z()));
+                            if (radial.Magnitude() < 1.0e-6) break;
+                            cylinderArrowDirection_ = gp_Dir(radial);
+                            cylinderArrowOrigin_ = gp_Pnt(base.X()+cylinderArrowDirection_.X()*part.cylinderRadius,
+                                base.Y()+cylinderArrowDirection_.Y()*part.cylinderRadius,
+                                base.Z()+part.cylinderHeight*0.5);
+                        } else {
+                            const double z = surf.Plane().Location().Z();
+                            const bool top = std::abs(z-(base.Z()+part.cylinderHeight)) <
+                                std::abs(z-base.Z());
+                            cylinderArrowDirection_ = gp_Dir(0,0,top?1:-1);
+                            cylinderArrowOrigin_ = gp_Pnt(base.X(),base.Y(),
+                                top?base.Z()+part.cylinderHeight:base.Z());
+                        }
+                        arrowPartIndex_ = i;
+                        arrowVisible_ = true;
+                        updateFaceArrow();
+                        break;
+                    }
+                    cylinderRadialArrow_ = false;
                     if (surf.GetType() != GeomAbs_Plane) break;
                     const gp_Dir normal = surf.Plane().Axis().Direction();
                     const double components[3] = {normal.X(), normal.Y(), normal.Z()};
@@ -1419,6 +1693,17 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
         const double requested = snapping
             ? std::round(rawDistance / snapStepMm_) * snapStepMm_
             : rawDistance;
+        if (cylinderPullDragging_) {
+            if (std::abs(requested-dragDistance_) > 0.0001 && applyCylinderPull(requested)) {
+                dragDistance_ = requested;
+                showDragDimension(p);
+                emit statusMessage(cylinderRadialArrow_
+                    ? tr("Cylinder radius change: %1 mm").arg(requested,0,'f',1)
+                    : tr("Cylinder length change: %1 mm").arg(requested,0,'f',1));
+            }
+            previous_ = p;
+            return;
+        }
         if (multiFaceDragging_) {
             if (std::abs(requested - dragDistance_) > 0.0001 && applyMultiFaceDrag(requested)) {
                 dragDistance_ = requested;
@@ -1449,7 +1734,15 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
         if (max[dragAxis_] - min[dragAxis_] > 0.001
             && std::abs(requested - dragDistance_) > 0.0001) {
             dragDistance_ = requested;
-            applyBoxBounds(dragIndex_, min, max);
+            if (dragMovesPart_ && boxes_[dragIndex_].geometryKind == CadPart::GeometryKind::GeneralBRep) {
+                const gp_Vec localDelta(min[0] - dragMin_[0],
+                    min[1] - dragMin_[1], min[2] - dragMin_[2]);
+                gp_Trsf shift;
+                shift.SetTranslation(localDelta);
+                applyPartState(dragIndex_, min, max, dragBeforeOrientation_ * shift);
+            } else {
+                applyBoxBounds(dragIndex_, min, max);
+            }
             emit statusMessage(tr("%1: %2 mm")
                 .arg(dragMovesPart_ ? tr("Move Part") : tr("Pull Face"))
                 .arg(dragDistance_, 0, 'f', 1));
@@ -1489,6 +1782,25 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     }
     if (e->button() != Qt::LeftButton || !draggingFace_) return;
     draggingFace_ = false;
+    if (cylinderPullDragging_) {
+        cylinderPullDragging_ = false;
+        if (std::abs(dragDistance_) < 0.0001) { dragDimension_->hide(); return; }
+        const auto& part = boxes_[dragIndex_];
+        cylinderPullBefore_.afterShape = part.shape;
+        cylinderPullBefore_.afterRadius = part.cylinderRadius;
+        cylinderPullBefore_.afterHeight = part.cylinderHeight;
+        cylinderPullBefore_.afterBaseOffset = part.cylinderBaseOffset;
+        cylinderPullBefore_.afterMin = part.min;
+        cylinderPullBefore_.afterMax = part.max;
+        undoStack_.push_back(cylinderPullBefore_);
+        redoStack_.clear();
+        cylinderPullEditing_ = true;
+        dimensionEditing_ = true;
+        showDragDimension(e->pos());
+        dragDimension_->setFocus();
+        dragDimension_->selectAll();
+        return;
+    }
     if (multiFaceDragging_) {
         multiFaceDragging_ = false;
         // Keep the live overlay visible while the exact distance is being edited.
@@ -1523,6 +1835,7 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
         for (auto& item : group.groupedChanges) {
             item.afterMin = boxes_[item.partIndex].min;
             item.afterMax = boxes_[item.partIndex].max;
+            item.afterOrientation = boxes_[item.partIndex].orientation;
         }
         undoStack_.push_back(group);
         redoStack_.clear();
@@ -1536,7 +1849,9 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     }
     if (std::abs(dragDistance_) < 0.0001) { dragDimension_->hide(); return; }
     const auto& part = boxes_[dragIndex_];
-    undoStack_.push_back({dragIndex_, dragMin_, dragMaxBounds_, part.min, part.max, part.orientation, part.orientation});
+    undoStack_.push_back({dragIndex_, dragMin_, dragMaxBounds_, part.min, part.max,
+        dragMovesPart_ && part.geometryKind == CadPart::GeometryKind::GeneralBRep
+            ? dragBeforeOrientation_ : part.orientation, part.orientation});
     redoStack_.clear();
     dimensionEditing_ = true;
     showDragDimension(e->pos());
