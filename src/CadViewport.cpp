@@ -119,6 +119,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
                 last.afterShape = part.shape;
                 last.afterRadius = part.cylinderRadius;
                 last.afterHeight = part.cylinderHeight;
+                last.afterBaseOffset = part.cylinderBaseOffset;
                 last.afterMin = part.min;
                 last.afterMax = part.max;
             }
@@ -386,6 +387,7 @@ void CadViewport::duplicateSelectedParts() {
         copy.cylinderPrimitive = original.cylinderPrimitive;
         copy.cylinderRadius = original.cylinderRadius;
         copy.cylinderHeight = original.cylinderHeight;
+        copy.cylinderBaseOffset = original.cylinderBaseOffset;
         copy.min = original.min;
         copy.max = original.max;
         copy.baseMin = original.baseMin;
@@ -826,6 +828,7 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
         cylinderPullBefore_.beforeShape = part.shape;
         cylinderPullBefore_.beforeRadius = part.cylinderRadius;
         cylinderPullBefore_.beforeHeight = part.cylinderHeight;
+        cylinderPullBefore_.beforeBaseOffset = part.cylinderBaseOffset;
         dragIndex_ = arrowPartIndex_;
         dragStart_ = origin;
         dragDistance_ = 0.0;
@@ -1085,13 +1088,18 @@ bool CadViewport::applyCylinderPull(double distance) {
     const double height = cylinderPullBefore_.beforeHeight +
         (cylinderRadialArrow_ ? 0.0 : distance);
     if (radius <= 0.01 || height <= 0.01) return false;
+    // A negative-Z cap pull moves the bottom down; the top stays fixed.
+    const bool bottomCap = !cylinderRadialArrow_ && cylinderArrowDirection_.Z() < 0;
+    const double baseOffset = cylinderPullBefore_.beforeBaseOffset -
+        (bottomCap ? distance : 0.0);
     const gp_Pnt base((part.baseMin[0]+part.baseMax[0])*0.5,
-        (part.baseMin[1]+part.baseMax[1])*0.5,part.baseMin[2]);
+        (part.baseMin[1]+part.baseMax[1])*0.5,part.baseMin[2]+baseOffset);
     const TopoDS_Shape shape =
         BRepPrimAPI_MakeCylinder(gp_Ax2(base,gp_Dir(0,0,1)),radius,height).Shape();
     part.shape = shape;
     part.cylinderRadius = radius;
     part.cylinderHeight = height;
+    part.cylinderBaseOffset = baseOffset;
     part.min = cylinderPullBefore_.beforeMin;
     part.max = cylinderPullBefore_.beforeMax;
     if (cylinderRadialArrow_) {
@@ -1100,6 +1108,8 @@ bool CadViewport::applyCylinderPull(double distance) {
         part.min[1] -= change;
         part.max[0] += change;
         part.max[1] += change;
+    } else if (bottomCap) {
+        part.min[2] -= distance;
     } else {
         part.max[2] += distance;
     }
@@ -1114,8 +1124,9 @@ bool CadViewport::applyCylinderPull(double distance) {
             base.X()+cylinderArrowDirection_.X()*radius,
             base.Y()+cylinderArrowDirection_.Y()*radius,
             base.Z()+height*0.5);
-    } else if (cylinderArrowDirection_.Z()>0) {
-        cylinderArrowOrigin_.SetZ(base.Z()+height);
+    } else {
+        cylinderArrowOrigin_.SetZ(cylinderArrowDirection_.Z()>0 ?
+            base.Z()+height : base.Z());
     }
     updateFaceArrow();
     view_->Redraw();
@@ -1130,6 +1141,7 @@ void CadViewport::restorePullChange(const PullChange& change, bool after) {
     part.shape=after?change.afterShape:change.beforeShape;
     part.cylinderRadius=after?change.afterRadius:change.beforeRadius;
     part.cylinderHeight=after?change.afterHeight:change.beforeHeight;
+    part.cylinderBaseOffset=after?change.afterBaseOffset:change.beforeBaseOffset;
     part.presentation->SetShape(part.shape);
     context_->Redisplay(part.presentation,Standard_False);
     context_->Deactivate(part.presentation);
@@ -1570,7 +1582,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                     if (boxes_[i].cylinderPrimitive && !movePartMode_) {
                         const auto& part = boxes_[i];
                         const gp_Pnt base((part.baseMin[0]+part.baseMax[0])*0.5,
-                            (part.baseMin[1]+part.baseMax[1])*0.5,part.baseMin[2]);
+                            (part.baseMin[1]+part.baseMax[1])*0.5,part.baseMin[2]+part.cylinderBaseOffset);
                         cylinderRadialArrow_ = surf.GetType() == GeomAbs_Cylinder;
                         if (!cylinderRadialArrow_ && surf.GetType() != GeomAbs_Plane) break;
                         if (cylinderRadialArrow_) {
@@ -1777,6 +1789,7 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
         cylinderPullBefore_.afterShape = part.shape;
         cylinderPullBefore_.afterRadius = part.cylinderRadius;
         cylinderPullBefore_.afterHeight = part.cylinderHeight;
+        cylinderPullBefore_.afterBaseOffset = part.cylinderBaseOffset;
         cylinderPullBefore_.afterMin = part.min;
         cylinderPullBefore_.afterMax = part.max;
         undoStack_.push_back(cylinderPullBefore_);
