@@ -383,6 +383,9 @@ void CadViewport::duplicateSelectedParts() {
         const CadPart original = boxes_[index];
         CadPart copy;
         copy.geometryKind = original.geometryKind;
+        copy.cylinderPrimitive = original.cylinderPrimitive;
+        copy.cylinderRadius = original.cylinderRadius;
+        copy.cylinderHeight = original.cylinderHeight;
         copy.min = original.min;
         copy.max = original.max;
         copy.baseMin = original.baseMin;
