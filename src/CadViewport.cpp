@@ -120,6 +120,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
                     const auto& part = boxes_[item.partIndex];
                     item.afterMin = part.min;
                     item.afterMax = part.max;
+                    item.afterOrientation = part.orientation;
                 }
             }
             groupMoveEditing_ = false;
@@ -146,7 +147,15 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
             emit statusMessage(tr("Distance would collapse or invert the box."));
             return;
         }
-        applyBoxBounds(last.partIndex, min, max);
+        if (dragMovesPart_ && boxes_[last.partIndex].geometryKind == CadPart::GeometryKind::GeneralBRep) {
+            gp_Trsf shift;
+            shift.SetTranslation(gp_Vec(min[0] - last.beforeMin[0],
+                min[1] - last.beforeMin[1], min[2] - last.beforeMin[2]));
+            applyPartState(last.partIndex, min, max, last.beforeOrientation * shift);
+            last.afterOrientation = boxes_[last.partIndex].orientation;
+        } else {
+            applyBoxBounds(last.partIndex, min, max);
+        }
         last.afterMin = min;
         last.afterMax = max;
         dragDimension_->hide();
@@ -607,13 +616,10 @@ void CadViewport::applyPartState(size_t index, const std::array<double, 3>& min,
     if (index >= boxes_.size()) return;
     auto& part = boxes_[index];
     if (part.geometryKind == CadPart::GeometryKind::GeneralBRep) {
-        // The shape stays in local coordinates. Move the instance by the
-        // change in local bounds; rotate by the requested world transform.
-        const gp_Vec delta(min[0] - part.min[0], min[1] - part.min[1],
-                           min[2] - part.min[2]);
-        gp_Trsf localShift;
-        localShift.SetTranslation(delta);
-        part.orientation = orientation * localShift;
+        // The caller supplies the complete target instance transform.
+        // Never derive it from the previous frame's bounds: doing so
+        // compounds translation during grouped moves and undo/redo.
+        part.orientation = orientation;
         part.min = min;
         part.max = max;
         if (!context_.IsNull()) {
@@ -1036,7 +1042,13 @@ void CadViewport::applyGroupMove(double distance) {
             min[axis] += localDelta.Coord(axis + 1);
             max[axis] += localDelta.Coord(axis + 1);
         }
-        applyPartState(before.partIndex, min, max, before.beforeOrientation);
+        if (boxes_[before.partIndex].geometryKind == CadPart::GeometryKind::GeneralBRep) {
+            gp_Trsf shift;
+            shift.SetTranslation(worldDelta.Multiplied(distance));
+            applyPartState(before.partIndex, min, max, shift * before.beforeOrientation);
+        } else {
+            applyPartState(before.partIndex, min, max, before.beforeOrientation);
+        }
     }
     batchingPartUpdates_ = false;
     refreshPartSelection();
@@ -1114,6 +1126,7 @@ bool CadViewport::beginMoveAxisDrag(const QPoint& point) {
     dragMovesPart_=true;
     dragMin_=part.min;
     dragMaxBounds_=part.max;
+    dragBeforeOrientation_ = part.orientation;
     dragStart_=point;
     dragDistance_=0.0;
     dragScreenX_=bestDx/bestPixels;
@@ -1547,10 +1560,15 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
         if (max[dragAxis_] - min[dragAxis_] > 0.001
             && std::abs(requested - dragDistance_) > 0.0001) {
             dragDistance_ = requested;
-            if (dragMovesPart_ && boxes_[dragIndex_].geometryKind == CadPart::GeometryKind::GeneralBRep)
-                applyPartState(dragIndex_, min, max, boxes_[dragIndex_].orientation);
-            else
+            if (dragMovesPart_ && boxes_[dragIndex_].geometryKind == CadPart::GeometryKind::GeneralBRep) {
+                const gp_Vec localDelta(min[0] - dragMin_[0],
+                    min[1] - dragMin_[1], min[2] - dragMin_[2]);
+                gp_Trsf shift;
+                shift.SetTranslation(localDelta);
+                applyPartState(dragIndex_, min, max, dragBeforeOrientation_ * shift);
+            } else {
                 applyBoxBounds(dragIndex_, min, max);
+            }
             emit statusMessage(tr("%1: %2 mm")
                 .arg(dragMovesPart_ ? tr("Move Part") : tr("Pull Face"))
                 .arg(dragDistance_, 0, 'f', 1));
@@ -1624,6 +1642,7 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
         for (auto& item : group.groupedChanges) {
             item.afterMin = boxes_[item.partIndex].min;
             item.afterMax = boxes_[item.partIndex].max;
+            item.afterOrientation = boxes_[item.partIndex].orientation;
         }
         undoStack_.push_back(group);
         redoStack_.clear();
@@ -1637,7 +1656,9 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     }
     if (std::abs(dragDistance_) < 0.0001) { dragDimension_->hide(); return; }
     const auto& part = boxes_[dragIndex_];
-    undoStack_.push_back({dragIndex_, dragMin_, dragMaxBounds_, part.min, part.max, part.orientation, part.orientation});
+    undoStack_.push_back({dragIndex_, dragMin_, dragMaxBounds_, part.min, part.max,
+        dragMovesPart_ && part.geometryKind == CadPart::GeometryKind::GeneralBRep
+            ? dragBeforeOrientation_ : part.orientation, part.orientation});
     redoStack_.clear();
     dimensionEditing_ = true;
     showDragDimension(e->pos());
