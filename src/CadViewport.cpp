@@ -1239,6 +1239,12 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
     rotationAccumulatedAngle_ = 0.0;
     draggingRotation_ = true;
     hideFaceArrow();
+    // Match direct-move startup: remove the previous OCCT hover outline
+    // before changing the part's local transformation.
+    if (!context_.IsNull()) {
+        context_->MoveTo(-1, -1, view_, Standard_False);
+        view_->Redraw();
+    }
     return true;
 }
 double CadViewport::rotationCursorAngle(const QPoint& point, int axis, const gp_Trsf& orientation) const {
