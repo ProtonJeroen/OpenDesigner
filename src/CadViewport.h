@@ -59,6 +59,9 @@ private:
         std::array<double, 3> baseMin{};
         std::array<double, 3> baseMax{};
         gp_Trsf orientation;
+        bool cylinderPrimitive = false;
+        double cylinderRadius = 0.0;
+        double cylinderHeight = 0.0;
         bool visible = true;
     };
     struct PullChange {
@@ -66,12 +69,17 @@ private:
         std::array<double, 3> beforeMin, beforeMax;
         std::array<double, 3> afterMin, afterMax;
         gp_Trsf beforeOrientation, afterOrientation;
+        TopoDS_Shape beforeShape, afterShape;
+        double beforeRadius = 0.0, afterRadius = 0.0;
+        double beforeHeight = 0.0, afterHeight = 0.0;
         std::vector<PullChange> groupedChanges;
     };
     gp_Pnt partLocalCenter(const CadPart& part) const;
     void applyPartState(size_t index, const std::array<double, 3>& min,
                         const std::array<double, 3>& max, const gp_Trsf& orientation);
     void applyGroupMove(double distance);
+    bool applyCylinderPull(double distance);
+    void restorePullChange(const PullChange& change, bool after);
     bool prepareMultiFaceDrag();
     bool applyMultiFaceDrag(double distance);
     void updateMultiFaceHighlight();
@@ -105,6 +113,13 @@ private:
     int arrowAxis_ = 0;
     bool arrowMax_ = true;
     bool arrowVisible_ = false;
+    bool cylinderRadialArrow_ = false;
+    gp_Pnt cylinderArrowOrigin_;
+    gp_Dir cylinderArrowDirection_ = gp_Dir(1,0,0);
+    bool cylinderPullDragging_ = false;
+    bool cylinderPullEditing_ = false;
+    PullChange cylinderPullBefore_;
+
     std::vector<CadPart> boxes_;
     std::vector<size_t> selectedPartIndices_;
     std::vector<PullChange> groupMoveBefore_;
