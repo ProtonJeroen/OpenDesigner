@@ -1400,6 +1400,12 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                     if (boxes_[i].presentation == object
                         && boxes_[i].geometryKind == CadPart::GeometryKind::GeneralBRep) {
                         selectParts({i});
+                        // Clear the face's dynamic hover outline. The cylinder
+                        // remains selected in our part model and both gizmos
+                        // stay visible, but the stale white OCCT face outline
+                        // should not linger while manipulating the part.
+                        context_->MoveTo(-1, -1, view_, Standard_False);
+                        view_->Redraw();
                         return;
                     }
                 }
