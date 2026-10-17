@@ -1120,6 +1120,10 @@ bool CadViewport::beginMoveAxisDrag(const QPoint& point) {
     dragScreenY_=bestDy/bestPixels;
     dragMmPerPixel_=52.0/bestPixels;
     draggingFace_=true;
+    // The cursor was hovering over the old cylinder face before grabbing
+    // the move gizmo. Drop OCCT's dynamic highlight now so its white edge
+    // presentation cannot remain at the pre-drag position.
+    context_->MoveTo(-1, -1, view_, Standard_False);
     groupMoveDragging_ = selectedPartIndices_.size() > 1;
     groupMoveBefore_.clear();
     if (groupMoveDragging_) {
