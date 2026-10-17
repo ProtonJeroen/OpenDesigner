@@ -1387,6 +1387,24 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
         context_->SelectDetected(additiveSelection
             ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
         hideFaceArrow();
+        // For a general B-Rep in transform mode, a normal click should
+        // select its whole part, just like Alt+click/Structure Browser.
+        // This keeps both enabled gizmos visible immediately instead of
+        // showing only rotation until the first drag refreshes selection.
+        if (!additiveSelection && (directMoveMode_ || rotateMode_)
+            && context_->NbSelected() == 1) {
+            context_->InitSelected();
+            if (context_->MoreSelected()) {
+                const auto object = context_->SelectedInteractive();
+                for (size_t i = 0; i < boxes_.size(); ++i) {
+                    if (boxes_[i].presentation == object
+                        && boxes_[i].geometryKind == CadPart::GeometryKind::GeneralBRep) {
+                        selectParts({i});
+                        return;
+                    }
+                }
+            }
+        }
         if (rotateMode_ && !additiveSelection) {
             hideRotationRings();
             if (context_->NbSelected() == 1) {
