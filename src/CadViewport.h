@@ -62,6 +62,7 @@ private:
         bool cylinderPrimitive = false;
         double cylinderRadius = 0.0;
         double cylinderHeight = 0.0;
+        double cylinderBaseOffset = 0.0;
         bool visible = true;
     };
     struct PullChange {
@@ -72,6 +73,7 @@ private:
         TopoDS_Shape beforeShape, afterShape;
         double beforeRadius = 0.0, afterRadius = 0.0;
         double beforeHeight = 0.0, afterHeight = 0.0;
+        double beforeBaseOffset = 0.0, afterBaseOffset = 0.0;
         std::vector<PullChange> groupedChanges;
     };
     gp_Pnt partLocalCenter(const CadPart& part) const;
