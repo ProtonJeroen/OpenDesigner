@@ -109,6 +109,7 @@ private:
     std::vector<size_t> selectedPartIndices_;
     std::vector<PullChange> groupMoveBefore_;
     gp_Dir groupMoveDirection_ = gp_Dir(1, 0, 0);
+    gp_Trsf dragBeforeOrientation_;
     bool groupMoveDragging_ = false;
     bool multiFaceDragging_ = false;
     bool multiFaceEditing_ = false;
