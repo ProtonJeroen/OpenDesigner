@@ -18,6 +18,7 @@ public:
     explicit CadViewport(QWidget* parent = nullptr);
     void addBox();
     void addCylinder();
+    void addSphere();
     void duplicateSelectedParts();
     void fitAll();
     void pullSelectedFace();
