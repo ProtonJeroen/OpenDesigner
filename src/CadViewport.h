@@ -55,6 +55,9 @@ private:
         Handle(AIS_Shape) presentation;
         std::array<double, 3> min;
         std::array<double, 3> max;
+        // Original local bounds for general B-Rep; movement changes instance transform.
+        std::array<double, 3> baseMin{};
+        std::array<double, 3> baseMax{};
         gp_Trsf orientation;
         bool visible = true;
     };
@@ -65,6 +68,7 @@ private:
         gp_Trsf beforeOrientation, afterOrientation;
         std::vector<PullChange> groupedChanges;
     };
+    gp_Pnt partLocalCenter(const CadPart& part) const;
     void applyPartState(size_t index, const std::array<double, 3>& min,
                         const std::array<double, 3>& max, const gp_Trsf& orientation);
     void applyGroupMove(double distance);
