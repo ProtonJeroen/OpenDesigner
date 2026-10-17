@@ -1459,6 +1459,12 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                 for (size_t i = 0; i < boxes_.size(); ++i) {
                     if (boxes_[i].presentation != selected) continue;
                     const BRepAdaptor_Surface surf(TopoDS::Face(arrowOwner->Shape()));
+                    if (boxes_[i].geometryKind == CadPart::GeometryKind::GeneralBRep) {
+                        // A cylinder cap is a planar face normal to its local Z.
+                        // Enable its orange arrow; actual B-Rep resizing is
+                        // implemented separately from box-bound editing.
+                        if (surf.GetType() != GeomAbs_Plane) break;
+                    }
                     if (surf.GetType() != GeomAbs_Plane) break;
                     const gp_Dir normal = surf.Plane().Axis().Direction();
                     const double components[3] = {normal.X(), normal.Y(), normal.Z()};
