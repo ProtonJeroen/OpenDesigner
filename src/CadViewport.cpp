@@ -19,6 +19,7 @@
 #include <SelectMgr_EntityOwner.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
@@ -354,6 +355,28 @@ void CadViewport::addCylinder() {
     boxes_.push_back(part);
     ++partCount_;
     emit partCreated(QString("Cylinder %1").arg(partCount_));
+    fitAll();
+}
+void CadViewport::addSphere() {
+    initializeViewer();
+    const double x = partCount_ * 125.0;
+    constexpr double radius = 40.0;
+    CadPart part;
+    part.geometryKind = CadPart::GeometryKind::GeneralBRep;
+    part.min = {x-radius,-radius,-radius};
+    part.max = {x+radius,radius,radius};
+    part.baseMin = part.min;
+    part.baseMax = part.max;
+    part.shape = BRepPrimAPI_MakeSphere(gp_Pnt(x,0,0),radius).Shape();
+    part.presentation = new AIS_Shape(part.shape);
+    part.presentation->SetColor(Quantity_NOC_LIGHTGRAY);
+    context_->Display(part.presentation,Standard_False);
+    context_->SetDisplayMode(part.presentation,AIS_Shaded,Standard_False);
+    context_->Deactivate(part.presentation);
+    context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
+    boxes_.push_back(part);
+    ++partCount_;
+    emit partCreated(QString("Sphere %1").arg(partCount_));
     fitAll();
 }
 void CadViewport::duplicateSelectedParts() {
