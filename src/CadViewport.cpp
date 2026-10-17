@@ -1575,7 +1575,21 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                         if (!cylinderRadialArrow_ && surf.GetType() != GeomAbs_Plane) break;
                         if (cylinderRadialArrow_) {
                             // Choose a stable outward radial arrow based on cursor position.
-                            const gp_Pnt hit = context_->DetectedPoint().Transformed(part.orientation.Inverted());
+                            // Project the cursor ray into the cylinder's local XY plane.
+                            // AIS_InteractiveContext::DetectedPoint is not available
+                            // in the OCCT version shipped by Fedora.
+                            Standard_Real eyeX, eyeY, eyeZ, rayX, rayY, rayZ;
+                            view_->ConvertWithProj(e->pos().x(), e->pos().y(),
+                                eyeX, eyeY, eyeZ, rayX, rayY, rayZ);
+                            const gp_Pnt rayOrigin = gp_Pnt(eyeX,eyeY,eyeZ)
+                                .Transformed(part.orientation.Inverted());
+                            const gp_Vec rayDirection = gp_Vec(rayX,rayY,rayZ)
+                                .Transformed(part.orientation.Inverted());
+                            const double middleZ = base.Z()+part.cylinderHeight*0.5;
+                            double t = 0.0;
+                            if (std::abs(rayDirection.Z()) > 1.0e-8)
+                                t = (middleZ-rayOrigin.Z())/rayDirection.Z();
+                            const gp_Pnt hit = rayOrigin.Translated(rayDirection.Multiplied(t));
                             const gp_Vec radial(base,gp_Pnt(hit.X(),hit.Y(),base.Z()));
                             if (radial.Magnitude() < 1.0e-6) break;
                             cylinderArrowDirection_ = gp_Dir(radial);
