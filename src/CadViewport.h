@@ -19,6 +19,7 @@ public:
     void addBox();
     void addCylinder();
     void addSphere();
+    void addCone();
     void duplicateSelectedParts();
     void fitAll();
     void pullSelectedFace();
@@ -49,6 +50,13 @@ protected:
     void wheelEvent(QWheelEvent*) override;
 private:
     friend struct CadViewportPullTest;
+    struct ConeParameters {
+        double bottomRadius = 40.0;
+        double topRadius = 20.0;
+        double height = 80.0;
+        double baseOffset = 0.0;
+    };
+    enum class ConePullTarget { BottomDiameter, TopDiameter, BottomHeight, TopHeight };
     struct CadPart {
         enum class GeometryKind { Box, GeneralBRep };
         GeometryKind geometryKind = GeometryKind::Box;
@@ -63,6 +71,8 @@ private:
         gp_Trsf orientation;
         bool cylinderPrimitive = false;
         bool spherePrimitive = false;
+        bool conePrimitive = false;
+        ConeParameters cone;
         double sphereRadius = 0.0;
         double cylinderRadius = 0.0;
         double cylinderHeight = 0.0;
@@ -78,9 +88,11 @@ private:
         double beforeRadius = 0.0, afterRadius = 0.0;
         double beforeHeight = 0.0, afterHeight = 0.0;
         double beforeBaseOffset = 0.0, afterBaseOffset = 0.0;
+        ConeParameters beforeCone, afterCone;
         std::vector<PullChange> groupedChanges;
     };
     gp_Pnt partLocalCenter(const CadPart& part) const;
+    gp_Pnt partLocalGizmoCenter(const CadPart& part) const;
     void applyPartState(size_t index, const std::array<double, 3>& min,
                         const std::array<double, 3>& max, const gp_Trsf& orientation);
     void applyGroupMove(double distance);
@@ -97,6 +109,11 @@ private:
     bool beginArrowDrag(const QPoint& origin);
     void updateFaceArrow();
     void hideFaceArrow();
+    gp_Pnt coneArrowOrigin(const CadPart& part, ConePullTarget target) const;
+    gp_Dir coneArrowDirection(ConePullTarget target) const;
+    void displayPullArrow(Handle(AIS_Shape)& arrow, gp_Pnt origin, gp_Vec direction);
+    bool pickConeArrow(const QPoint& point);
+    double primitivePullStartDimension() const;
     bool primitivePullIsDiameter() const;
     QString primitivePullDimensionText() const;
     void showDragDimension(const QPoint& position);
@@ -116,6 +133,9 @@ private:
     Handle(V3d_View) view_;
     Handle(AIS_InteractiveContext) context_;
     Handle(AIS_Shape) faceArrow_;
+    std::array<Handle(AIS_Shape),4> coneArrows_;
+    ConePullTarget conePullTarget_ = ConePullTarget::TopHeight;
+    gp_Dir coneRadialDirection_ = gp_Dir(1,0,0);
     Handle(AIS_Shape) multiFaceHighlight_;
     size_t arrowPartIndex_ = 0;
     int arrowAxis_ = 0;
