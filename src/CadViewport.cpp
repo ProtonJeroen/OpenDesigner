@@ -629,17 +629,9 @@ void CadViewport::pullSelectedFace() {
         .arg(faceCount).arg(distance).arg(changes.size()));
 }
 void CadViewport::rotateSelectedPart() {
-    if (context_.IsNull() || context_->NbSelected() != 1) {
-        emit statusMessage(tr("Select a face on the part to rotate."));
-        return;
-    }
-    context_->InitSelected();
-    if (!context_->MoreSelected()) return;
-    const Handle(AIS_InteractiveObject) selected = context_->SelectedInteractive();
-    size_t index = 0;
-    while (index < boxes_.size() && boxes_[index].presentation != selected) ++index;
-    if (index == boxes_.size()) {
-        emit statusMessage(tr("Select a face of an editable box."));
+    const auto indices = selectedBooleanParts();
+    if (context_.IsNull() || indices.empty()) {
+        emit statusMessage(tr("Select a face or part to rotate."));
         return;
     }
     QDialog dialog(this);
@@ -659,22 +651,34 @@ void CadViewport::rotateSelectedPart() {
     connect(&buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(&buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     if (dialog.exec() != QDialog::Accepted || std::abs(angleBox.value()) < 0.00001) return;
-    auto& part = boxes_[index];
-    const gp_Trsf before = part.orientation;
-    const gp_Pnt center((part.min[0] + part.max[0]) * 0.5,
-                        (part.min[1] + part.max[1]) * 0.5,
-                        (part.min[2] + part.max[2]) * 0.5);
+    const gp_Pnt worldCenter = rotationCenter(indices);
     const gp_Dir direction = axisBox.currentIndex() == 0 ? gp_Dir(1, 0, 0)
                            : axisBox.currentIndex() == 1 ? gp_Dir(0, 1, 0)
                                                           : gp_Dir(0, 0, 1);
     gp_Trsf rotation;
-    const gp_Pnt worldCenter = center.Transformed(before);
     rotation.SetRotation(gp_Ax1(worldCenter, direction), angleBox.value() * 3.14159265358979323846 / 180.0);
-    const gp_Trsf after = rotation * before;
-    undoStack_.push_back({index, part.min, part.max, part.min, part.max, before, after});
+    std::vector<PullChange> changes;
+    for (const auto index : indices) {
+        const auto& part = boxes_[index];
+        changes.push_back({index, part.min, part.max, part.min, part.max,
+                           part.orientation, rotation * part.orientation});
+    }
+    PullChange operation = changes.front();
+    if (changes.size() > 1) operation.groupedChanges = changes;
+    undoStack_.push_back(operation);
     redoStack_.clear();
     hideFaceArrow();
-    applyPartState(index, part.min, part.max, after);
+    context_->ClearSelected(Standard_False); // Face owners may refer to rebuilt geometry.
+    batchingPartUpdates_ = true;
+    for (const auto& change : changes)
+        applyPartState(change.partIndex, change.afterMin, change.afterMax, change.afterOrientation);
+    batchingPartUpdates_ = false;
+    if (!selectedPartIndices_.empty()) refreshPartSelection();
+    else {
+        if (rotateMode_) updateRotationRings();
+        if (directMoveMode_) updateMoveAxes();
+        view_->Redraw();
+    }
     emit statusMessage(tr("Part rotated %1 degrees around world %2 axis.")
         .arg(angleBox.value()).arg(axisBox.currentText()));
 }
@@ -758,6 +762,9 @@ gp_Pnt CadViewport::partLocalGizmoCenter(const CadPart& part) const {
     }
     // Retain the previous placement for shapes without usable volume properties.
     return partLocalCenter(part);
+}
+gp_Pnt CadViewport::partWorldRotationCenter(const CadPart& part, const gp_Trsf& orientation) const {
+    return partLocalGizmoCenter(part).Transformed(orientation);
 }
 void CadViewport::applyPartState(size_t index, const std::array<double, 3>& min,
                                  const std::array<double, 3>& max, const gp_Trsf& orientation) {
@@ -1209,13 +1216,15 @@ void CadViewport::hideMoveAxes() {
     }
 }
 gp_Pnt CadViewport::selectionCenter() const {
-    if (selectedPartIndices_.empty()) return gp_Pnt(0, 0, 0);
+    return rotationCenter(selectedPartIndices_);
+}
+gp_Pnt CadViewport::rotationCenter(const std::vector<size_t>& indices) const {
     double x = 0, y = 0, z = 0;
     size_t count = 0;
-    for (const size_t index : selectedPartIndices_) {
+    for (const size_t index : indices) {
         if (!isPartActive(index)) continue;
         const auto& part = boxes_[index];
-        const gp_Pnt p = partLocalGizmoCenter(part).Transformed(part.orientation);
+        const gp_Pnt p = partWorldRotationCenter(part, part.orientation);
         x += p.X(); y += p.Y(); z += p.Z(); ++count;
     }
     return count ? gp_Pnt(x/count, y/count, z/count) : gp_Pnt(0, 0, 0);
@@ -1448,7 +1457,7 @@ void CadViewport::updateMoveAxes() {
     hideMoveAxes();
     if (!directMoveMode_ || !isPartVisible(moveIndex_) || context_.IsNull()) return;
     const auto& part = boxes_[moveIndex_];
-    const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter() : partLocalGizmoCenter(part).Transformed(part.orientation);
+    const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter() : partWorldRotationCenter(part, part.orientation);
     for (int axis=0; axis<3; ++axis) {
         const gp_Dir direction = gp_Dir(axis==0?1:0,axis==1?1:0,axis==2?1:0).Transformed(part.orientation);
         const gp_Ax2 arrowAxis(center,direction);
@@ -1495,7 +1504,7 @@ bool CadViewport::beginMoveAxisDrag(const QPoint& point) {
     if (!directMoveMode_ || !isPartVisible(moveIndex_) || view_.IsNull()) return false;
     const auto& part=boxes_[moveIndex_];
     const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter()
-        : partLocalGizmoCenter(part).Transformed(part.orientation);
+        : partWorldRotationCenter(part, part.orientation);
     double best=12.0;
     int hit=-1;
     double bestDx=0.0,bestDy=0.0,bestPixels=0.0;
@@ -1553,7 +1562,7 @@ void CadViewport::updateRotationRings() {
     if (!rotateMode_ || !isPartVisible(rotationIndex_) || context_.IsNull()) return;
     const auto& part = boxes_[rotationIndex_];
     const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter()
-        : partLocalGizmoCenter(part).Transformed(part.orientation);
+        : partWorldRotationCenter(part, part.orientation);
     const double radius = selectedPartIndices_.size() > 1 ? 60.0 : 0.65 * std::max({part.max[0]-part.min[0],
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
     for (int axis = 0; axis < 3; ++axis) {
@@ -1600,7 +1609,7 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
     if (!rotateMode_ || !isPartVisible(rotationIndex_) || view_.IsNull()) return false;
     const auto& part = boxes_[rotationIndex_];
     const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter()
-        : partLocalGizmoCenter(part).Transformed(part.orientation);
+        : partWorldRotationCenter(part, part.orientation);
     const double radius = selectedPartIndices_.size() > 1 ? 60.0 : 0.65 * std::max({part.max[0]-part.min[0],
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
     double best = 16.0;
@@ -1655,7 +1664,7 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
 double CadViewport::rotationCursorAngle(const QPoint& point, int axis, const gp_Trsf& orientation) const {
     const auto& part = boxes_[rotationIndex_];
     const gp_Pnt center = groupRotationDragging_ ? groupRotationCenter_
-        : partLocalGizmoCenter(part).Transformed(orientation);
+        : partWorldRotationCenter(part, orientation);
     const double radius = groupRotationDragging_ ? 60.0 : 0.65 * std::max({part.max[0]-part.min[0],
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
     const gp_Dir dir = gp_Dir(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0).Transformed(orientation);
@@ -1695,7 +1704,7 @@ void CadViewport::applyRotationAngle(double degrees) {
     }
     if (rotationIndex_ >= boxes_.size()) return;
     auto& part = boxes_[rotationIndex_];
-    const gp_Pnt center = partLocalGizmoCenter(part).Transformed(rotationBefore_);
+    const gp_Pnt center = partWorldRotationCenter(part, rotationBefore_);
     const gp_Dir dir = gp_Dir(rotationAxis_ == 0 ? 1 : 0, rotationAxis_ == 1 ? 1 : 0, rotationAxis_ == 2 ? 1 : 0).Transformed(rotationBefore_);
     gp_Trsf rotation;
     rotation.SetRotation(gp_Ax1(center,dir),degrees * 3.14159265358979323846 / 180.0);

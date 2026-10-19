@@ -152,6 +152,8 @@ private:
     void updateRotationRings();
     void updateMoveAxes();
     gp_Pnt selectionCenter() const;
+    gp_Pnt rotationCenter(const std::vector<size_t>& indices) const;
+    gp_Pnt partWorldRotationCenter(const CadPart& part, const gp_Trsf& orientation) const;
     void setTransformSelectionMode();
     void hideMoveAxes();
     bool beginMoveAxisDrag(const QPoint& point);

@@ -37,3 +37,9 @@ OpenDesigner targets Windows, Linux and macOS. This roadmap describes planned wo
 - Results support transforms, color, visibility, duplication and further Booleans; multi-solid disjoint unions are supported.
 - Automated checks and manual smoke steps: [Boolean Operations](BOOLEAN_OPERATIONS.md).
 - Follow-up: general face-offset editing, history compaction, persistent IDs and cancellable background operations.
+
+## v0.3.1 — consistent rotation pivot
+- Rotate Part and gizmo rotation share B-Rep volume centroid calculation in world coordinates.
+- Groups retain the unweighted mean pivot and support menu rotation with grouped Undo/Redo.
+- Existing local gizmo axes, world dialog axes and Primitive Pull anchors are preserved.
+- Regression coverage and manual checks: [Rotation pivot](ROTATION_PIVOT.md).
