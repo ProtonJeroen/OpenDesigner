@@ -5,9 +5,16 @@
 #include <QMouseEvent>
 #include <QValidator>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
 #include <gp_Ax1.hxx>
+#include <gp_Circ.hxx>
+#include <ElCLib.hxx>
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -349,6 +356,377 @@ struct CadViewportPullTest {
         checkDimension(v,100.0,true);
     }
 
+    using ConeTarget = CadViewport::ConePullTarget;
+    static gp_Pnt coneEnd(const CadViewport& v, size_t index, bool top) {
+        const auto& part = v.boxes_[index];
+        return gp_Pnt((part.baseMin[0]+part.baseMax[0])*0.5,
+            (part.baseMin[1]+part.baseMax[1])*0.5,
+            part.baseMin[2]+part.cone.baseOffset+(top ? part.cone.height : 0.0))
+            .Transformed(part.orientation);
+    }
+    static void checkCone(const CadViewport& v, size_t index, double bottomDiameter,
+                          double topDiameter, double height) {
+        const auto& part = v.boxes_[index];
+        require(part.conePrimitive, "cone metadata lost");
+        require(part.geometryKind == CadViewport::CadPart::GeometryKind::GeneralBRep,
+                "cone is not a GeneralBRep");
+        near(part.cone.bottomRadius*2.0,bottomDiameter,"incorrect cone bottom diameter");
+        near(part.cone.topRadius*2.0,topDiameter,"incorrect cone top diameter");
+        near(part.cone.height,height,"incorrect cone height");
+        require(BRepCheck_Analyzer(part.shape).IsValid(),"invalid cone B-Rep");
+        GProp_GProps properties;
+        BRepGProp::VolumeProperties(part.shape,properties);
+        const double expected = std::acos(-1.0)*height/12.0 *
+            (bottomDiameter*bottomDiameter+bottomDiameter*topDiameter+topDiameter*topDiameter);
+        require(std::abs(properties.Mass()/expected-1.0) < 1.0e-7,"incorrect cone volume");
+        require(part.presentation->Shape().IsSame(part.shape),"cone presentation out of sync");
+        const gp_Pnt localCenter = v.partLocalCenter(part);
+        near(localCenter.Transformed(part.orientation).Distance(
+            localCenter.Transformed(part.presentation->LocalTransformation())),
+            0.0,"cone presentation transform out of sync");
+    }
+    static void pickCone(CadViewport& v, size_t index) {
+        const gp_Pnt bottom = coneEnd(v,index,false);
+        const gp_Pnt interior = bottom.Translated(gp_Vec(bottom,coneEnd(v,index,true))*0.4);
+        click(v,project(v,interior));
+        require(v.arrowVisible_ && v.arrowPartIndex_ == index,"cone surface picking failed");
+        for (const auto& arrow : v.coneArrows_)
+            require(!arrow.IsNull(),"missing cone pull manipulator");
+    }
+    static QPoint beginConePull(CadViewport& v, size_t index, ConeTarget target) {
+        pickCone(v,index);
+        const auto& part = v.boxes_[index];
+        const gp_Pnt grab = v.coneArrowOrigin(part,target)
+            .Translated(gp_Vec(v.coneArrowDirection(target))*22.0).Transformed(part.orientation);
+        const QPoint screen = project(v,grab);
+        // Go through mousePressEvent so hit testing, face selection and editor
+        // transitions are exercised just as in the actual application.
+        QMouseEvent press(QEvent::MouseButtonPress,QPointF(screen),QPointF(screen),
+                          Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+        v.mousePressEvent(&press);
+        require(v.primitivePullDragging_,"cone arrow drag did not start");
+        require(v.conePullTarget_ == target,"wrong cone arrow picked");
+        return screen;
+    }
+    static void runCone(CadViewport& v) {
+        v.addCone();
+        checkCone(v,0,80,40,80);
+        const gp_Pnt bottom = coneEnd(v,0,false), top = coneEnd(v,0,true);
+        QPoint start = beginConePull(v,0,ConeTarget::BottomDiameter);
+        checkDimension(v,80,true);
+        dragBy(v,start,5.0);
+        checkDimension(v,90,true);
+        const QString lastDimension = v.dragDimension_->text();
+        release(v,start);
+        require(v.dragDimension_->text() == lastDimension,"cone diameter changed on release");
+        exact(v,100.50,true);
+        checkCone(v,0,100.50,40,80);
+        near(coneEnd(v,0,false).Distance(bottom),0,"diameter moved cone base");
+        near(coneEnd(v,0,true).Distance(top),0,"diameter moved cone top");
+        require(v.undoStack_.size() == 1,"cone drag and exact input must be one undo step");
+        v.undoPull(); checkCone(v,0,80,40,80);
+        v.redoPull(); checkCone(v,0,100.50,40,80);
+
+        start = beginConePull(v,0,ConeTarget::TopDiameter);
+        checkDimension(v,40,true);
+        dragBy(v,start,-5.0);
+        checkDimension(v,30,true);
+        release(v,start);
+        exact(v,0.0);
+        checkCone(v,0,100.50,0,80);
+        v.undoPull(); checkCone(v,0,100.50,40,80);
+        v.redoPull(); checkCone(v,0,100.50,0,80);
+        // A zero-radius apex has no planar top face; its diameter arrow stays available.
+        start = beginConePull(v,0,ConeTarget::TopDiameter);
+        checkDimension(v,0,true);
+        release(v,start);
+        exact(v,-1.0);
+        checkCone(v,0,100.50,0,80);
+        require(v.primitivePullEditing_,"invalid cone diameter closed editor");
+        exact(v,60.25);
+        checkCone(v,0,100.50,60.25,80);
+
+        start = beginConePull(v,0,ConeTarget::BottomHeight);
+        checkDimension(v,80,false);
+        dragBy(v,start,6.0);
+        checkDimension(v,86,false);
+        release(v,start);
+        exact(v,95.50);
+        checkCone(v,0,100.50,60.25,95.50);
+        near(coneEnd(v,0,true).Distance(top),0,"top moved during cone bottom-height pull");
+        near(coneEnd(v,0,false).Distance(bottom.Translated(gp_Vec(0,0,-15.50))),
+             0,"cone bottom did not move");
+        v.undoPull(); checkCone(v,0,100.50,60.25,80);
+        v.redoPull(); checkCone(v,0,100.50,60.25,95.50);
+        const gp_Pnt newBottom = coneEnd(v,0,false);
+        start = beginConePull(v,0,ConeTarget::TopHeight);
+        dragBy(v,start,-4.0);
+        checkDimension(v,91.50,false);
+        release(v,start);
+        exact(v,0.0);
+        require(v.primitivePullEditing_,"invalid cone height closed editor");
+        exact(v,70.25);
+        checkCone(v,0,100.50,60.25,70.25);
+        near(coneEnd(v,0,false).Distance(newBottom),0,"bottom moved during top-height pull");
+        v.undoPull(); checkCone(v,0,100.50,60.25,95.50);
+        v.redoPull(); checkCone(v,0,100.50,60.25,70.25);
+
+        // Equal radii and an upper radius larger than the lower radius remain editable.
+        start = beginConePull(v,0,ConeTarget::TopDiameter);
+        release(v,start); exact(v,100.50);
+        checkCone(v,0,100.50,100.50,70.25);
+        start = beginConePull(v,0,ConeTarget::TopDiameter);
+        release(v,start); exact(v,120.0);
+        checkCone(v,0,100.50,120,70.25);
+        v.undoPull(); checkCone(v,0,100.50,100.50,70.25);
+        v.redoPull(); checkCone(v,0,100.50,120,70.25);
+
+        // Exercise the real move/rotation gizmo command lifecycles and their undo.
+        v.setDirectMoveMode(true);
+        v.selectParts({0});
+        const gp_Pnt beforeMove = coneEnd(v,0,false);
+        const gp_Pnt gizmoCenter = v.partLocalGizmoCenter(v.boxes_[0]);
+        const QPoint moveGrab = project(v,gizmoCenter.Translated(gp_Vec(25,0,0)));
+        require(v.beginMoveAxisDrag(moveGrab),"cone move gizmo could not be grabbed");
+        dragBy(v,moveGrab,130.0);
+        QMouseEvent transformRelease(QEvent::MouseButtonRelease,QPointF(moveGrab),QPointF(moveGrab),
+                                     Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+        v.mouseReleaseEvent(&transformRelease);
+        exact(v,130.0);
+        near(coneEnd(v,0,false).Distance(beforeMove.Translated(gp_Vec(130,0,0))),
+             0,"cone move distance incorrect");
+        v.undoPull();
+        near(coneEnd(v,0,false).Distance(beforeMove),0,"cone move undo failed");
+        v.redoPull();
+        near(coneEnd(v,0,false).Distance(beforeMove.Translated(gp_Vec(130,0,0))),
+             0,"cone move redo failed");
+        v.setDirectMoveMode(false);
+        v.setRotateMode(true);
+        const gp_Pnt beforeRotation = coneEnd(v,0,false);
+        const auto& part = v.boxes_[0];
+        const gp_Pnt pivot = v.partLocalGizmoCenter(part).Transformed(part.orientation);
+        const double ringRadius = 0.65*std::max({part.max[0]-part.min[0],
+            part.max[1]-part.min[1],part.max[2]-part.min[2]});
+        const gp_Circ ring(gp_Ax2(pivot,gp_Dir(0,1,0),gp_Dir(1,0,0)),ringRadius);
+        const QPoint rotationGrab = project(v,ElCLib::Value(0.7,ring));
+        require(v.beginRotationDrag(rotationGrab),"cone rotation gizmo could not be grabbed");
+        v.applyRotationAngle(35.0);
+        v.mouseReleaseEvent(&transformRelease);
+        exact(v,35.0);
+        const gp_Pnt rotatedBottom = coneEnd(v,0,false);
+        require(rotatedBottom.Distance(beforeRotation)>1.0,"cone did not rotate");
+        v.undoPull();
+        near(coneEnd(v,0,false).Distance(beforeRotation),0,"cone rotation undo failed");
+        v.redoPull();
+        near(coneEnd(v,0,false).Distance(rotatedBottom),0,"cone rotation redo failed");
+        v.setRotateMode(false);
+        v.duplicateSelectedParts();
+        require(v.boxes_.size() == 2,"cone duplication failed");
+        checkCone(v,1,100.50,120,70.25);
+        v.setPartVisible(0,false);
+        v.fitAll();
+        const gp_Pnt copyTop = coneEnd(v,1,true), copyBottom = coneEnd(v,1,false);
+        start = beginConePull(v,1,ConeTarget::BottomDiameter);
+        release(v,start); exact(v,90.25);
+        checkCone(v,1,90.25,120,70.25);
+        checkCone(v,0,100.50,120,70.25);
+        near(coneEnd(v,1,false).Distance(copyBottom),0,"transformed diameter moved bottom");
+        v.undoPull(); checkCone(v,1,100.50,120,70.25);
+        v.redoPull(); checkCone(v,1,90.25,120,70.25);
+        start = beginConePull(v,1,ConeTarget::BottomHeight);
+        release(v,start); exact(v,100.0);
+        near(coneEnd(v,1,true).Distance(copyTop),0,"transformed cone top moved");
+        v.undoPull(); checkCone(v,1,90.25,120,70.25);
+        v.redoPull(); checkCone(v,1,90.25,120,100);
+        const gp_Pnt movedBottom = coneEnd(v,1,false);
+        start = beginConePull(v,1,ConeTarget::TopHeight);
+        release(v,start); exact(v,85.25);
+        near(coneEnd(v,1,false).Distance(movedBottom),0,"transformed cone bottom moved");
+        v.undoPull(); checkCone(v,1,90.25,120,100);
+        v.redoPull(); checkCone(v,1,90.25,120,85.25);
+        start = beginConePull(v,1,ConeTarget::TopDiameter);
+        release(v,start); exact(v,0.0);
+        checkCone(v,1,90.25,0,85.25);
+        v.undoPull(); checkCone(v,1,90.25,120,85.25);
+        v.redoPull(); checkCone(v,1,90.25,0,85.25);
+        start = beginConePull(v,1,ConeTarget::TopDiameter);
+        release(v,start); exact(v,50.25);
+        checkCone(v,1,90.25,50.25,85.25);
+
+        v.setDirectMoveMode(true);
+        for (const auto& arrow : v.coneArrows_) require(arrow.IsNull(),"cone arrows survive transform mode");
+        v.setDirectMoveMode(false);
+        v.setPartVisible(1,false);
+        v.addBox();
+        const auto boxBefore = v.boxes_[2];
+        const gp_Pnt boxTop((boxBefore.min[0]+boxBefore.max[0])*0.5,
+            (boxBefore.min[1]+boxBefore.max[1])*0.5,boxBefore.max[2]);
+        click(v,project(v,boxTop));
+        require(v.arrowVisible_ && v.arrowPartIndex_ == 2 && v.arrowAxis_ == 2 && v.arrowMax_,
+                "box top-face arrow regression");
+        const QPoint boxGrab = project(v,boxTop.Translated(gp_Vec(0,0,15)));
+        require(v.beginArrowDrag(boxGrab),"box arrow drag regression");
+        dragBy(v,boxGrab,5.0);
+        QMouseEvent boxRelease(QEvent::MouseButtonRelease,QPointF(boxGrab),QPointF(boxGrab),
+                              Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+        v.mouseReleaseEvent(&boxRelease);
+        exact(v,10.25);
+        near(v.boxes_[2].max[2],boxBefore.max[2]+10.25,"box relative input changed");
+        v.undoPull(); near(v.boxes_[2].max[2],boxBefore.max[2],"box undo regression");
+        v.redoPull(); near(v.boxes_[2].max[2],boxBefore.max[2]+10.25,"box redo regression");
+    }
+
+    static gp_Pnt expectedConeCenter(const CadViewport& v, size_t index) {
+        const auto& part = v.boxes_[index];
+        const auto& c = part.cone;
+        // Independent analytical centroid, measured from the lower end plane.
+        const double r = c.bottomRadius, t = c.topRadius;
+        const double z = c.height*(r*r+2*r*t+3*t*t)/(4*(r*r+r*t+t*t));
+        return gp_Pnt((part.baseMin[0]+part.baseMax[0])*0.5,
+            (part.baseMin[1]+part.baseMax[1])*0.5,part.baseMin[2]+c.baseOffset+z)
+            .Transformed(part.orientation);
+    }
+    static void checkDisplayedGizmos(const CadViewport& v, const gp_Pnt& expected, bool group = false) {
+        const auto& part = v.boxes_[v.rotationIndex_];
+        const double ringRadius = group ? 60.0 : 0.65*std::max({part.max[0]-part.min[0],
+            part.max[1]-part.min[1],part.max[2]-part.min[2]});
+        for (int axis = 0; axis < 3; ++axis) {
+            require(!v.moveAxes_[axis].IsNull(),"missing move gizmo");
+            bool foundShaft = false;
+            for (TopExp_Explorer faces(v.moveAxes_[axis]->Shape(),TopAbs_FACE);faces.More();faces.Next()) {
+                const BRepAdaptor_Surface surface(TopoDS::Face(faces.Current()));
+                if (surface.GetType() != GeomAbs_Cylinder) continue;
+                near(surface.Cylinder().Location().Distance(expected),0,"move shaft is not at centroid");
+                foundShaft = true;
+            }
+            require(foundShaft,"move shaft geometry missing");
+            require(!v.rotationRings_[axis].IsNull(),"missing rotation gizmo");
+            bool foundSection = false;
+            for (TopExp_Explorer edges(v.rotationRings_[axis]->Shape(),TopAbs_EDGE);edges.More();edges.Next()) {
+                const BRepAdaptor_Curve curve(TopoDS::Edge(edges.Current()));
+                if (curve.GetType() != GeomAbs_Circle || std::abs(curve.Circle().Radius()-1.7)>1.0e-7)
+                    continue;
+                // The circular shaft profile lies on the rotation arc's centerline.
+                near(curve.Circle().Location().Distance(expected),ringRadius,
+                     "rotation arc is not centered on centroid");
+                foundSection = true;
+            }
+            require(foundSection,"rotation shaft profile missing");
+        }
+    }
+    static void checkGizmo(CadViewport& v, size_t index, const gp_Pnt& expected) {
+        v.setDirectMoveMode(true);
+        v.setRotateMode(true);
+        v.selectParts({index});
+        near(v.partLocalGizmoCenter(v.boxes_[index]).Transformed(v.boxes_[index].orientation)
+            .Distance(expected),0,"incorrect world gizmo center");
+        checkDisplayedGizmos(v,expected);
+        const gp_Dir x = gp_Dir(1,0,0).Transformed(v.boxes_[index].orientation);
+        require(v.beginMoveAxisDrag(project(v,expected.Translated(gp_Vec(x)*25.0))),
+                "move hit testing is not aligned with centroid");
+        v.draggingFace_ = false;
+        const gp_Dir y = gp_Dir(0,1,0).Transformed(v.boxes_[index].orientation);
+        const auto& part = v.boxes_[index];
+        const double radius = 0.65*std::max({part.max[0]-part.min[0],part.max[1]-part.min[1],
+            part.max[2]-part.min[2]});
+        const gp_Circ ring(gp_Ax2(expected,y,x),radius);
+        const QPoint onRing = project(v,ElCLib::Value(0.7,ring));
+        require(v.beginRotationDrag(onRing),"rotation hit testing is not aligned with centroid");
+        v.applyRotationAngle(25.0);
+        near(v.partLocalGizmoCenter(v.boxes_[index]).Transformed(v.boxes_[index].orientation)
+            .Distance(expected),0,"actual rotation pivot differs from gizmo centroid");
+        checkDisplayedGizmos(v,expected);
+        // Restore the test rotation so later independent expectations use the same transform.
+        v.applyRotationAngle(0.0);
+        v.draggingRotation_ = false;
+        v.setRotateMode(false);
+        v.setDirectMoveMode(false);
+    }
+    static void runGizmo(CadViewport& v) {
+        v.addBox(); v.addCylinder(); v.addSphere(); v.addCone();
+        checkGizmo(v,0,gp_Pnt(50,40,30));
+        checkGizmo(v,1,gp_Pnt(125,0,40));
+        checkGizmo(v,2,gp_Pnt(250,0,0));
+        checkGizmo(v,3,gp_Pnt(375,0,220.0/7.0));
+        for (size_t i = 0; i < 3; ++i) v.setPartVisible(i,false);
+        QPoint start = beginConePull(v,3,ConeTarget::TopDiameter);
+        release(v,start); exact(v,0);
+        checkGizmo(v,3,gp_Pnt(375,0,20)); // A pointed cone has centroid at h/4.
+        start = beginConePull(v,3,ConeTarget::TopDiameter);
+        release(v,start); exact(v,60);
+        checkGizmo(v,3,expectedConeCenter(v,3));
+        start = beginConePull(v,3,ConeTarget::BottomDiameter);
+        release(v,start); exact(v,100);
+        checkGizmo(v,3,expectedConeCenter(v,3));
+        start = beginConePull(v,3,ConeTarget::BottomHeight);
+        release(v,start); exact(v,100);
+        checkGizmo(v,3,expectedConeCenter(v,3));
+        start = beginConePull(v,3,ConeTarget::TopHeight);
+        release(v,start); exact(v,70);
+        checkGizmo(v,3,expectedConeCenter(v,3));
+        // Undo/redo while the transform tools are enabled must refresh after B-Rep restore.
+        v.setDirectMoveMode(true); v.setRotateMode(true); v.selectParts({3});
+        v.undoPull();
+        near(v.boxes_[3].cone.height,100,"cone height undo failed");
+        checkDisplayedGizmos(v,expectedConeCenter(v,3));
+        v.redoPull();
+        near(v.boxes_[3].cone.height,70,"cone height redo failed");
+        checkDisplayedGizmos(v,expectedConeCenter(v,3));
+        v.setRotateMode(false); v.setDirectMoveMode(false);
+        gp_Trsf rotation,translation;
+        rotation.SetRotation(gp_Ax1(gp_Pnt(0,0,0),gp_Dir(1,2,3)),0.6);
+        translation.SetTranslation(gp_Vec(130,-35,22));
+        v.applyPartState(3,v.boxes_[3].min,v.boxes_[3].max,translation*rotation);
+        checkGizmo(v,3,expectedConeCenter(v,3));
+        v.selectParts({3}); v.duplicateSelectedParts();
+        checkGizmo(v,4,expectedConeCenter(v,4));
+        near(expectedConeCenter(v,4).Distance(expectedConeCenter(v,3).Translated(gp_Vec(25,0,0))),
+             0,"duplicate centroid did not follow world translation");
+        v.setPartVisible(3,false); v.fitAll();
+        start = beginConePull(v,4,ConeTarget::TopDiameter);
+        release(v,start); exact(v,0);
+        checkGizmo(v,4,expectedConeCenter(v,4));
+        v.undoPull(); checkGizmo(v,4,expectedConeCenter(v,4));
+        v.redoPull(); checkGizmo(v,4,expectedConeCenter(v,4));
+
+        // Cylinder cap Pull also changes its actual center; the sphere stays concentric.
+        v.setPartVisible(4,false); v.setPartVisible(1,true); v.fitAll();
+        prepareCylinderArrow(v,1,false,false);
+        start = beginPull(v); release(v,start); exact(v,100);
+        checkGizmo(v,1,gp_Pnt(125,0,30));
+        prepareCylinderArrow(v,1,false,true);
+        start = beginPull(v); release(v,start); exact(v,90);
+        checkGizmo(v,1,gp_Pnt(125,0,25));
+        v.setPartVisible(1,false); v.setPartVisible(2,true); v.fitAll();
+        pickSphere(v,2); start = beginPull(v); release(v,start); exact(v,120);
+        checkGizmo(v,2,gp_Pnt(250,0,0));
+
+        // Keep the established equal-weight multipart pivot instead of a mass-weighted one.
+        v.setPartVisible(0,true); v.setPartVisible(3,true);
+        const gp_Pnt a(50,40,30), b = expectedConeCenter(v,3);
+        const gp_Pnt average((a.X()+b.X())*0.5,(a.Y()+b.Y())*0.5,(a.Z()+b.Z())*0.5);
+        v.setDirectMoveMode(true); v.setRotateMode(true); v.selectParts({0,3});
+        near(v.selectionCenter().Distance(average),0,"multipart averaging changed");
+        checkDisplayedGizmos(v,average,true);
+        const gp_Circ groupRing(gp_Ax2(average,gp_Dir(0,1,0),gp_Dir(1,0,0)),60);
+        const QPoint grab = project(v,ElCLib::Value(0.7,groupRing));
+        require(v.beginRotationDrag(grab),"multipart rotation picking failed");
+        v.applyRotationAngle(30);
+        near(v.selectionCenter().Distance(average),0,"group pivot drifted during rotation");
+        checkDisplayedGizmos(v,average,true);
+        QMouseEvent releaseGroup(QEvent::MouseButtonRelease,QPointF(grab),QPointF(grab),
+                                Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+        v.mouseReleaseEvent(&releaseGroup); exact(v,30);
+        v.undoPull();
+        near(v.partLocalGizmoCenter(v.boxes_[0]).Transformed(v.boxes_[0].orientation).Distance(a),
+             0,"multipart undo changed box center");
+        near(expectedConeCenter(v,3).Distance(b),0,"multipart undo changed cone center");
+        checkDisplayedGizmos(v,average,true);
+        v.redoPull();
+        near(v.selectionCenter().Distance(average),0,"multipart redo changed pivot");
+        checkDisplayedGizmos(v,average,true);
+    }
+
     static gp_Pnt capCenter(const CadViewport& v, size_t index, bool top) {
         const auto& part = v.boxes_[index];
         return gp_Pnt((part.baseMin[0]+part.baseMax[0])*0.5,
@@ -387,7 +765,12 @@ int main(int argc, char** argv) {
     viewport.show();
     app.processEvents();
     try {
-        CadViewportPullTest::run(viewport);
+        if (app.arguments().contains(QStringLiteral("--gizmo")))
+            CadViewportPullTest::runGizmo(viewport);
+        else if (app.arguments().contains(QStringLiteral("--cone")))
+            CadViewportPullTest::runCone(viewport);
+        else
+            CadViewportPullTest::run(viewport);
         std::cout << "Absolute diameters/heights, localized display/input, drag/release, transforms, duplication and undo/redo passed.\n";
         return 0;
     } catch (const std::exception& error) {

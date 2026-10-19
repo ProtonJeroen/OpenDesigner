@@ -20,3 +20,10 @@ OpenDesigner targets Windows, Linux and macOS. This roadmap describes planned wo
 - Sphere creation and interactive Pull with absolute diameters are implemented on the sphere feature branch.
 - Sphere and cylinder Pull show and accept absolute diameters or cylinder heights, preserving local centers, opposite caps, instance transforms and undo/redo.
 - Optional viewport regression tests and manual verification steps: [Sphere Pull](SPHERE_PULL.md).
+
+## v0.20 — cone primitive
+- Create Cone adds a parametric GeneralBRep frustum (80/40 mm diameters, 80 mm height).
+- Four orange Pull arrows edit absolute bottom/top diameters and height from either end; top diameter zero creates a pointed cone.
+- Cone parameters survive transforms, duplication and Pull undo/redo. Equal diameters remain editable through a cylinder B-Rep.
+- Transform gizmos use the current B-Rep volume centroid, including after Pull and undo/redo; multipart pivots retain unweighted averaging.
+- Regression coverage and manual checks: [Create Cone and Pull](CONE_PULL.md).

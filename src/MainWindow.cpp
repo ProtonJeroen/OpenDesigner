@@ -52,6 +52,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(cylinderAction, &QAction::triggered, viewport_, &CadViewport::addCylinder);
     auto* sphereAction = model->addAction(tr("Create &Sphere"));
     connect(sphereAction, &QAction::triggered, viewport_, &CadViewport::addSphere);
+    auto* coneAction = model->addAction(tr("Create C&one"));
+    connect(coneAction, &QAction::triggered, viewport_, &CadViewport::addCone);
     auto* duplicateAction = model->addAction(tr("&Duplicate Selected Parts"));
     duplicateAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
     connect(duplicateAction, &QAction::triggered, viewport_, &CadViewport::duplicateSelectedParts);

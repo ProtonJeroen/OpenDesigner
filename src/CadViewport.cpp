@@ -37,6 +37,8 @@
 #include <TopLoc_Location.hxx>
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
 #include <QDialog>
 #include <QFormLayout>
 #include <QComboBox>
@@ -138,15 +140,15 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
             if (!ok || !std::isfinite(dimension)) return;
             // The drag operates in outward travel; numeric input specifies the
             // final diameter/height relative to the geometry at drag start.
-            const double distance = primitivePullIsDiameter()
-                ? dimension*0.5 - primitivePullBefore_.beforeRadius
-                : dimension - primitivePullBefore_.beforeHeight;
+            const double distance = (dimension - primitivePullStartDimension())
+                / (primitivePullIsDiameter() ? 2.0 : 1.0);
             if (!applyPrimitivePull(distance)) return;
             dragDimension_->setText(primitivePullDimensionText());
             if (!undoStack_.empty()) {
                 auto& last = undoStack_.back();
                 const auto& part = boxes_[last.partIndex];
                 last.afterShape = part.shape;
+                last.afterCone = part.cone;
                 last.afterRadius = part.spherePrimitive ? part.sphereRadius : part.cylinderRadius;
                 last.afterHeight = part.cylinderHeight;
                 last.afterBaseOffset = part.cylinderBaseOffset;
@@ -297,6 +299,10 @@ void CadViewport::resizeEvent(QResizeEvent*) {
 }
 void CadViewport::hideFaceArrow() {
     arrowVisible_ = false;
+    for (auto& arrow : coneArrows_) {
+        if (!arrow.IsNull() && !context_.IsNull()) context_->Remove(arrow,Standard_False);
+        arrow.Nullify();
+    }
     if (!faceArrow_.IsNull() && !context_.IsNull()) {
         context_->Remove(faceArrow_, Standard_False);
         faceArrow_.Nullify();
@@ -305,38 +311,52 @@ void CadViewport::hideFaceArrow() {
 void CadViewport::updateFaceArrow() {
     if (!arrowVisible_ || arrowPartIndex_ >= boxes_.size() || context_.IsNull()) return;
     const auto& part = boxes_[arrowPartIndex_];
-    gp_Pnt center = (part.cylinderPrimitive || part.spherePrimitive) && !movePartMode_ ? primitiveArrowOrigin_ :
+    if (part.conePrimitive && !movePartMode_) {
+        for (size_t i = 0; i < coneArrows_.size(); ++i) {
+            const auto target = static_cast<ConePullTarget>(i);
+            displayPullArrow(coneArrows_[i],
+                coneArrowOrigin(part,target).Transformed(part.orientation),
+                gp_Vec(coneArrowDirection(target)).Transformed(part.orientation));
+            context_->SetZLayer(coneArrows_[i],Graphic3d_ZLayerId_Topmost);
+        }
+        return;
+    }
+    gp_Pnt center = (part.cylinderPrimitive || part.spherePrimitive || part.conePrimitive) && !movePartMode_ ? primitiveArrowOrigin_ :
         gp_Pnt((part.min[0]+part.max[0])*0.5,(part.min[1]+part.max[1])*0.5,
                (part.min[2]+part.max[2])*0.5);
-    gp_Vec direction = (part.cylinderPrimitive || part.spherePrimitive) && !movePartMode_ ?
+    gp_Vec direction = (part.cylinderPrimitive || part.spherePrimitive || part.conePrimitive) && !movePartMode_ ?
         gp_Vec(primitiveArrowDirection_) : gp_Vec(0,0,0);
-    if ((!part.cylinderPrimitive && !part.spherePrimitive) || movePartMode_) {
+    if ((!part.cylinderPrimitive && !part.spherePrimitive && !part.conePrimitive) || movePartMode_) {
         center.SetCoord(arrowAxis_+1,arrowMax_?part.max[arrowAxis_]:part.min[arrowAxis_]);
         direction.SetCoord(arrowAxis_+1,arrowMax_?1.0:-1.0);
     }
-    const double shaftLength = 22.0;
     center.Transform(part.orientation);
     direction.Transform(part.orientation);
-    const gp_Ax2 shaftAxis(center, gp_Dir(direction));
-    const gp_Pnt tipBase = center.Translated(direction.Multiplied(shaftLength));
-    const gp_Ax2 tipAxis(tipBase, gp_Dir(direction));
+    displayPullArrow(faceArrow_,center,direction);
+}
+void CadViewport::displayPullArrow(Handle(AIS_Shape)& arrow, gp_Pnt center, gp_Vec direction) {
+    constexpr double shaftLength = 22.0;
+    const gp_Ax2 shaftAxis(center,gp_Dir(direction));
+    const gp_Pnt tipBase = center.Translated(direction*shaftLength);
+    const gp_Ax2 tipAxis(tipBase,gp_Dir(direction));
     BRep_Builder builder;
     TopoDS_Compound compound;
     builder.MakeCompound(compound);
-    builder.Add(compound, BRepPrimAPI_MakeCylinder(shaftAxis, 1.6, shaftLength).Shape());
-    builder.Add(compound, BRepPrimAPI_MakeCone(tipAxis, 4.5, 0.0, 9.0).Shape());
-    if (faceArrow_.IsNull()) {
-        faceArrow_ = new AIS_Shape(compound);
-        faceArrow_->SetColor(Quantity_NOC_ORANGE);
-        context_->Display(faceArrow_, Standard_False);
-        context_->SetDisplayMode(faceArrow_, AIS_Shaded, Standard_False);
-        context_->Deactivate(faceArrow_);
+    builder.Add(compound,BRepPrimAPI_MakeCylinder(shaftAxis,1.6,shaftLength).Shape());
+    builder.Add(compound,BRepPrimAPI_MakeCone(tipAxis,4.5,0.0,9.0).Shape());
+    if (arrow.IsNull()) {
+        arrow = new AIS_Shape(compound);
+        arrow->SetColor(Quantity_NOC_ORANGE);
+        context_->Display(arrow,Standard_False);
+        context_->SetDisplayMode(arrow,AIS_Shaded,Standard_False);
+        context_->Deactivate(arrow);
     } else {
-        faceArrow_->SetShape(compound);
-        context_->Redisplay(faceArrow_, Standard_False);
-        context_->Deactivate(faceArrow_);
+        arrow->SetShape(compound);
+        context_->Redisplay(arrow,Standard_False);
+        context_->Deactivate(arrow);
     }
 }
+
 void CadViewport::addBox() {
     initializeViewer();
     const double x = partCount_ * 125.0;
@@ -411,6 +431,29 @@ void CadViewport::addSphere() {
     emit partCreated(QString("Sphere %1").arg(partCount_));
     fitAll();
 }
+void CadViewport::addCone() {
+    initializeViewer();
+    const double x = partCount_*125.0;
+    CadPart part;
+    part.geometryKind = CadPart::GeometryKind::GeneralBRep;
+    part.conePrimitive = true;
+    part.min = {x-40.0,-40.0,0.0};
+    part.max = {x+40.0,40.0,80.0};
+    part.baseMin = part.min;
+    part.baseMax = part.max;
+    part.shape = BRepPrimAPI_MakeCone(gp_Ax2(gp_Pnt(x,0,0),gp_Dir(0,0,1)),
+        part.cone.bottomRadius,part.cone.topRadius,part.cone.height).Shape();
+    part.presentation = new AIS_Shape(part.shape);
+    part.presentation->SetColor(Quantity_NOC_LIGHTGRAY);
+    context_->Display(part.presentation,Standard_False);
+    context_->SetDisplayMode(part.presentation,AIS_Shaded,Standard_False);
+    context_->Deactivate(part.presentation);
+    context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
+    boxes_.push_back(part);
+    ++partCount_;
+    emit partCreated(QString("Cone %1").arg(partCount_));
+    fitAll();
+}
 void CadViewport::duplicateSelectedParts() {
     initializeViewer();
     // A face selection identifies its owning part as well. Allow Ctrl+D
@@ -441,6 +484,8 @@ void CadViewport::duplicateSelectedParts() {
         copy.geometryKind = original.geometryKind;
         copy.cylinderPrimitive = original.cylinderPrimitive;
         copy.spherePrimitive = original.spherePrimitive;
+        copy.conePrimitive = original.conePrimitive;
+        copy.cone = original.cone;
         copy.sphereRadius = original.sphereRadius;
         copy.cylinderRadius = original.cylinderRadius;
         copy.cylinderHeight = original.cylinderHeight;
@@ -504,8 +549,8 @@ void CadViewport::pullSelectedFace() {
         const Handle(AIS_InteractiveObject) object = context_->SelectedInteractive();
         size_t index = 0;
         while (index < boxes_.size() && boxes_[index].presentation != object) ++index;
-        if (index == boxes_.size()) {
-            emit statusMessage(tr("Selected face does not belong to an editable box."));
+        if (index == boxes_.size() || boxes_[index].geometryKind != CadPart::GeometryKind::Box) {
+            emit statusMessage(tr("Selected face does not belong to an editable box. Use its Pull arrows."));
             return;
         }
         const BRepAdaptor_Surface surface(TopoDS::Face(owner->Shape()));
@@ -649,7 +694,7 @@ void CadViewport::movePartAlongSelectedFace() {
     const Handle(AIS_InteractiveObject) selected = context_->SelectedInteractive();
     size_t index = 0;
     while (index < boxes_.size() && boxes_[index].presentation != selected) ++index;
-    if (index == boxes_.size()) {
+    if (index == boxes_.size() || boxes_[index].geometryKind != CadPart::GeometryKind::Box) {
         emit statusMessage(tr("Selected face does not belong to an editable box."));
         return;
     }
@@ -696,6 +741,22 @@ gp_Pnt CadViewport::partLocalCenter(const CadPart& part) const {
     return gp_Pnt((min[0] + max[0]) * 0.5,
                   (min[1] + max[1]) * 0.5,
                   (min[2] + max[2]) * 0.5);
+}
+gp_Pnt CadViewport::partLocalGizmoCenter(const CadPart& part) const {
+    // The canonical B-Rep is local geometry. Callers apply the instance transform
+    // exactly once, for display, picking and the actual rotation pivot alike.
+    // Keep Pull's original local reference center separate from this live center.
+    if (!part.shape.IsNull()) {
+        GProp_GProps properties;
+        BRepGProp::VolumeProperties(part.shape,properties);
+        if (std::isfinite(properties.Mass()) && std::abs(properties.Mass()) > 1.0e-12) {
+            const gp_Pnt center = properties.CentreOfMass();
+            if (std::isfinite(center.X()) && std::isfinite(center.Y()) && std::isfinite(center.Z()))
+                return center;
+        }
+    }
+    // Retain the previous placement for shapes without usable volume properties.
+    return partLocalCenter(part);
 }
 void CadViewport::applyPartState(size_t index, const std::array<double, 3>& min,
                                  const std::array<double, 3>& max, const gp_Trsf& orientation) {
@@ -860,15 +921,17 @@ bool CadViewport::beginFaceDrag(const QPoint& origin) {
     return true;
 }
 bool CadViewport::beginArrowDrag(const QPoint& origin) {
-    if (!arrowVisible_ || faceArrow_.IsNull() || view_.IsNull()
-        || arrowPartIndex_ >= boxes_.size()) return false;
+    if (!arrowVisible_ || view_.IsNull() || arrowPartIndex_ >= boxes_.size()) return false;
     const auto& part = boxes_[arrowPartIndex_];
-    gp_Pnt center = (part.cylinderPrimitive || part.spherePrimitive) && !movePartMode_ ? primitiveArrowOrigin_ :
+    if (part.conePrimitive && !movePartMode_) {
+        if (!pickConeArrow(origin)) return false;
+    } else if (faceArrow_.IsNull()) return false;
+    gp_Pnt center = (part.cylinderPrimitive || part.spherePrimitive || part.conePrimitive) && !movePartMode_ ? primitiveArrowOrigin_ :
         gp_Pnt((part.min[0]+part.max[0])*0.5,(part.min[1]+part.max[1])*0.5,
                (part.min[2]+part.max[2])*0.5);
-    gp_Vec outward = (part.cylinderPrimitive || part.spherePrimitive) && !movePartMode_ ?
+    gp_Vec outward = (part.cylinderPrimitive || part.spherePrimitive || part.conePrimitive) && !movePartMode_ ?
         gp_Vec(primitiveArrowDirection_) : gp_Vec(0,0,0);
-    if ((!part.cylinderPrimitive && !part.spherePrimitive) || movePartMode_) {
+    if ((!part.cylinderPrimitive && !part.spherePrimitive && !part.conePrimitive) || movePartMode_) {
         center.SetCoord(arrowAxis_+1,arrowMax_?part.max[arrowAxis_]:part.min[arrowAxis_]);
         outward.SetCoord(arrowAxis_+1,arrowMax_?1.0:-1.0);
     }
@@ -888,11 +951,12 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
     const double distance = std::hypot(origin.x() - (x0 + t * dx),
                                        origin.y() - (y0 + t * dy));
     if (distance > 12.0) return false;
-    if ((part.cylinderPrimitive || part.spherePrimitive) && !movePartMode_) {
+    if ((part.cylinderPrimitive || part.spherePrimitive || part.conePrimitive) && !movePartMode_) {
         primitivePullDragging_ = true;
         primitivePullBefore_ = {arrowPartIndex_,part.min,part.max,part.min,part.max,
             part.orientation,part.orientation};
         primitivePullBefore_.beforeShape = part.shape;
+        primitivePullBefore_.beforeCone = part.cone;
         primitivePullBefore_.beforeRadius = part.spherePrimitive ? part.sphereRadius : part.cylinderRadius;
         primitivePullBefore_.beforeHeight = part.cylinderHeight;
         primitivePullBefore_.beforeBaseOffset = part.cylinderBaseOffset;
@@ -951,7 +1015,9 @@ bool CadViewport::prepareMultiFaceDrag() {
         const auto object = context_->SelectedInteractive();
         size_t index = 0;
         while (index < boxes_.size() && boxes_[index].presentation != object) ++index;
-        if (index == boxes_.size()) { multiFaceParts_.clear(); return false; }
+        if (index == boxes_.size() || boxes_[index].geometryKind != CadPart::GeometryKind::Box) {
+            multiFaceParts_.clear(); return false;
+        }
         const auto surface = BRepAdaptor_Surface(TopoDS::Face(owner->Shape()));
         if (surface.GetType() != GeomAbs_Plane) { multiFaceParts_.clear(); return false; }
         const gp_Dir normal = surface.Plane().Axis().Direction();
@@ -1054,16 +1120,77 @@ bool CadViewport::applyMultiFaceDrag(double distance) {
     return true;
 }
 
+gp_Pnt CadViewport::coneArrowOrigin(const CadPart& part, ConePullTarget target) const {
+    gp_Pnt origin((part.baseMin[0]+part.baseMax[0])*0.5,
+        (part.baseMin[1]+part.baseMax[1])*0.5,part.baseMin[2]+part.cone.baseOffset);
+    if (target == ConePullTarget::TopDiameter || target == ConePullTarget::TopHeight)
+        origin.SetZ(origin.Z()+part.cone.height);
+    if (target == ConePullTarget::BottomDiameter || target == ConePullTarget::TopDiameter)
+        origin.Translate(gp_Vec(coneRadialDirection_)*(target == ConePullTarget::BottomDiameter
+            ? part.cone.bottomRadius : part.cone.topRadius));
+    return origin;
+}
+gp_Dir CadViewport::coneArrowDirection(ConePullTarget target) const {
+    if (target == ConePullTarget::BottomDiameter || target == ConePullTarget::TopDiameter)
+        return coneRadialDirection_;
+    return gp_Dir(0,0,target == ConePullTarget::TopHeight ? 1 : -1);
+}
+bool CadViewport::pickConeArrow(const QPoint& point) {
+    const auto& part = boxes_[arrowPartIndex_];
+    double closest = 12.0;
+    bool found = false;
+    for (size_t i = 0; i < coneArrows_.size(); ++i) {
+        if (coneArrows_[i].IsNull()) continue;
+        const auto target = static_cast<ConePullTarget>(i);
+        const gp_Pnt local = coneArrowOrigin(part,target);
+        const gp_Pnt a = local.Transformed(part.orientation);
+        const gp_Pnt b = local.Translated(gp_Vec(coneArrowDirection(target))*31.0)
+            .Transformed(part.orientation);
+        Standard_Integer ax,ay,bx,by;
+        view_->Convert(a.X(),a.Y(),a.Z(),ax,ay);
+        view_->Convert(b.X(),b.Y(),b.Z(),bx,by);
+        const double dx = bx-ax, dy = by-ay;
+        const double lengthSquared = dx*dx+dy*dy;
+        if (lengthSquared < 4.0) continue;
+        const double t = std::clamp(((point.x()-ax)*dx+(point.y()-ay)*dy)/lengthSquared,0.0,1.0);
+        const double distance = std::hypot(point.x()-ax-t*dx,point.y()-ay-t*dy);
+        if (distance < closest) {
+            closest = distance;
+            conePullTarget_ = target;
+            found = true;
+        }
+    }
+    if (found) {
+        primitiveArrowOrigin_ = coneArrowOrigin(part,conePullTarget_);
+        primitiveArrowDirection_ = coneArrowDirection(conePullTarget_);
+    }
+    return found;
+}
+double CadViewport::primitivePullStartDimension() const {
+    if (boxes_[dragIndex_].conePrimitive) {
+        const auto& cone = primitivePullBefore_.beforeCone;
+        if (conePullTarget_ == ConePullTarget::BottomDiameter) return cone.bottomRadius*2.0;
+        if (conePullTarget_ == ConePullTarget::TopDiameter) return cone.topRadius*2.0;
+        return cone.height;
+    }
+    return primitivePullIsDiameter() ? primitivePullBefore_.beforeRadius*2.0
+                                     : primitivePullBefore_.beforeHeight;
+}
 bool CadViewport::primitivePullIsDiameter() const {
+    if (boxes_[dragIndex_].conePrimitive)
+        return conePullTarget_ == ConePullTarget::BottomDiameter
+            || conePullTarget_ == ConePullTarget::TopDiameter;
     return boxes_[dragIndex_].spherePrimitive || cylinderRadialArrow_;
 }
 
 QString CadViewport::primitivePullDimensionText() const {
     const auto& part = boxes_[dragIndex_];
     const bool diameter = primitivePullIsDiameter();
-    const double dimension = diameter
-        ? 2.0*(part.spherePrimitive ? part.sphereRadius : part.cylinderRadius)
-        : part.cylinderHeight;
+    const double dimension = part.conePrimitive
+        ? (diameter ? 2.0*(conePullTarget_ == ConePullTarget::BottomDiameter
+            ? part.cone.bottomRadius : part.cone.topRadius) : part.cone.height)
+        : (diameter ? 2.0*(part.spherePrimitive ? part.sphereRadius : part.cylinderRadius)
+                    : part.cylinderHeight);
     const QString number = QLocale().toString(dimension,'f',2);
     return diameter ? QStringLiteral("Ø %1 mm").arg(number)
                     : QStringLiteral("%1 mm").arg(number);
@@ -1093,7 +1220,7 @@ gp_Pnt CadViewport::selectionCenter() const {
     for (const size_t index : selectedPartIndices_) {
         if (index >= boxes_.size()) continue;
         const auto& part = boxes_[index];
-        const gp_Pnt p = partLocalCenter(part).Transformed(part.orientation);
+        const gp_Pnt p = partLocalGizmoCenter(part).Transformed(part.orientation);
         x += p.X(); y += p.Y(); z += p.Z(); ++count;
     }
     return count ? gp_Pnt(x/count, y/count, z/count) : gp_Pnt(0, 0, 0);
@@ -1169,7 +1296,43 @@ bool CadViewport::applyPrimitivePull(double distance) {
     if (dragIndex_ >= boxes_.size() || context_.IsNull()) return false;
     auto& part = boxes_[dragIndex_];
     if (!std::isfinite(distance)) return false;
-    if (part.spherePrimitive) {
+    if (part.conePrimitive) {
+        auto cone = primitivePullBefore_.beforeCone;
+        if (conePullTarget_ == ConePullTarget::BottomDiameter) cone.bottomRadius += distance;
+        else if (conePullTarget_ == ConePullTarget::TopDiameter) cone.topRadius += distance;
+        else {
+            cone.height += distance;
+            if (conePullTarget_ == ConePullTarget::BottomHeight) cone.baseOffset -= distance;
+        }
+        if (cone.bottomRadius <= 0.01 || cone.topRadius < 0.0 || cone.height <= 0.01) {
+            emit statusMessage(tr("Cone: bottom diameter must exceed 0.02 mm, top diameter "
+                "must be nonnegative and height must exceed 0.01 mm."));
+            return false;
+        }
+        const gp_Pnt base((part.baseMin[0]+part.baseMax[0])*0.5,
+            (part.baseMin[1]+part.baseMax[1])*0.5,part.baseMin[2]+cone.baseOffset);
+        // Equal diameters are a valid limiting case; OCCT's cone builder
+        // requires unequal radii, so build a cylinder while keeping cone parameters.
+        if (std::abs(cone.bottomRadius-cone.topRadius) < 1.0e-7)
+            part.shape = BRepPrimAPI_MakeCylinder(gp_Ax2(base,gp_Dir(0,0,1)),
+                cone.bottomRadius,cone.height).Shape();
+        else
+            part.shape = BRepPrimAPI_MakeCone(gp_Ax2(base,gp_Dir(0,0,1)),
+                cone.bottomRadius,cone.topRadius,cone.height).Shape();
+        const auto& before = primitivePullBefore_.beforeCone;
+        const double radiusChange = std::max(cone.bottomRadius,cone.topRadius)
+            - std::max(before.bottomRadius,before.topRadius);
+        part.min = primitivePullBefore_.beforeMin;
+        part.max = primitivePullBefore_.beforeMax;
+        for (int axis = 0; axis < 2; ++axis) {
+            part.min[axis] -= radiusChange;
+            part.max[axis] += radiusChange;
+        }
+        if (conePullTarget_ == ConePullTarget::BottomHeight) part.min[2] -= distance;
+        else if (conePullTarget_ == ConePullTarget::TopHeight) part.max[2] += distance;
+        part.cone = cone;
+        primitiveArrowOrigin_ = coneArrowOrigin(part,conePullTarget_);
+    } else if (part.spherePrimitive) {
         const double radius = primitivePullBefore_.beforeRadius + distance;
         if (radius <= 0.01) {
             emit statusMessage(tr("Sphere radius must be greater than 0.01 mm."));
@@ -1244,6 +1407,7 @@ void CadViewport::restorePullChange(const PullChange& change, bool after) {
     if (change.beforeShape.IsNull() || change.partIndex>=boxes_.size()) return;
     auto& part=boxes_[change.partIndex];
     part.shape=after?change.afterShape:change.beforeShape;
+    if (part.conePrimitive) part.cone=after?change.afterCone:change.beforeCone;
     if (part.spherePrimitive)
         part.sphereRadius=after?change.afterRadius:change.beforeRadius;
     else
@@ -1255,6 +1419,10 @@ void CadViewport::restorePullChange(const PullChange& change, bool after) {
     context_->Deactivate(part.presentation);
     context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
     hideFaceArrow();
+    if (!batchingPartUpdates_) {
+        if (rotateMode_) updateRotationRings();
+        if (directMoveMode_) updateMoveAxes();
+    }
     view_->Redraw();
 }
 void CadViewport::applyGroupMove(double distance) {
@@ -1285,7 +1453,7 @@ void CadViewport::updateMoveAxes() {
     hideMoveAxes();
     if (!directMoveMode_ || moveIndex_ >= boxes_.size() || context_.IsNull()) return;
     const auto& part = boxes_[moveIndex_];
-    const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter() : partLocalCenter(part).Transformed(part.orientation);
+    const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter() : partLocalGizmoCenter(part).Transformed(part.orientation);
     for (int axis=0; axis<3; ++axis) {
         const gp_Dir direction = gp_Dir(axis==0?1:0,axis==1?1:0,axis==2?1:0).Transformed(part.orientation);
         const gp_Ax2 arrowAxis(center,direction);
@@ -1331,7 +1499,7 @@ bool CadViewport::beginMoveAxisDrag(const QPoint& point) {
     if (!directMoveMode_ || moveIndex_>=boxes_.size() || view_.IsNull()) return false;
     const auto& part=boxes_[moveIndex_];
     const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter()
-        : partLocalCenter(part).Transformed(part.orientation);
+        : partLocalGizmoCenter(part).Transformed(part.orientation);
     double best=12.0;
     int hit=-1;
     double bestDx=0.0,bestDy=0.0,bestPixels=0.0;
@@ -1389,7 +1557,7 @@ void CadViewport::updateRotationRings() {
     if (!rotateMode_ || rotationIndex_ >= boxes_.size() || context_.IsNull()) return;
     const auto& part = boxes_[rotationIndex_];
     const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter()
-        : partLocalCenter(part).Transformed(part.orientation);
+        : partLocalGizmoCenter(part).Transformed(part.orientation);
     const double radius = selectedPartIndices_.size() > 1 ? 60.0 : 0.65 * std::max({part.max[0]-part.min[0],
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
     for (int axis = 0; axis < 3; ++axis) {
@@ -1436,7 +1604,7 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
     if (!rotateMode_ || rotationIndex_ >= boxes_.size() || view_.IsNull()) return false;
     const auto& part = boxes_[rotationIndex_];
     const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter()
-        : partLocalCenter(part).Transformed(part.orientation);
+        : partLocalGizmoCenter(part).Transformed(part.orientation);
     const double radius = selectedPartIndices_.size() > 1 ? 60.0 : 0.65 * std::max({part.max[0]-part.min[0],
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
     double best = 16.0;
@@ -1491,7 +1659,7 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
 double CadViewport::rotationCursorAngle(const QPoint& point, int axis, const gp_Trsf& orientation) const {
     const auto& part = boxes_[rotationIndex_];
     const gp_Pnt center = groupRotationDragging_ ? groupRotationCenter_
-        : partLocalCenter(part).Transformed(orientation);
+        : partLocalGizmoCenter(part).Transformed(orientation);
     const double radius = groupRotationDragging_ ? 60.0 : 0.65 * std::max({part.max[0]-part.min[0],
         part.max[1]-part.min[1], part.max[2]-part.min[2]});
     const gp_Dir dir = gp_Dir(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0).Transformed(orientation);
@@ -1531,7 +1699,7 @@ void CadViewport::applyRotationAngle(double degrees) {
     }
     if (rotationIndex_ >= boxes_.size()) return;
     auto& part = boxes_[rotationIndex_];
-    const gp_Pnt center = partLocalCenter(part).Transformed(rotationBefore_);
+    const gp_Pnt center = partLocalGizmoCenter(part).Transformed(rotationBefore_);
     const gp_Dir dir = gp_Dir(rotationAxis_ == 0 ? 1 : 0, rotationAxis_ == 1 ? 1 : 0, rotationAxis_ == 2 ? 1 : 0).Transformed(rotationBefore_);
     gp_Trsf rotation;
     rotation.SetRotation(gp_Ax1(center,dir),degrees * 3.14159265358979323846 / 180.0);
@@ -1688,6 +1856,26 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                 for (size_t i = 0; i < boxes_.size(); ++i) {
                     if (boxes_[i].presentation != selected) continue;
                     const BRepAdaptor_Surface surf(TopoDS::Face(arrowOwner->Shape()));
+                    if (boxes_[i].conePrimitive && !movePartMode_) {
+                        const auto& part = boxes_[i];
+                        Standard_Real x,y,z,rx,ry,rz;
+                        view_->Convert(e->pos().x(),e->pos().y(),x,y,z);
+                        view_->Convert(e->pos().x()+40,e->pos().y(),rx,ry,rz);
+                        const gp_Vec right = gp_Vec(gp_Pnt(x,y,z),gp_Pnt(rx,ry,rz))
+                            .Transformed(part.orientation.Inverted());
+                        gp_Vec radial(right.X(),right.Y(),0);
+                        if (radial.Magnitude() < 1.0e-6) radial = gp_Vec(1,0,0);
+                        coneRadialDirection_ = gp_Dir(radial);
+                        conePullTarget_ = ConePullTarget::TopHeight;
+                        primitiveArrowOrigin_ = coneArrowOrigin(part,conePullTarget_);
+                        primitiveArrowDirection_ = coneArrowDirection(conePullTarget_);
+                        arrowPartIndex_ = i;
+                        arrowVisible_ = true;
+                        updateFaceArrow();
+                        emit statusMessage(tr("Cone: radial arrows set bottom/top diameter; "
+                            "axial arrows set height with the opposite end fixed."));
+                        break;
+                    }
                     if (boxes_[i].spherePrimitive && !movePartMode_) {
                         const auto& part = boxes_[i];
                         const gp_Pnt center = partLocalCenter(part);
@@ -1784,7 +1972,8 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             }
         }
         if (context_->NbSelected() == 1
-            && !(arrowVisible_ && boxes_[arrowPartIndex_].spherePrimitive)) {
+            && !(arrowVisible_ && (boxes_[arrowPartIndex_].spherePrimitive
+                || boxes_[arrowPartIndex_].conePrimitive))) {
             context_->InitSelected();
             const TopoDS_Shape picked = context_->SelectedShape();
             emit statusMessage(tr("Selected shape: %1; B-Rep owner: %2")
@@ -1795,6 +1984,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
     }
 }
 void CadViewport::setMovePartMode(bool enabled) {
+    if (arrowVisible_ && boxes_[arrowPartIndex_].conePrimitive) hideFaceArrow();
     movePartMode_ = enabled;
     emit statusMessage(enabled
         ? tr("Move Part mode: select a face, then drag its orange arrow.")
@@ -1926,6 +2116,7 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
         primitivePullDragging_ = false;
         const auto& part = boxes_[dragIndex_];
         primitivePullBefore_.afterShape = part.shape;
+        primitivePullBefore_.afterCone = part.cone;
         primitivePullBefore_.afterRadius = part.spherePrimitive ? part.sphereRadius : part.cylinderRadius;
         primitivePullBefore_.afterHeight = part.cylinderHeight;
         primitivePullBefore_.afterBaseOffset = part.cylinderBaseOffset;
