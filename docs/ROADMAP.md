@@ -43,3 +43,10 @@ OpenDesigner targets Windows, Linux and macOS. This roadmap describes planned wo
 - Groups retain the unweighted mean pivot and support menu rotation with grouped Undo/Redo.
 - Existing local gizmo axes, world dialog axes and Primitive Pull anchors are preserved.
 - Regression coverage and manual checks: [Rotation pivot](ROTATION_PIVOT.md).
+
+## v0.3.2 — command sessions and preview
+- Interactive Move and Rotate, including groups, use temporary presentation transforms until OK/Enter.
+- Cancel/Esc and tool changes discard the preview and preserve original geometry, transforms and selection.
+- Confirmation adds one operation to the existing modeling history; cancellation preserves Undo/Redo.
+- Primitive Pull, Booleans and modal transform dialogs retain their current confirmation behavior.
+- Architecture, future adapters and verification: [Command sessions](COMMAND_SESSIONS.md).

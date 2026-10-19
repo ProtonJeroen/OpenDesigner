@@ -5,6 +5,8 @@
 #include <memory>
 #include <optional>
 class QLineEdit;
+class QDialogButtonBox;
+class QShortcut;
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
 #include <TopoDS_Shape.hxx>
@@ -63,6 +65,7 @@ protected:
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
     void wheelEvent(QWheelEvent*) override;
+    bool eventFilter(QObject*, QEvent*) override;
 private:
     friend struct CadViewportPullTest;
     friend struct BooleanOperationsTest;
@@ -118,6 +121,34 @@ private:
         std::vector<PullChange> groupedChanges;
         std::shared_ptr<BooleanChange> booleanChange;
     };
+    // Transaction state only: confirmed changes use the existing modeling history.
+    struct CommandSession {
+        enum class State { Selection, Parameters, Preview, Confirmed, Cancelled };
+        enum class Kind { Move, Rotate };
+        State state = State::Selection;
+        Kind kind = Kind::Move;
+        std::vector<PullChange> changes;
+        std::vector<size_t> selection;
+        std::vector<Handle(SelectMgr_EntityOwner)> owners;
+        gp_Pnt pivot;
+        gp_Dir direction = gp_Dir(1,0,0);
+        gp_Trsf delta;
+        double value = 0;
+    };
+    std::optional<CommandSession> commandSession_;
+    QWidget* commandPanel_ = nullptr;
+    QDialogButtonBox* commandButtons_ = nullptr;
+    QShortcut* commandConfirm_ = nullptr;
+    QShortcut* commandKeypadConfirm_ = nullptr;
+    QShortcut* cancelDimension_ = nullptr;
+    void beginCommandSession(CommandSession::Kind kind, const std::vector<size_t>& indices,
+                             const gp_Dir& direction, const gp_Pnt& pivot = gp_Pnt());
+    void previewCommand(double value);
+    bool updateCommandParameter(bool reportError = true);
+    void confirmCommandSession();
+    void cancelCommandSession();
+    void closeCommandSession(bool confirm);
+    void showCommandControls(const QPoint& position);
     void announcePartCreated(const QString& name);
     std::vector<size_t> selectedBooleanParts() const;
     void restoreBooleanChange(const BooleanChange& change, bool after);
@@ -126,7 +157,6 @@ private:
     gp_Pnt partLocalGizmoCenter(const CadPart& part) const;
     void applyPartState(size_t index, const std::array<double, 3>& min,
                         const std::array<double, 3>& max, const gp_Trsf& orientation);
-    void applyGroupMove(double distance);
     bool applyPrimitivePull(double distance);
     void restorePullChange(const PullChange& change, bool after);
     bool prepareMultiFaceDrag();
@@ -183,10 +213,6 @@ private:
 
     std::vector<CadPart> boxes_;
     std::vector<size_t> selectedPartIndices_;
-    std::vector<PullChange> groupMoveBefore_;
-    gp_Dir groupMoveDirection_ = gp_Dir(1, 0, 0);
-    gp_Trsf dragBeforeOrientation_;
-    bool groupMoveDragging_ = false;
     bool multiFaceDragging_ = false;
     bool multiFaceEditing_ = false;
     struct FaceDragPart {
@@ -195,12 +221,8 @@ private:
     };
     std::vector<FaceDragPart> multiFaceParts_;
     bool batchingPartUpdates_ = false;
-    bool groupMoveEditing_ = false;
     bool groupRotationDragging_ = false;
-    bool groupRotationEditing_ = false;
-    std::vector<PullChange> groupRotationBefore_;
     gp_Pnt groupRotationCenter_;
-    gp_Dir groupRotationDirection_ = gp_Dir(1, 0, 0);
     std::vector<PullChange> undoStack_;
     std::vector<PullChange> redoStack_;
     QPoint previous_;
@@ -214,7 +236,6 @@ private:
     size_t moveIndex_ = 0;
     std::array<Handle(AIS_Shape), 3> moveAxes_;
     bool draggingRotation_ = false;
-    bool rotationEditing_ = false;
     size_t rotationIndex_ = 0;
     int rotationAxis_ = 0;
     double rotationAngle_ = 0.0;

@@ -165,7 +165,12 @@ struct BooleanOperationsTest {
             v.applyPartState(2,v.boxes_[2].min,v.boxes_[2].max,move);
             near(center(v,2).Distance(before.Translated(gp_Vec(15,20,30))),0,"result move failed");
             v.rotationIndex_=2; v.rotationBefore_=v.boxes_[2].orientation; v.rotationAxis_=1;
-            v.applyRotationAngle(37); near(center(v,2).Distance(before.Translated(gp_Vec(15,20,30))),0,"result rotate pivot moved");
+            v.beginCommandSession(CadViewport::CommandSession::Kind::Rotate,{2},
+                gp_Dir(0,1,0),center(v,2));
+            v.applyRotationAngle(37);
+            v.dragDimension_->setText(QStringLiteral("37"));
+            v.confirmCommandSession();
+            near(center(v,2).Distance(before.Translated(gp_Vec(15,20,30))),0,"result rotate pivot moved");
             require(v.boxes_[2].shape.IsSame(shape),"result transformed by rebuilding geometry");
             v.setPartColor(2,Qt::blue); v.setPartVisible(2,false);
             require(!v.isPartVisible(2),"result hide failed"); v.setPartVisible(2,true);
@@ -283,9 +288,31 @@ struct BooleanOperationsTest {
         v.redoPull(); v.redoPull();
         near(center(v,2).X(),72.5,"mixed transform redo failed");
     }
+    static void sessionBrowserAndBoolean() {
+        Fixture f; auto& v=*f.viewport; overlap(f);
+        const auto checkRows = [&](int expectedSlots = 2) {
+            require(f.tree->topLevelItem(0)->childCount()==expectedSlots,"preview changed browser rows");
+            require(f.row(0)->isSelected() && f.row(1)->isSelected(),"preview changed browser selection");
+            require(!f.row(0)->isHidden() && !f.row(1)->isHidden(),"preview hid browser rows");
+        };
+        v.beginCommandSession(CadViewport::CommandSession::Kind::Move,{0,1},gp_Dir(1,0,0));
+        v.previewCommand(40); checkRows();
+        v.cancelCommandSession(); checkRows();
+        v.beginCommandSession(CadViewport::CommandSession::Kind::Rotate,{0,1},gp_Dir(0,1,0),v.selectionCenter());
+        v.previewCommand(23); checkRows();
+        // Switching to Boolean discards the unconfirmed rotation before computing operands.
+        v.uniteSelectedParts();
+        require(!v.commandSession_,"Boolean kept pending transform session");
+        require(v.undoStack_.size()==1,"Boolean committed the pending transform");
+        checkResult(v,2,600000);
+        v.undoPull(); checkRows(3);
+        require(f.row(2)->isHidden(),"undone Boolean result row should remain inactive");
+        near(center(v,0).Distance(gp_Pnt(50,40,30)),0,"Boolean switch retained preview transform");
+        v.redoPull(); checkResult(v,2,600000);
+    }
     static void run() {
         basicOperations(); selectionAndDialog(); transformedOperands(); allPrimitives();
-        failuresAndHistory(); generalBRepOperands(); hiddenAndMixedUndo();
+        failuresAndHistory(); generalBRepOperands(); hiddenAndMixedUndo(); sessionBrowserAndBoolean();
     }
 };
 

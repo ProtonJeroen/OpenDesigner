@@ -7,6 +7,7 @@
 #include <QLineEdit>
 #include <QDoubleValidator>
 #include <QShortcut>
+#include <QVBoxLayout>
 #include <QLocale>
 #include <algorithm>
 #include <Aspect_NeutralWindow.hxx>
@@ -87,26 +88,28 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     dragDimension_->setAlignment(Qt::AlignCenter);
     dragDimension_->setValidator(new PullDimensionValidator(dragDimension_));
     dragDimension_->hide();
+    // A raster tool window keeps Qt controls off OCCT's paint-on-screen surface.
+    commandPanel_ = new QWidget(this, Qt::Tool | Qt::FramelessWindowHint);
+    commandPanel_->setAttribute(Qt::WA_ShowWithoutActivating);
+    commandPanel_->installEventFilter(this);
+    auto* commandLayout = new QVBoxLayout(commandPanel_);
+    commandButtons_ = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, commandPanel_);
+    commandLayout->addWidget(commandButtons_);
+    commandButtons_->hide();
+    connect(commandButtons_, &QDialogButtonBox::accepted, this, &CadViewport::confirmCommandSession);
+    connect(commandButtons_, &QDialogButtonBox::rejected, this, &CadViewport::cancelCommandSession);
+    connect(dragDimension_, &QLineEdit::textEdited, this, [this]() {
+        if (commandSession_) updateCommandParameter(false);
+    });
+    commandConfirm_ = new QShortcut(QKeySequence(Qt::Key_Return), this);
+    commandKeypadConfirm_ = new QShortcut(QKeySequence(Qt::Key_Enter), this);
+    for (auto* shortcut : {commandConfirm_,commandKeypadConfirm_}) {
+        shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+        shortcut->setEnabled(false);
+        connect(shortcut, &QShortcut::activated, this, &CadViewport::confirmCommandSession);
+    }
     connect(dragDimension_, &QLineEdit::returnPressed, this, [this]() {
-        if (rotationEditing_) {
-            bool ok = false;
-            const double angle = QLocale().toDouble(dragDimension_->text(), &ok);
-            if (!ok) return;
-            applyRotationAngle(angle);
-            if (!undoStack_.empty()) {
-                auto& change = undoStack_.back();
-                if (groupRotationEditing_ && !change.groupedChanges.empty()) {
-                    for (auto& item : change.groupedChanges)
-                        item.afterOrientation = boxes_[item.partIndex].orientation;
-                } else change.afterOrientation = boxes_[rotationIndex_].orientation;
-            }
-            groupRotationEditing_ = false;
-            rotationEditing_ = false;
-            dragDimension_->hide();
-            updateRotationRings();
-            setFocus();
-            return;
-        }
+        if (commandSession_) { confirmCommandSession(); return; }
         if (!dimensionEditing_) return;
         if (multiFaceEditing_) {
             bool ok = false;
@@ -162,26 +165,6 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
             setFocus();
             return;
         }
-        if (groupMoveEditing_) {
-            bool ok = false;
-            const double distance = QLocale().toDouble(dragDimension_->text(), &ok);
-            if (!ok) return;
-            applyGroupMove(distance);
-            if (!undoStack_.empty()) {
-                auto& change = undoStack_.back();
-                for (auto& item : change.groupedChanges) {
-                    const auto& part = boxes_[item.partIndex];
-                    item.afterMin = part.min;
-                    item.afterMax = part.max;
-                    item.afterOrientation = part.orientation;
-                }
-            }
-            groupMoveEditing_ = false;
-            dimensionEditing_ = false;
-            dragDimension_->hide();
-            setFocus();
-            return;
-        }
         bool ok = false;
         const double distance = QLocale().toDouble(dragDimension_->text(), &ok);
         if (!ok) { emit statusMessage(tr("Enter a valid distance in mm.")); return; }
@@ -190,25 +173,13 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
         if (last.partIndex != dragIndex_) { dragDimension_->hide(); dimensionEditing_ = false; return; }
         auto min = last.beforeMin;
         auto max = last.beforeMax;
-        if (dragMovesPart_) {
-            const double delta = (dragMax_ ? 1.0 : -1.0) * distance;
-            min[dragAxis_] += delta;
-            max[dragAxis_] += delta;
-        } else if (dragMax_) max[dragAxis_] += distance;
+        if (dragMax_) max[dragAxis_] += distance;
         else min[dragAxis_] -= distance;
         if (max[dragAxis_] - min[dragAxis_] <= 0.001) {
             emit statusMessage(tr("Distance would collapse or invert the box."));
             return;
         }
-        if (dragMovesPart_ && boxes_[last.partIndex].geometryKind == CadPart::GeometryKind::GeneralBRep) {
-            gp_Trsf shift;
-            shift.SetTranslation(gp_Vec(min[0] - last.beforeMin[0],
-                min[1] - last.beforeMin[1], min[2] - last.beforeMin[2]));
-            applyPartState(last.partIndex, min, max, last.beforeOrientation * shift);
-            last.afterOrientation = boxes_[last.partIndex].orientation;
-        } else {
-            applyBoxBounds(last.partIndex, min, max);
-        }
+        applyBoxBounds(last.partIndex, min, max);
         last.afterMin = min;
         last.afterMax = max;
         dragDimension_->hide();
@@ -216,13 +187,11 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
         setFocus();
         emit statusMessage(tr("Exact face distance: %1 mm").arg(distance));
     });
-    auto* cancelDimension = new QShortcut(QKeySequence(Qt::Key_Escape), this);
-    connect(cancelDimension, &QShortcut::activated, this, [this]() {
+    cancelDimension_ = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    connect(cancelDimension_, &QShortcut::activated, this, [this]() {
+        if (commandSession_) { cancelCommandSession(); return; }
         dragDimension_->hide();
         dimensionEditing_ = false;
-        rotationEditing_ = false;
-        groupRotationEditing_ = false;
-        groupMoveEditing_ = false;
         primitivePullEditing_ = false;
         if (multiFaceEditing_) {
             clearMultiFaceHighlight();
@@ -234,6 +203,121 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
         multiFaceEditing_ = false;
         setFocus();
     });
+}
+void CadViewport::beginCommandSession(CommandSession::Kind kind,
+        const std::vector<size_t>& indices, const gp_Dir& direction, const gp_Pnt& pivot) {
+    cancelCommandSession();
+    commandSession_.emplace();
+    auto& session = *commandSession_;
+    session.kind = kind;
+    session.selection = selectedPartIndices_;
+    for (context_->InitSelected(); context_->MoreSelected(); context_->NextSelected())
+        session.owners.push_back(context_->SelectedOwner());
+    for (const auto index : indices) {
+        const auto& part = boxes_[index];
+        session.changes.push_back({index,part.min,part.max,part.min,part.max,
+                                   part.orientation,part.orientation});
+    }
+    session.direction = direction;
+    session.pivot = pivot;
+    session.state = CommandSession::State::Parameters;
+    commandPanel_->setWindowTitle(kind == CommandSession::Kind::Move ? tr("Move Part Preview") : tr("Rotate Part Preview"));
+    dragDimension_->setParent(commandPanel_);
+    static_cast<QVBoxLayout*>(commandPanel_->layout())->insertWidget(0,dragDimension_);
+    dragDimension_->setToolTip(kind == CommandSession::Kind::Rotate ? tr("Angle in degrees") : tr("Distance in mm"));
+    dragDimension_->setText(QLocale().toString(0.0,'f',2));
+    cancelDimension_->setContext(Qt::WidgetWithChildrenShortcut);
+    commandConfirm_->setEnabled(true);
+    commandKeypadConfirm_->setEnabled(true);
+    showCommandControls(dragStart_);
+}
+void CadViewport::showCommandControls(const QPoint& position) {
+    dragDimension_->show(); commandButtons_->show();
+    commandPanel_->adjustSize();
+    const QPoint local(std::clamp(position.x()+16,0,std::max(0,width()-commandPanel_->width())),
+                       std::clamp(position.y()-36,0,std::max(0,height()-commandPanel_->height())));
+    commandPanel_->move(mapToGlobal(local));
+    commandPanel_->show();
+    commandPanel_->raise();
+}
+void CadViewport::previewCommand(double value) {
+    if (!commandSession_ || !std::isfinite(value)) return;
+    auto& session = *commandSession_;
+    session.value = value;
+    if (session.kind == CommandSession::Kind::Rotate)
+        session.delta.SetRotation(gp_Ax1(session.pivot,session.direction),value*std::acos(-1.0)/180.0);
+    else session.delta.SetTranslation(gp_Vec(session.direction)*value);
+    for (auto& change : session.changes) {
+        change.afterOrientation = session.delta * change.beforeOrientation;
+        // Preview touches only AIS: canonical geometry, metadata and selection stay intact.
+        boxes_[change.partIndex].presentation->SetLocalTransformation(change.afterOrientation);
+        context_->Redisplay(boxes_[change.partIndex].presentation,Standard_False);
+    }
+    session.state = CommandSession::State::Preview;
+    if (directMoveMode_) updateMoveAxes();
+    if (rotateMode_) updateRotationRings();
+    if (arrowVisible_ && !faceArrow_.IsNull()) {
+        faceArrow_->SetLocalTransformation(session.delta);
+        context_->Redisplay(faceArrow_,Standard_False);
+    }
+    view_->Redraw();
+}
+bool CadViewport::updateCommandParameter(bool reportError) {
+    bool ok = false;
+    const double value = QLocale().toDouble(dragDimension_->text(), &ok);
+    if (!ok || !std::isfinite(value) || !dragDimension_->hasAcceptableInput()) {
+        if (reportError) emit statusMessage(tr("Enter a valid finite angle or distance before confirming."));
+        return false;
+    }
+    previewCommand(value);
+    return true;
+}
+void CadViewport::confirmCommandSession() {
+    if (commandSession_ && updateCommandParameter()) closeCommandSession(true);
+}
+void CadViewport::cancelCommandSession() {
+    if (commandSession_) closeCommandSession(false);
+}
+void CadViewport::closeCommandSession(bool confirm) {
+    commandSession_->state = confirm ? CommandSession::State::Confirmed : CommandSession::State::Cancelled;
+    const auto session = std::move(*commandSession_);
+    commandSession_.reset();
+    for (const auto& change : session.changes) {
+        auto& part = boxes_[change.partIndex];
+        if (confirm) part.orientation = change.afterOrientation;
+        part.presentation->SetLocalTransformation(part.orientation);
+        context_->Redisplay(part.presentation,Standard_False);
+    }
+    if (confirm && std::abs(session.value)>1.0e-10 && !session.changes.empty()) {
+        PullChange operation = session.changes.front();
+        if (session.changes.size()>1) operation.groupedChanges = session.changes;
+        undoStack_.push_back(operation);
+        redoStack_.clear();
+    }
+    selectedPartIndices_ = session.selection;
+    context_->ClearSelected(Standard_False);
+    for (const auto& owner : session.owners) context_->AddOrRemoveSelected(owner,Standard_False);
+    draggingFace_ = draggingRotation_ = dimensionEditing_ = false;
+    groupRotationDragging_ = false;
+    dragDimension_->hide(); commandButtons_->hide(); commandPanel_->hide();
+    commandPanel_->layout()->removeWidget(dragDimension_);
+    dragDimension_->setParent(this);
+    commandConfirm_->setEnabled(false); commandKeypadConfirm_->setEnabled(false);
+    cancelDimension_->setContext(Qt::WindowShortcut);
+    if (directMoveMode_) updateMoveAxes();
+    if (rotateMode_) updateRotationRings();
+    if (!faceArrow_.IsNull()) faceArrow_->ResetTransformation();
+    updateFaceArrow();
+    view_->Redraw();
+    setFocus();
+    emit statusMessage(confirm ? tr("Transformation confirmed.") : tr("Transformation cancelled."));
+}
+bool CadViewport::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == commandPanel_ && event->type() == QEvent::Close) {
+        cancelCommandSession();
+        return true;
+    }
+    return QWidget::eventFilter(watched,event);
 }
 QPaintEngine* CadViewport::paintEngine() const { return nullptr; }
 void CadViewport::initializeViewer() {
@@ -358,6 +442,7 @@ void CadViewport::displayPullArrow(Handle(AIS_Shape)& arrow, gp_Pnt center, gp_V
 }
 
 void CadViewport::addBox() {
+    cancelCommandSession();
     initializeViewer();
     const double x = partCount_ * 125.0;
     CadPart part;
@@ -379,6 +464,7 @@ void CadViewport::addBox() {
     fitAll();
 }
 void CadViewport::addCylinder() {
+    cancelCommandSession();
     initializeViewer();
     const double x = partCount_ * 125.0;
     constexpr double radius = 40.0;
@@ -408,6 +494,7 @@ void CadViewport::addCylinder() {
     fitAll();
 }
 void CadViewport::addSphere() {
+    cancelCommandSession();
     initializeViewer();
     const double x = partCount_ * 125.0;
     constexpr double radius = 40.0;
@@ -432,6 +519,7 @@ void CadViewport::addSphere() {
     fitAll();
 }
 void CadViewport::addCone() {
+    cancelCommandSession();
     initializeViewer();
     const double x = partCount_*125.0;
     CadPart part;
@@ -455,6 +543,7 @@ void CadViewport::addCone() {
     fitAll();
 }
 void CadViewport::duplicateSelectedParts() {
+    cancelCommandSession();
     initializeViewer();
     // A face selection identifies its owning part as well. Allow Ctrl+D
     // directly after clicking a cylinder face, without requiring Alt+click.
@@ -525,6 +614,7 @@ void CadViewport::duplicateSelectedParts() {
 }
 
 void CadViewport::pullSelectedFace() {
+    cancelCommandSession();
     if (context_.IsNull() || context_->NbSelected() == 0) {
         emit statusMessage(tr("Select one or more planar box faces first."));
         return;
@@ -629,6 +719,7 @@ void CadViewport::pullSelectedFace() {
         .arg(faceCount).arg(distance).arg(changes.size()));
 }
 void CadViewport::rotateSelectedPart() {
+    cancelCommandSession();
     const auto indices = selectedBooleanParts();
     if (context_.IsNull() || indices.empty()) {
         emit statusMessage(tr("Select a face or part to rotate."));
@@ -683,6 +774,7 @@ void CadViewport::rotateSelectedPart() {
         .arg(angleBox.value()).arg(axisBox.currentText()));
 }
 void CadViewport::movePartAlongSelectedFace() {
+    cancelCommandSession();
     if (context_.IsNull() || context_->NbSelected() != 1) {
         emit statusMessage(tr("Select a box face to choose the move direction."));
         return;
@@ -820,6 +912,7 @@ void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
     }
 }
 void CadViewport::undoPull() {
+    cancelCommandSession();
     if (undoStack_.empty()) {
         emit statusMessage(tr("Nothing to undo."));
         return;
@@ -839,6 +932,7 @@ void CadViewport::undoPull() {
     emit statusMessage(tr("Modeling operation undone."));
 }
 void CadViewport::redoPull() {
+    cancelCommandSession();
     if (redoStack_.empty()) {
         emit statusMessage(tr("Nothing to redo."));
         return;
@@ -917,6 +1011,11 @@ bool CadViewport::beginFaceDrag(const QPoint& origin) {
     multiFaceDragging_ = !dragMovesPart_ && prepareMultiFaceDrag();
     if (multiFaceDragging_) updateMultiFaceHighlight();
     draggingFace_ = true;
+    if (dragMovesPart_)
+        beginCommandSession(CommandSession::Kind::Move,{dragIndex_},
+            gp_Dir(dragAxis_==0?1:0,dragAxis_==1?1:0,dragAxis_==2?1:0)
+                .Transformed(boxes_[dragIndex_].orientation));
+    if (commandSession_ && !dragMax_) commandSession_->direction.Reverse();
     emit statusMessage(dragMovesPart_
         ? tr("Drag to move the entire part along the face normal.")
         : tr("Drag along the face normal; release to commit."));
@@ -998,6 +1097,11 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
         view_->Redraw();
     }
     draggingFace_ = true;
+    if (dragMovesPart_)
+        beginCommandSession(CommandSession::Kind::Move,{dragIndex_},
+            gp_Dir(dragAxis_==0?1:0,dragAxis_==1?1:0,dragAxis_==2?1:0)
+                .Transformed(boxes_[dragIndex_].orientation));
+    if (commandSession_ && !dragMax_) commandSession_->direction.Reverse();
     emit statusMessage(dragMovesPart_
         ? tr("Drag arrow to move the entire part.")
         : multiFaceDragging_
@@ -1230,6 +1334,7 @@ gp_Pnt CadViewport::rotationCenter(const std::vector<size_t>& indices) const {
     return count ? gp_Pnt(x/count, y/count, z/count) : gp_Pnt(0, 0, 0);
 }
 void CadViewport::setPartVisible(size_t index, bool visible) {
+    cancelCommandSession();
     if (!isPartActive(index)) return;
     auto& part = boxes_[index];
     if (!part.active || part.visible == visible) return;
@@ -1268,6 +1373,7 @@ void CadViewport::fitSelection(const std::vector<size_t>& indices) {
     view_->Redraw();
 }
 void CadViewport::selectParts(const std::vector<size_t>& indices) {
+    cancelCommandSession();
     selectedPartIndices_.clear();
     for (const size_t index : indices) {
         if (isPartVisible(index) &&
@@ -1429,30 +1535,6 @@ void CadViewport::restorePullChange(const PullChange& change, bool after) {
     }
     view_->Redraw();
 }
-void CadViewport::applyGroupMove(double distance) {
-    const gp_Vec worldDelta(groupMoveDirection_);
-    batchingPartUpdates_ = true;
-    for (const auto& before : groupMoveBefore_) {
-        if (before.partIndex >= boxes_.size()) continue;
-        const gp_Vec localDelta = worldDelta.Transformed(
-            before.beforeOrientation.Inverted()).Multiplied(distance);
-        auto min = before.beforeMin;
-        auto max = before.beforeMax;
-        for (int axis = 0; axis < 3; ++axis) {
-            min[axis] += localDelta.Coord(axis + 1);
-            max[axis] += localDelta.Coord(axis + 1);
-        }
-        if (boxes_[before.partIndex].geometryKind == CadPart::GeometryKind::GeneralBRep) {
-            gp_Trsf shift;
-            shift.SetTranslation(worldDelta.Multiplied(distance));
-            applyPartState(before.partIndex, min, max, shift * before.beforeOrientation);
-        } else {
-            applyPartState(before.partIndex, min, max, before.beforeOrientation);
-        }
-    }
-    batchingPartUpdates_ = false;
-    refreshPartSelection();
-}
 void CadViewport::updateMoveAxes() {
     hideMoveAxes();
     if (!directMoveMode_ || !isPartVisible(moveIndex_) || context_.IsNull()) return;
@@ -1468,6 +1550,7 @@ void CadViewport::updateMoveAxes() {
         builder.Add(shape,BRepPrimAPI_MakeCylinder(arrowAxis,1.7,42.0).Shape());
         builder.Add(shape,BRepPrimAPI_MakeCone(gp_Ax2(tipBase,direction),5.0,0.0,10.0).Shape());
         moveAxes_[axis] = new AIS_Shape(shape);
+        if (commandSession_) moveAxes_[axis]->SetLocalTransformation(commandSession_->delta);
         moveAxes_[axis]->SetColor(axis==0 ? Quantity_NOC_RED : axis==1 ? Quantity_NOC_GREEN : Quantity_NOC_BLUE1);
         context_->Display(moveAxes_[axis],Standard_False);
         // Topmost layer draws the manipulator over solid geometry (depth cleared).
@@ -1493,6 +1576,7 @@ void CadViewport::setTransformSelectionMode() {
     else view_->Redraw();
 }
 void CadViewport::setDirectMoveMode(bool enabled) {
+    cancelCommandSession();
     directMoveMode_ = enabled;
     setTransformSelectionMode();
     if (enabled) hideFaceArrow();
@@ -1521,13 +1605,13 @@ bool CadViewport::beginMoveAxisDrag(const QPoint& point) {
         if (distance<best) { best=distance;hit=axis;bestDx=dx;bestDy=dy;bestPixels=std::sqrt(len2); }
     }
     if (hit<0) return false;
+    cancelCommandSession();
     dragIndex_=moveIndex_;
     dragAxis_=hit;
     dragMax_=true;
     dragMovesPart_=true;
     dragMin_=part.min;
     dragMaxBounds_=part.max;
-    dragBeforeOrientation_ = part.orientation;
     dragStart_=point;
     dragDistance_=0.0;
     dragScreenX_=bestDx/bestPixels;
@@ -1538,17 +1622,9 @@ bool CadViewport::beginMoveAxisDrag(const QPoint& point) {
     // the move gizmo. Drop OCCT's dynamic highlight now so its white edge
     // presentation cannot remain at the pre-drag position.
     context_->MoveTo(-1, -1, view_, Standard_False);
-    groupMoveDragging_ = selectedPartIndices_.size() > 1;
-    groupMoveBefore_.clear();
-    if (groupMoveDragging_) {
-        groupMoveDirection_ = gp_Dir(hit==0?1:0, hit==1?1:0, hit==2?1:0)
-            .Transformed(part.orientation);
-        for (const size_t index : selectedPartIndices_) {
-            const auto& item = boxes_[index];
-            groupMoveBefore_.push_back({index, item.min, item.max,
-                item.min, item.max, item.orientation, item.orientation});
-        }
-    }
+    beginCommandSession(CommandSession::Kind::Move,
+        selectedPartIndices_.size()>1 ? selectedPartIndices_ : std::vector<size_t>{moveIndex_},
+        gp_Dir(hit==0?1:0,hit==1?1:0,hit==2?1:0).Transformed(part.orientation));
     return true;
 }
 void CadViewport::hideRotationRings() {
@@ -1596,6 +1672,7 @@ void CadViewport::updateRotationRings() {
         builder.Add(arrow, BRepOffsetAPI_MakePipe(arcPath, BRepBuilderAPI_MakeFace(profile).Face()).Shape());
         builder.Add(arrow,BRepPrimAPI_MakeCone(gp_Ax2(coneBase,gp_Dir(tangent)),4.5,0.0,10.0).Shape());
         rotationRings_[axis] = new AIS_Shape(arrow);
+        if (commandSession_) rotationRings_[axis]->SetLocalTransformation(commandSession_->delta);
         rotationRings_[axis]->SetColor(axis == 0 ? Quantity_NOC_RED
             : axis == 1 ? Quantity_NOC_GREEN : Quantity_NOC_BLUE1);
         context_->Display(rotationRings_[axis], Standard_False);
@@ -1632,19 +1709,10 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
         }
     }
     if (axisHit < 0) return false;
+    cancelCommandSession();
     rotationAxis_ = axisHit;
-    // A new drag must not reuse the previous group's exact-angle editing state.
-    groupRotationEditing_ = false;
     groupRotationDragging_ = selectedPartIndices_.size() > 1;
-    groupRotationBefore_.clear();
-    if (groupRotationDragging_) {
-        groupRotationCenter_ = center;
-        groupRotationDirection_ = gp_Dir(axisHit==0?1:0,axisHit==1?1:0,axisHit==2?1:0).Transformed(part.orientation);
-        for (const size_t index : selectedPartIndices_) {
-            const auto& item = boxes_[index];
-            groupRotationBefore_.push_back({index,item.min,item.max,item.min,item.max,item.orientation,item.orientation});
-        }
-    }
+    groupRotationCenter_ = center;
     rotationBefore_ = part.orientation;
     rotationAngle_ = 0.0;
     dragStart_ = point;
@@ -1659,6 +1727,9 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
         context_->MoveTo(-1, -1, view_, Standard_False);
         view_->Redraw();
     }
+    beginCommandSession(CommandSession::Kind::Rotate,
+        selectedPartIndices_.size()>1 ? selectedPartIndices_ : std::vector<size_t>{rotationIndex_},
+        gp_Dir(axisHit==0?1:0,axisHit==1?1:0,axisHit==2?1:0).Transformed(part.orientation),center);
     return true;
 }
 double CadViewport::rotationCursorAngle(const QPoint& point, int axis, const gp_Trsf& orientation) const {
@@ -1688,30 +1759,12 @@ double CadViewport::rotationCursorAngle(const QPoint& point, int axis, const gp_
     return result;
 }
 void CadViewport::applyRotationAngle(double degrees) {
-    if (groupRotationDragging_ || groupRotationEditing_) {
-        gp_Trsf rotation;
-        rotation.SetRotation(gp_Ax1(groupRotationCenter_,groupRotationDirection_),
-            degrees * 3.14159265358979323846 / 180.0);
-        batchingPartUpdates_ = true;
-        for (const auto& before : groupRotationBefore_) {
-            applyPartState(before.partIndex, before.beforeMin, before.beforeMax,
-                rotation * before.beforeOrientation);
-        }
-        batchingPartUpdates_ = false;
-        rotationAngle_ = degrees;
-        refreshPartSelection();
-        return;
-    }
-    if (rotationIndex_ >= boxes_.size()) return;
-    auto& part = boxes_[rotationIndex_];
-    const gp_Pnt center = partWorldRotationCenter(part, rotationBefore_);
-    const gp_Dir dir = gp_Dir(rotationAxis_ == 0 ? 1 : 0, rotationAxis_ == 1 ? 1 : 0, rotationAxis_ == 2 ? 1 : 0).Transformed(rotationBefore_);
-    gp_Trsf rotation;
-    rotation.SetRotation(gp_Ax1(center,dir),degrees * 3.14159265358979323846 / 180.0);
-    applyPartState(rotationIndex_,part.min,part.max,rotation * rotationBefore_);
+    if (!commandSession_) return;
     rotationAngle_ = degrees;
+    previewCommand(degrees);
 }
 void CadViewport::setRotateMode(bool enabled) {
+    cancelCommandSession();
     rotateMode_ = enabled;
     setTransformSelectionMode();
     if (enabled) hideFaceArrow();
@@ -1727,12 +1780,12 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
     panning_ = e->button() == Qt::MiddleButton && (e->modifiers() & Qt::ShiftModifier);
     if (rotating_ && !view_.IsNull()) view_->StartRotation(previous_.x(), previous_.y());
     if (e->button() == Qt::LeftButton && !context_.IsNull()) {
-        if (dimensionEditing_ || rotationEditing_) {
+        cancelCommandSession();
+        if (dimensionEditing_) {
             clearMultiFaceHighlight();
             multiFaceEditing_ = false;
             primitivePullEditing_ = false;
             dimensionEditing_ = false;
-            rotationEditing_ = false;
             dragDimension_->hide();
         }
         const bool partPicking = (e->modifiers() & Qt::AltModifier);
@@ -1997,6 +2050,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
     }
 }
 void CadViewport::setMovePartMode(bool enabled) {
+    cancelCommandSession();
     if (arrowVisible_ && boxes_[arrowPartIndex_].conePrimitive) hideFaceArrow();
     movePartMode_ = enabled;
     emit statusMessage(enabled
@@ -2026,9 +2080,7 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
         if (std::abs(degrees-rotationAngle_) > 0.0001) {
             applyRotationAngle(degrees);
             dragDimension_->setText(QLocale().toString(degrees,'f',2));
-            dragDimension_->move(std::clamp(p.x()+16,0,std::max(0,width()-dragDimension_->width())),
-                                 std::clamp(p.y()-36,0,std::max(0,height()-dragDimension_->height())));
-            dragDimension_->show();
+            showCommandControls(p);
             emit statusMessage(tr("Rotation: %1 degrees").arg(degrees,0,'f',1));
         }
     } else if (draggingFace_) {
@@ -2038,6 +2090,14 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
         const double requested = snapping
             ? std::round(rawDistance / snapStepMm_) * snapStepMm_
             : rawDistance;
+        if (commandSession_) {
+            dragDistance_ = requested;
+            previewCommand(requested);
+            dragDimension_->setText(QLocale().toString(requested,'f',2));
+            showCommandControls(p);
+            previous_ = p;
+            return;
+        }
         if (primitivePullDragging_) {
             if (std::abs(requested-dragDistance_) > 0.0001 && applyPrimitivePull(requested)) {
                 dragDistance_ = requested;
@@ -2056,39 +2116,15 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
             previous_ = p;
             return;
         }
-        if (groupMoveDragging_) {
-            if (std::abs(requested - dragDistance_) > 0.0001) {
-                dragDistance_ = requested;
-                applyGroupMove(requested);
-                showDragDimension(p);
-                emit statusMessage(tr("Group Move: %1 mm").arg(requested, 0, 'f', 1));
-            }
-            previous_ = p;
-            return;
-        }
         auto min = dragMin_;
         auto max = dragMaxBounds_;
-        if (dragMovesPart_) {
-            const double delta = (dragMax_ ? 1.0 : -1.0) * requested;
-            min[dragAxis_] += delta;
-            max[dragAxis_] += delta;
-        } else if (dragMax_) max[dragAxis_] += requested;
+        if (dragMax_) max[dragAxis_] += requested;
         else min[dragAxis_] -= requested;
         if (max[dragAxis_] - min[dragAxis_] > 0.001
             && std::abs(requested - dragDistance_) > 0.0001) {
             dragDistance_ = requested;
-            if (dragMovesPart_ && boxes_[dragIndex_].geometryKind == CadPart::GeometryKind::GeneralBRep) {
-                const gp_Vec localDelta(min[0] - dragMin_[0],
-                    min[1] - dragMin_[1], min[2] - dragMin_[2]);
-                gp_Trsf shift;
-                shift.SetTranslation(localDelta);
-                applyPartState(dragIndex_, min, max, dragBeforeOrientation_ * shift);
-            } else {
-                applyBoxBounds(dragIndex_, min, max);
-            }
-            emit statusMessage(tr("%1: %2 mm")
-                .arg(dragMovesPart_ ? tr("Move Part") : tr("Pull Face"))
-                .arg(dragDistance_, 0, 'f', 1));
+            applyBoxBounds(dragIndex_, min, max);
+            emit statusMessage(tr("Pull Face: %1 mm").arg(dragDistance_, 0, 'f', 1));
             showDragDimension(p);
         }
     } else if (rotating_) view_->Rotation(p.x(), p.y());
@@ -2098,29 +2134,14 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
 }
 void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     if (e->button() == Qt::MiddleButton) { rotating_ = false; panning_ = false; }
-    if (e->button() == Qt::LeftButton && draggingRotation_) {
-        draggingRotation_ = false;
-        if (std::abs(rotationAngle_) < 0.0001) { dragDimension_->hide(); return; }
-        if (groupRotationDragging_) {
-            groupRotationDragging_ = false;
-            PullChange group = groupRotationBefore_.front();
-            group.groupedChanges = groupRotationBefore_;
-            for (auto& item : group.groupedChanges)
-                item.afterOrientation = boxes_[item.partIndex].orientation;
-            undoStack_.push_back(group);
-            groupRotationEditing_ = true;
-        } else {
-            const auto& part = boxes_[rotationIndex_];
-            undoStack_.push_back({rotationIndex_,part.min,part.max,part.min,part.max,
-                                  rotationBefore_,part.orientation});
-        }
-        redoStack_.clear();
-        rotationEditing_ = true;
-        updateRotationRings();
-        dragDimension_->setText(QLocale().toString(rotationAngle_,'f',2));
-        dragDimension_->setFocus();
-        dragDimension_->selectAll();
-        emit statusMessage(tr("Enter exact angle, or Esc to keep rotation."));
+    if (e->button()==Qt::LeftButton && commandSession_) {
+        draggingFace_ = draggingRotation_ = false;
+        groupRotationDragging_ = false;
+        showCommandControls(e->pos());
+        dragDimension_->setText(QLocale().toString(commandSession_->value,'f',2));
+        commandPanel_->activateWindow();
+        dragDimension_->setFocus(); dragDimension_->selectAll();
+        emit statusMessage(tr("Preview: enter an exact value; OK/Enter confirms, Cancel/Esc discards."));
         return;
     }
     if (e->button() != Qt::LeftButton || !draggingFace_) return;
@@ -2172,38 +2193,16 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
         emit statusMessage(tr("Multi-Face Pull: enter exact mm or Esc to keep."));
         return;
     }
-    if (groupMoveDragging_) {
-        groupMoveDragging_ = false;
-        if (std::abs(dragDistance_) < 0.0001) { dragDimension_->hide(); return; }
-        PullChange group = groupMoveBefore_.front();
-        group.groupedChanges = groupMoveBefore_;
-        for (auto& item : group.groupedChanges) {
-            item.afterMin = boxes_[item.partIndex].min;
-            item.afterMax = boxes_[item.partIndex].max;
-            item.afterOrientation = boxes_[item.partIndex].orientation;
-        }
-        undoStack_.push_back(group);
-        redoStack_.clear();
-        groupMoveEditing_ = true;
-        dimensionEditing_ = true;
-        showDragDimension(e->pos());
-        dragDimension_->setFocus();
-        dragDimension_->selectAll();
-        emit statusMessage(tr("Group moved. Enter exact mm or Esc to keep."));
-        return;
-    }
     if (std::abs(dragDistance_) < 0.0001) { dragDimension_->hide(); return; }
     const auto& part = boxes_[dragIndex_];
     undoStack_.push_back({dragIndex_, dragMin_, dragMaxBounds_, part.min, part.max,
-        dragMovesPart_ && part.geometryKind == CadPart::GeometryKind::GeneralBRep
-            ? dragBeforeOrientation_ : part.orientation, part.orientation});
+        part.orientation, part.orientation});
     redoStack_.clear();
     dimensionEditing_ = true;
     showDragDimension(e->pos());
     dragDimension_->setFocus();
     dragDimension_->selectAll();
-    emit statusMessage(tr("%1: %2 mm. Type exact mm and press Enter, or Esc to keep.")
-        .arg(dragMovesPart_ ? tr("Move Part") : tr("Pull Face"))
+    emit statusMessage(tr("Pull Face: %1 mm. Type exact mm and press Enter, or Esc to keep.")
         .arg(dragDistance_, 0, 'f', 1));
 }
 void CadViewport::wheelEvent(QWheelEvent* e) {
