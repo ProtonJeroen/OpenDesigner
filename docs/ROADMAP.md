@@ -15,3 +15,8 @@
 - GLB/glTF and FBX import/export
 
 OpenDesigner targets Windows, Linux and macOS. This roadmap describes planned work, not finished features.
+
+## v0.20 — primitive Pull
+- Sphere creation and interactive Pull with absolute diameters are implemented on the sphere feature branch.
+- Sphere and cylinder Pull show and accept absolute diameters or cylinder heights, preserving local centers, opposite caps, instance transforms and undo/redo.
+- Optional viewport regression tests and manual verification steps: [Sphere Pull](SPHERE_PULL.md).

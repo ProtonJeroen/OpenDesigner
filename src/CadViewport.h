@@ -48,6 +48,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent*) override;
     void wheelEvent(QWheelEvent*) override;
 private:
+    friend struct CadViewportPullTest;
     struct CadPart {
         enum class GeometryKind { Box, GeneralBRep };
         GeometryKind geometryKind = GeometryKind::Box;
@@ -61,6 +62,8 @@ private:
         std::array<double, 3> baseMax{};
         gp_Trsf orientation;
         bool cylinderPrimitive = false;
+        bool spherePrimitive = false;
+        double sphereRadius = 0.0;
         double cylinderRadius = 0.0;
         double cylinderHeight = 0.0;
         double cylinderBaseOffset = 0.0;
@@ -81,7 +84,7 @@ private:
     void applyPartState(size_t index, const std::array<double, 3>& min,
                         const std::array<double, 3>& max, const gp_Trsf& orientation);
     void applyGroupMove(double distance);
-    bool applyCylinderPull(double distance);
+    bool applyPrimitivePull(double distance);
     void restorePullChange(const PullChange& change, bool after);
     bool prepareMultiFaceDrag();
     bool applyMultiFaceDrag(double distance);
@@ -94,6 +97,8 @@ private:
     bool beginArrowDrag(const QPoint& origin);
     void updateFaceArrow();
     void hideFaceArrow();
+    bool primitivePullIsDiameter() const;
+    QString primitivePullDimensionText() const;
     void showDragDimension(const QPoint& position);
     void initializeViewer();
     void updateRotationRings();
@@ -117,11 +122,11 @@ private:
     bool arrowMax_ = true;
     bool arrowVisible_ = false;
     bool cylinderRadialArrow_ = false;
-    gp_Pnt cylinderArrowOrigin_;
-    gp_Dir cylinderArrowDirection_ = gp_Dir(1,0,0);
-    bool cylinderPullDragging_ = false;
-    bool cylinderPullEditing_ = false;
-    PullChange cylinderPullBefore_;
+    gp_Pnt primitiveArrowOrigin_;
+    gp_Dir primitiveArrowDirection_ = gp_Dir(1,0,0);
+    bool primitivePullDragging_ = false;
+    bool primitivePullEditing_ = false;
+    PullChange primitivePullBefore_;
 
     std::vector<CadPart> boxes_;
     std::vector<size_t> selectedPartIndices_;
