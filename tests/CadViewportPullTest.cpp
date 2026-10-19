@@ -1,5 +1,11 @@
 #include "CadViewport.h"
 #include <QApplication>
+#include <QComboBox>
+#include <QDialog>
+#include <QDoubleSpinBox>
+#include <QTimer>
+#include <BRepPrimAPI_MakeCone.hxx>
+#include <StdSelect_BRepOwner.hxx>
 #include <QLineEdit>
 #include <QLocale>
 #include <QMouseEvent>
@@ -727,6 +733,102 @@ struct CadViewportPullTest {
         checkDisplayedGizmos(v,average,true);
     }
 
+    static void runRotation(CadViewport& v) {
+        v.addBox(); v.addCylinder(); v.addSphere(); v.addCone();
+        // A non-primitive B-Rep with a shape location as well as an instance transform.
+        v.addCone();
+        auto& general = v.boxes_[4];
+        general.conePrimitive = false;
+        gp_Trsf location;
+        location.SetTranslation(gp_Vec(17,-9,23));
+        general.shape = BRepPrimAPI_MakeCone(35,0,90).Shape().Moved(TopLoc_Location(location));
+        general.presentation->SetShape(general.shape);
+        v.addBox(); v.selectParts({5}); v.duplicateSelectedParts();
+        require(v.applyBoolean(CadViewport::BooleanOperation::Subtract,{5,6},5),
+                "rotation Boolean fixture failed");
+        const size_t result = v.boxes_.size()-1;
+        const auto compare = [&](const gp_Trsf& a, const gp_Trsf& b) {
+            for (int row=1; row<=3; ++row)
+                for (int col=1; col<=4; ++col)
+                    near(a.Value(row,col),b.Value(row,col),"rotation transforms differ");
+        };
+        for (const auto indices : {std::vector<size_t>{0}, {1}, {2}, {3}, {4}, {result}, {0,3,result}}) {
+            for (bool transformed : {false,true}) {
+                for (const auto i : indices) {
+                    gp_Trsf orientation, translation;
+                    if (transformed) {
+                        orientation.SetRotation(gp_Ax1(gp_Pnt(0,0,0),gp_Dir(0,0,1)),std::acos(-1.0)/2);
+                        translation.SetTranslation(gp_Vec(45,-27,19));
+                        orientation = translation*orientation;
+                    }
+                    v.applyPartState(i,v.boxes_[i].min,v.boxes_[i].max,orientation);
+                }
+                v.setRotateMode(true); v.selectParts(indices);
+                std::vector<gp_Trsf> before, expected;
+                gp_XYZ sum(0,0,0);
+                for (auto i : indices) {
+                    before.push_back(v.boxes_[i].orientation);
+                    sum += center(v,i).XYZ();
+                }
+                const gp_Pnt pivot(sum / double(indices.size()));
+                near(v.rotationCenter(indices).Distance(pivot),0,"incorrect world pivot");
+                // Drive the gizmo angle/release/exact editor path with its drag-start state.
+                v.rotationIndex_ = indices.front(); v.rotationAxis_ = 0;
+                v.rotationBefore_ = before.front();
+                v.groupRotationDragging_ = indices.size()>1;
+                v.groupRotationEditing_ = false;
+                v.groupRotationCenter_ = pivot;
+                v.groupRotationDirection_ = gp_Dir(1,0,0).Transformed(before.front());
+                v.groupRotationBefore_.clear();
+                for (auto i : indices) {
+                    const auto& p = v.boxes_[i];
+                    v.groupRotationBefore_.push_back({i,p.min,p.max,p.min,p.max,p.orientation,p.orientation});
+                }
+                gp_Trsf rotation;
+                rotation.SetRotation(gp_Ax1(pivot,gp_Dir(1,0,0).Transformed(before.front())),37*std::acos(-1.0)/180);
+                v.draggingRotation_ = true;
+                v.applyRotationAngle(37);
+                for (size_t n=0; n<indices.size(); ++n) {
+                    expected.push_back(rotation*before[n]);
+                    compare(v.boxes_[indices[n]].orientation,expected.back());
+                }
+                QMouseEvent releaseEvent(QEvent::MouseButtonRelease,QPointF(10,10),QPointF(10,10),
+                                         Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+                v.mouseReleaseEvent(&releaseEvent); exact(v,37);
+                v.undoPull();
+                for (size_t n=0;n<indices.size();++n) compare(v.boxes_[indices[n]].orientation,before[n]);
+                v.redoPull();
+                for (size_t n=0;n<indices.size();++n) compare(v.boxes_[indices[n]].orientation,expected[n]);
+                v.undoPull(); v.selectParts(indices);
+                if (indices.size()==1 && !transformed) {
+                    // Keep the established face-preselection entry to the menu covered.
+                    v.selectedPartIndices_.clear();
+                    v.context_->ClearSelected(Standard_False);
+                    TopExp_Explorer faces(v.boxes_[indices.front()].shape,TopAbs_FACE);
+                    Handle(StdSelect_BRepOwner) owner = new StdSelect_BRepOwner(
+                        faces.Current(),v.boxes_[indices.front()].presentation,5,Standard_True);
+                    v.context_->AddOrRemoveSelected(owner,Standard_False);
+                }
+                // Local X is world Y after the existing quarter-turn around Z.
+                QTimer::singleShot(0,[transformed]() {
+                    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                    require(dialog,"Rotate dialog missing");
+                    dialog->findChild<QComboBox*>()->setCurrentIndex(transformed ? 1 : 0);
+                    dialog->findChild<QDoubleSpinBox*>()->setValue(37);
+                    dialog->accept();
+                });
+                v.rotateSelectedPart();
+                if (indices.size()==1 && !transformed)
+                    require(v.context_->NbSelected()==0,"stale face selection after rotation");
+                for (size_t n=0;n<indices.size();++n) compare(v.boxes_[indices[n]].orientation,expected[n]);
+                v.undoPull();
+                for (size_t n=0;n<indices.size();++n) compare(v.boxes_[indices[n]].orientation,before[n]);
+                v.redoPull();
+                for (size_t n=0;n<indices.size();++n) compare(v.boxes_[indices[n]].orientation,expected[n]);
+            }
+        }
+    }
+
     static gp_Pnt capCenter(const CadViewport& v, size_t index, bool top) {
         const auto& part = v.boxes_[index];
         return gp_Pnt((part.baseMin[0]+part.baseMax[0])*0.5,
@@ -765,7 +867,9 @@ int main(int argc, char** argv) {
     viewport.show();
     app.processEvents();
     try {
-        if (app.arguments().contains(QStringLiteral("--gizmo")))
+        if (app.arguments().contains(QStringLiteral("--rotation")))
+            CadViewportPullTest::runRotation(viewport);
+        else if (app.arguments().contains(QStringLiteral("--gizmo")))
             CadViewportPullTest::runGizmo(viewport);
         else if (app.arguments().contains(QStringLiteral("--cone")))
             CadViewportPullTest::runCone(viewport);
