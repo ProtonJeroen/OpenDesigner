@@ -2,31 +2,57 @@
 
 ## Workflow
 
-Select two or more parts with Alt+click in the viewport (Ctrl+Alt+click to add
-parts), Ctrl+click faces, or multi-select rows in the Structure Browser. Selected
-faces identify their owning parts; selecting several faces on one part still
-counts as one operand. Hidden browser-only selections remain excluded from the
-viewport operand set: show those parts first to include them in an interactive
-Boolean.
+Select one visible Part as **Target**, then right-click **Boolean > Unite,
+Subtract or Intersect**. The Modeling menu starts the same command session;
+without preselection, select a Target after starting it. With multiple selected
+parts, the first resolved operand becomes the initial Target and the others
+become Tools. Always inspect the displayed roles; **Choose Target** lets you
+change the Target explicitly.
 
-Choose **Modeling > Boolean**:
+The floating command panel displays the Target and each Tool with name and
+stable part number. After choosing a Target, click visible parts in the viewport
+to toggle them in the Tools list. Structure Browser multi-selection replaces the
+Tools list, excluding the Target; Ctrl selects/removes browser rows. The panel's
+**Remove selected Tools** button also removes tools without leaving the session.
+The Target cannot simultaneously be a Tool. Hidden or inactive parts are never
+accepted by the interactive operand selector. Operand picking during this session is Parts; ordinary operand clicks do not
+terminate it. After OK/Cancel, normal Face/Alt-Part picking resumes.
 
-- **Unite** combines all selected solids using `BRepAlgoAPI_Fuse`.
-- **Subtract...** opens a dialog. Explicitly choose one selected part as the
-  **Target** to keep; the dialog lists all other selected parts as the **Tools**.
-  Select the intended target and tools before opening the dialog. OK is disabled
-  until a target is chosen. Cancel leaves the model unchanged. The tools are
-  subtracted sequentially using `BRepAlgoAPI_Cut`.
-- **Intersect** retains the volume common to every selected solid using
-  `BRepAlgoAPI_Common`.
+**Keep Tools** is off by default. **Preview** computes a temporary orange,
+transparent result over the original operands. Original parts remain visible and
+pickable, so tools can still be added/removed; changing operands or Keep Tools
+invalidates the previous preview. **OK/Enter** computes and validates the current
+candidate and commits exactly one history entry. **Cancel/Esc**, closing the panel,
+selecting a different modeling tool discards the session without
+changing document geometry or creating history. Esc/Enter also work while the
+Structure Browser has focus. Computation is synchronous on the UI thread.
 
-The operands can be Box, Cylinder, Sphere, Cone or existing GeneralBRep parts,
-including earlier Boolean results and parts containing multiple solids. Complete
-instance transforms are applied before the operation. The result is one new
-GeneralBRep part in world coordinates, with an identity instance transform,
-selected automatically. Its initial color comes from the first operand, or the
-explicit target for Subtract. Source rows disappear from the browser only after
-the operation succeeds.
+- **Unite** combines Target and Tools using `BRepAlgoAPI_Fuse`.
+- **Subtract** computes **Target minus Tools**, sequentially using `BRepAlgoAPI_Cut`.
+- **Intersect** retains their common volume using `BRepAlgoAPI_Common`.
+
+The operands can be Box, Cylinder, Sphere, Cone or GeneralBRep parts, including
+earlier Boolean results and parts containing multiple solids. Complete instance
+transforms are applied before the operation. Preview, interactive confirmation
+and the direct geometry API share one kernel calculation and validation path.
+
+### Result and Keep Tools policy
+
+The result is one new GeneralBRep part in world coordinates with identity
+instance transform, a generated operation name and the **Target's color**. It is
+selected after confirmation. Stable slots are never renumbered:
+
+- **Keep Tools off:** Target and all Tools become inactive; one new result slot
+  replaces the operands, retaining the existing replacement semantics.
+- **Keep Tools on:** only the Target becomes inactive; one new result slot
+  replaces it. Every Tool retains its original slot/identity, B-Rep, transform,
+  name, color, visibility and Structure Browser reference. The Target's old ID
+  is retained as an inactive history source, rather than reassigned to new topology.
+
+Undo restores consumed source snapshots and previous part selection. Redo uses
+the cached result and the same result ID. Kept Tools are never removed or
+restored by this command. Preview and cancellation create no rows or part slots,
+and do not clear an existing Redo stack.
 
 Move/Rotate gizmos work on the result and use its B-Rep volume centroid. Use the
 Structure Browser to rename it, hide/show it, or choose **Color...** from its
@@ -104,22 +130,26 @@ with Xvfb and software OpenGL can use `xvfb-run -a ctest --test-dir build
 two and three operands, multiple cutting tools, all existing primitives,
 GeneralBRep result reuse, transformed operands, cached Redo, mixed transform and
 Boolean history, hidden source restoration, chained operations, selection from
-browser rows and face owners, explicit target selection/cancel, result color,
+browser rows and face owners, explicit Target/Tools sessions, Keep Tools on/off, preview/cancel, result color,
 visibility and duplication, stable browser IDs, invalid inputs and empty/no-op
 results. The three existing Pull/Cone/gizmo tests remain enabled.
 
 ## Manual smoke test
 
-1. Create a Box and duplicate it with Ctrl+D. The default 25 mm offset gives an
-   overlap. Multi-select the pair in the browser and choose Unite. Check that
-   only the result row remains. Undo and Redo, then Undo again.
-2. Choose Subtract. Verify OK is initially disabled, choose either part as the
-   target, inspect the tools list and confirm. Undo and choose the other target:
-   the opposite end should remain.
-3. Undo, select both parts and choose Intersect. Only the overlapping portion
-   should remain. Verify undo/redo, browser selection and visibility.
-4. Repeat with moved/rotated primitives and with an earlier Boolean result.
-   Move, rotate, rename, recolor, hide/show and duplicate a result.
-5. Try disjoint parts, touching-only parts, a complete subtraction and an
-   insufficient selection. Errors must preserve sources and the undo history;
-   disjoint Unite should produce one part containing disconnected solids.
+1. Create a Box and duplicate it with Ctrl+D. Select only the original; start
+   Subtract from its viewport context menu. Verify the Target label and empty
+   Tools list. Click the duplicate, Preview and Cancel/Esc. Geometry, metadata,
+   browser references and history must be unchanged.
+2. Repeat; add/remove Tools with viewport clicks, browser Ctrl-selection and the
+   list's Remove button. Change Target. Verify Target minus Tools and inspect
+   the preview before OK. Undo and Redo should each take one step.
+3. Repeat all three operations with Keep Tools off and on. With Keep Tools on,
+   only Target is replaced; verify tool names, colors, visibility, transforms and
+   browser IDs through Undo/Redo.
+4. Start from the Modeling menu with no selection. Select Target, then Tools.
+   Test Enter/Esc with focus in the viewport, command panel and Structure Browser.
+5. Repeat using transformed primitives, GeneralBRep and an earlier Boolean result.
+   Try disjoint Intersect, complete Subtract, hidden parts and no-op Subtract.
+   Invalid previews must leave original geometry and history unchanged.
+6. Start Move or Rotate, preview a change, then start Boolean. The transform must
+   cancel first. Cancel Boolean and verify the original selection and geometry.

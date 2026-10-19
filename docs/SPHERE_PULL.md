@@ -1,15 +1,16 @@
 # Sphere Pull (v0.20)
 
-Create a sphere with **Modeling > Create Sphere**. Disable Interactive Move Part,
-Direct Move Part and Interactive Rotate Part (including Combined Transform Gizmo)
-to use Pull. Click the sphere's surface to display its orange radial arrow.
+Create a sphere with **Modeling > Create Sphere**. Select its surface, then
+explicitly choose **Primitive Pull / Resize** from its context or Modeling menu
+to display the orange radial arrow. Selection alone is passive (v0.3.3).
 Drag outwards to enlarge it or inwards to shrink it. The field continuously
 shows the new **absolute diameter**, for example `Ø 100,00 mm` on a Dutch system.
 After releasing, that diameter remains displayed. Type the desired final
 diameter and press Enter: `100,00` sets a 100 mm diameter (50 mm radius),
 regardless of the starting size or how far the arrow was dragged. Both a plain
 number and the complete displayed `Ø … mm` text are accepted. Use the system
-locale's decimal separator. Esc keeps the dragged result.
+locale's decimal separator. OK/Enter confirms one Undo step and closes the tool; Cancel/Esc restores the
+original and closes it. All arrows disappear after either outcome.
 
 Cylinder side-wall Pull uses the same absolute diameter display and input.
 Pulling either cylinder cap shows and accepts the **absolute final height**,
@@ -40,8 +41,7 @@ parts still use the existing behavior and are not undoable commands.
    Check Undo Modeling and Redo Modeling.
 2. Enter a zero or negative diameter. The last valid geometry must remain and
    the field must stay editable.
-3. Move and rotate the sphere with the existing transform gizmos. Disable those
-   modes, select its surface and repeat Pull and undo/redo.
+3. Move and rotate the sphere with the existing transform gizmos. Select its surface, explicitly start Resize and repeat Pull and undo/redo.
 4. Duplicate the edited sphere with Ctrl+D, move the copy clear of the original
    and resize it. The original must remain unchanged.
 5. Repeat with a sphere created after other parts, so its local center is away

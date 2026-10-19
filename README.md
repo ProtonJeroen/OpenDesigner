@@ -2,7 +2,7 @@
 
 OpenDesigner is an open-source cross-platform 3D direct-modeling application inspired by classic CoCreate SolidDesigner.
 
-**Status:** v0.3.2 Command Sessions & Preview prototype; not a packaged release.
+**Status:** v0.3.3 General Move Face prototype; not a packaged release.
 
 ## Prototype features
 - Qt 6 desktop window with dockable Structure Browser
@@ -10,6 +10,8 @@ OpenDesigner is an open-source cross-platform 3D direct-modeling application ins
 - Box, Cylinder, Sphere and Cone primitives with direct Pull and exact dimensions
 - Move/Rotate gizmos centered on B-Rep volume centroids, selection and duplication
 - Interactive Move/Rotate preview with OK/Enter, Cancel/Esc and one shared Undo/Redo step
+- General Move Face for supported planar faces, with validated B-Rep preview and Undo/Redo
+- Passive Face/Alt-Part selection and capability-aware viewport context menus
 - Unite, explicit-target Subtract and Intersect with validated results and Undo/Redo
 - Structure Browser with names, color, visibility and stable Boolean result selection
 - Orbit, pan and zoom
@@ -38,4 +40,15 @@ integration tests with `-DOPENDESIGNER_BUILD_TESTS=ON`, build, then run
 Rotation behavior, regression coverage and manual checks: [Consistent rotation pivot](docs/ROTATION_PIVOT.md).
 The repository also includes an original [SolidDesigner 16 workflow analysis](docs/SOLIDDESIGNER16_WORKFLOWS.md), without proprietary manual assets.
 
-Interactive transformation workflow and architecture: [Command sessions and preview](docs/COMMAND_SESSIONS.md). Primitive Pull and Booleans retain their current confirmation behavior.
+Interactive transformation workflow and architecture: [Command sessions and preview](docs/COMMAND_SESSIONS.md). Booleans now share the preview lifecycle with explicit Target/Tools and optional Keep Tools. Primitive Pull / Resize now also requires explicit activation and OK/Enter; Cancel/Esc restores the original.
+
+Supported surfaces, direct-edit behavior and limitations: [General Move Face](docs/MOVE_FACE.md).
+
+Selection shortcuts, explicit context actions and eligibility: [Selection and context menus](docs/SELECTION_CONTEXT.md).
+
+The v0.3.3 interaction workflow uses passive selection: click Faces, Alt+click Parts,
+Ctrl to add/remove. Choose a context or Modeling action to show its manipulators.
+OK/Enter and Cancel/Esc completely close the function and remove all temporary UI;
+selection remains available for another explicit command. There is no selection
+mode dropdown or combined Move/Rotate gizmo. Boolean Target/Tools and Keep Tools
+retain their explicit preview workflow.

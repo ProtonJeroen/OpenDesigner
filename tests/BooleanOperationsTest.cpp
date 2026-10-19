@@ -2,6 +2,9 @@
 #include "MainWindow.h"
 #include <QApplication>
 #include <QAction>
+#include <QCheckBox>
+#include <QKeyEvent>
+#include <QPushButton>
 #include <QComboBox>
 #include <QDialog>
 #include <QLineEdit>
@@ -103,7 +106,7 @@ struct BooleanOperationsTest {
         Fixture f; auto& v=*f.viewport; overlap(f);
         f.tree->clearSelection(); f.row(0)->setSelected(true); f.row(1)->setSelected(true);
         require(v.selectedBooleanParts()==std::vector<size_t>({0,1}),"browser selection not usable for Boolean");
-        f.action(QStringLiteral("Unite"))->trigger(); checkResult(v,2,600000);
+        f.action(QStringLiteral("Unite"))->trigger(); v.confirmCommandSession(); checkResult(v,2,600000);
         v.undoPull();
         // A face selection is resolved to its owning part, without a part-mode requirement.
         v.selectedPartIndices_.clear(); v.context_->ClearSelected(Standard_False);
@@ -115,27 +118,18 @@ struct BooleanOperationsTest {
             v.context_->AddOrRemoveSelected(owner,Standard_False);
         }
         require(v.selectedBooleanParts().size()==2,"viewport face selection not resolved");
-        f.action(QStringLiteral("Intersect"))->trigger(); checkResult(v,3,360000);
+        f.action(QStringLiteral("Intersect"))->trigger(); v.confirmCommandSession(); checkResult(v,3,360000);
         v.undoPull();
-        bool explicitChoice=false;
-        QTimer::singleShot(0,[&]() {
-            auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());
-            if (!dialog) return;
-            auto* combo=dialog->findChild<QComboBox*>();
-            explicitChoice=combo && combo->currentIndex()==-1;
-            if (combo) combo->setCurrentIndex(1);
-            dialog->accept();
-        });
         f.action(QStringLiteral("Subtract..."))->trigger();
-        require(explicitChoice,"Subtract did not require an explicit target");
+        require(v.commandSession_ && v.commandSession_->target.has_value(),"Subtract missing explicit Target");
+        v.commandSession_->chooseTarget=true; v.selectBooleanParts({1},true);
+        v.selectParts({0});
+        v.confirmCommandSession();
         checkResult(v,4,120000);
         near(center(v,4).X(),112.5,"Subtract used the wrong target");
         v.undoPull();
         const auto slotCount=v.boxes_.size(), history=v.undoStack_.size();
-        QTimer::singleShot(0,[]() {
-            if (auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget())) dialog->reject();
-        });
-        v.subtractSelectedParts();
+        v.subtractSelectedParts(); v.cancelCommandSession();
         require(v.boxes_.size()==slotCount && v.undoStack_.size()==history && active(v)==2,"cancel changed the document");
         QMouseEvent background(QEvent::MouseButtonPress,QPointF(-20,-20),QPointF(-20,-20),
                                Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
@@ -302,7 +296,8 @@ struct BooleanOperationsTest {
         v.previewCommand(23); checkRows();
         // Switching to Boolean discards the unconfirmed rotation before computing operands.
         v.uniteSelectedParts();
-        require(!v.commandSession_,"Boolean kept pending transform session");
+        require(v.commandSession_ && v.commandSession_->kind==CadViewport::CommandSession::Kind::Boolean,"Boolean session missing");
+        v.confirmCommandSession();
         require(v.undoStack_.size()==1,"Boolean committed the pending transform");
         checkResult(v,2,600000);
         v.undoPull(); checkRows(3);
@@ -310,8 +305,53 @@ struct BooleanOperationsTest {
         near(center(v,0).Distance(gp_Pnt(50,40,30)),0,"Boolean switch retained preview transform");
         v.redoPull(); checkResult(v,2,600000);
     }
+    static void booleanSessions() {
+        for(bool keep:{false,true}) {
+            Fixture f; auto& v=*f.viewport; overlap(f);
+            v.renamePart(1,"Cutter"); v.setPartColor(1,Qt::blue);
+            const auto toolShape=v.boxes_[1].shape; const auto toolTransform=v.boxes_[1].orientation;
+            v.selectParts({0}); v.subtractSelectedParts();
+            require(v.commandSession_ && v.commandSession_->target==0 && v.commandSession_->tools.empty(),"single Target start failed");
+            // Structure Browser route must keep the session alive and allow removal.
+            f.tree->clearSelection(); f.row(1)->setSelected(true);
+            require(v.commandSession_->tools==std::vector<size_t>{1},"browser tool capture failed");
+            f.row(1)->setSelected(false); require(v.commandSession_->tools.empty(),"browser tool removal failed");
+            v.fitAll(); Standard_Integer x,y; v.view_->Convert(112,40,60,x,y);
+            QMouseEvent toolClick(QEvent::MouseButtonPress,QPointF(x,y),QPointF(x,y),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+            v.mousePressEvent(&toolClick); require(v.commandSession_->tools==std::vector<size_t>{1},"viewport tool capture failed");
+            v.mousePressEvent(&toolClick); require(v.commandSession_->tools.empty(),"viewport tool toggle failed");
+            v.mousePressEvent(&toolClick);
+            auto* keepBox=v.commandPanel_->findChild<QCheckBox*>("booleanKeepTools");
+            require(keepBox && !keepBox->isChecked(),"Keep Tools default must be off"); keepBox->setChecked(keep);
+            require(v.previewBooleanSession(),"Boolean preview failed");
+            require(v.boxes_.size()==2 && active(v)==2 && v.undoStack_.empty(),"preview mutated document");
+            QKeyEvent escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier); QApplication::sendEvent(f.tree,&escape);
+            require(!v.commandSession_ && v.dragDimension_->parentWidget()==&v,"Esc did not cancel Boolean/restore legacy Pull editor");
+            require(active(v)==2 && v.undoStack_.empty() && v.selectedPartIndices_==std::vector<size_t>{0},"cancel changed document/selection");
+            v.subtractSelectedParts(); v.selectBooleanParts({1},true); v.commandSession_->keepTools=keep;
+            QKeyEvent enter(QEvent::KeyPress,Qt::Key_Return,Qt::NoModifier); QApplication::sendEvent(f.tree,&enter);
+            require(!v.commandSession_,"Enter in Structure Browser did not confirm Boolean");
+            require(v.undoStack_.size()==1 && active(v)==(keep?2:1),"Boolean history or Keep Tools wrong");
+            require(v.isPartActive(1)==keep,"Keep Tools consumed wrong parts");
+            if(keep) require(v.boxes_[1].orientation.TranslationPart().IsEqual(toolTransform.TranslationPart(),1.e-10) && v.isPartVisible(1) && !f.row(1)->isHidden() && f.row(1)->data(0,Qt::UserRole).toULongLong()==1 && v.boxes_[1].shape.IsSame(toolShape) && v.partName(1)=="Cutter" && v.partColor(1)==QColor(Qt::blue),"kept tool properties changed");
+            v.undoPull(); require(active(v)==2 && v.partName(1)=="Cutter" && v.partColor(1)==QColor(Qt::blue),"Boolean undo lost metadata");
+            v.redoPull(); require(active(v)==(keep?2:1),"Boolean redo failed");
+            v.undoPull(); v.selectParts({}); v.intersectSelectedParts();
+            require(!v.commandSession_->target,"targetless command did not request Target");
+            v.selectBooleanParts({0},true); v.selectBooleanParts({1},true);
+            require(v.previewBooleanSession(),"interactive Target/Tools preview failed"); v.cancelCommandSession();
+            v.setPartVisible(1,false); v.selectParts({0}); v.uniteSelectedParts(); v.selectBooleanParts({1},true);
+            require(v.commandSession_->tools.empty() && !v.previewBooleanSession(),"hidden tool accepted"); v.cancelCommandSession();
+            v.setPartVisible(1,true); v.applyBoxBounds(1,{-100,-100,-100},{200,200,200});
+            v.selectParts({0}); const auto redo=v.redoStack_.size();
+            v.subtractSelectedParts(); v.selectBooleanParts({1},true);
+            require(!v.previewBooleanSession(),"empty subtraction preview accepted"); v.confirmCommandSession();
+            require(v.commandSession_ && active(v)==2 && v.undoStack_.empty(),"invalid OK changed document");
+            v.cancelCommandSession(); require(v.redoStack_.size()==redo,"invalid preview/Cancel cleared Redo");
+        }
+    }
     static void run() {
-        basicOperations(); selectionAndDialog(); transformedOperands(); allPrimitives();
+        booleanSessions(); basicOperations(); selectionAndDialog(); transformedOperands(); allPrimitives();
         failuresAndHistory(); generalBRepOperands(); hiddenAndMixedUndo(); sessionBrowserAndBoolean();
     }
 };

@@ -10,8 +10,8 @@ Choose **Modeling > Create Cone** to create a closed Open CASCADE B-Rep with:
 
 ## Editing
 
-Disable Interactive Move Part, Direct Move Part and Interactive Rotate Part
-(including Combined Transform Gizmo), then click any cone face. Four orange
+Select a cone face and explicitly choose **Primitive Pull / Resize** from its
+context or Modeling menu. Selection alone shows no arrows (v0.3.3). Four orange
 arrows appear:
 
 - The radial arrow at the lower end changes the bottom diameter.
@@ -25,8 +25,8 @@ Both the complete displayed dimension and a plain number are accepted. Display
 and input use the system locale and two decimal places. For example, entering
 `100,50` on a diameter arrow sets a 100.50 mm diameter, not a diameter change.
 The displayed dimension updates during dragging and is retained on release.
-Clicking and releasing an arrow without moving also opens exact input. Esc
-keeps the dragged result. Existing face snapping applies to arrow travel;
+Clicking and releasing an arrow without moving also opens exact input. OK/Enter confirms one Undo step and closes the function. Cancel/Esc restores
+the original geometry and closes it; all arrows disappear. Existing face snapping applies to arrow travel;
 Shift bypasses snapping, and typed final dimensions are not snapped.
 
 Set the top diameter to **0 mm** for a pointed cone. Its top-diameter arrow
@@ -36,8 +36,8 @@ Diameter changes preserve the end centers and height. Height changes preserve
 the opposite end plane, both diameters and the instance transform.
 
 Use the existing part selection, Structure Browser, transform gizmos and Ctrl+D
-for moving, rotating and duplicating cones. After transforming a cone, disable
-transform modes and click its surface to return to Pull. A copied cone retains
+for moving, rotating and duplicating cones. After transforming a cone, select its surface and explicitly choose Resize
+to return to Pull. A copied cone retains
 its dimensions and is independently editable.
 
 ## Implementation and limits
