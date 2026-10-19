@@ -16,7 +16,7 @@ int main(int argc, char* argv[]) {
 #endif
     QApplication app(argc, argv);
     QCoreApplication::setApplicationName("OpenDesigner");
-    QCoreApplication::setApplicationVersion("0.1.0");
+    QCoreApplication::setApplicationVersion("0.3.0");
     MainWindow window;
     window.show();
     return app.exec();

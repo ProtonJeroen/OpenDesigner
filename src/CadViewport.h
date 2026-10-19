@@ -1,6 +1,9 @@
 #pragma once
 #include <QWidget>
 #include <QPoint>
+#include <QColor>
+#include <memory>
+#include <optional>
 class QLineEdit;
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
@@ -21,6 +24,17 @@ public:
     void addSphere();
     void addCone();
     void duplicateSelectedParts();
+    enum class BooleanOperation { Unite, Subtract, Intersect };
+    void uniteSelectedParts();
+    void subtractSelectedParts();
+    void intersectSelectedParts();
+    bool applyBoolean(BooleanOperation operation, const std::vector<size_t>& parts,
+                      std::optional<size_t> target = std::nullopt);
+    bool isPartActive(size_t index) const;
+    QString partName(size_t index) const;
+    void renamePart(size_t index, const QString& name);
+    QColor partColor(size_t index) const;
+    void setPartColor(size_t index, const QColor& color);
     void fitAll();
     void pullSelectedFace();
     void movePartAlongSelectedFace();
@@ -38,6 +52,7 @@ public:
     void fitSelection(const std::vector<size_t>& indices);
 signals:
     void partCreated(const QString& name);
+    void partsChanged();
     void partSelectionChanged(const std::vector<size_t>& indices);
     void statusMessage(const QString& message);
 protected:
@@ -50,6 +65,7 @@ protected:
     void wheelEvent(QWheelEvent*) override;
 private:
     friend struct CadViewportPullTest;
+    friend struct BooleanOperationsTest;
     struct ConeParameters {
         double bottomRadius = 40.0;
         double topRadius = 20.0;
@@ -78,6 +94,16 @@ private:
         double cylinderHeight = 0.0;
         double cylinderBaseOffset = 0.0;
         bool visible = true;
+        bool active = true;
+        QString name;
+        QColor color = QColor(211,211,211);
+    };
+    struct BooleanChange {
+        std::vector<size_t> sources;
+        std::vector<CadPart> sourceStates;
+        size_t resultIndex;
+        CadPart resultState;
+        std::vector<size_t> beforeSelection;
     };
     struct PullChange {
         size_t partIndex;
@@ -90,7 +116,12 @@ private:
         double beforeBaseOffset = 0.0, afterBaseOffset = 0.0;
         ConeParameters beforeCone, afterCone;
         std::vector<PullChange> groupedChanges;
+        std::shared_ptr<BooleanChange> booleanChange;
     };
+    void announcePartCreated(const QString& name);
+    std::vector<size_t> selectedBooleanParts() const;
+    void restoreBooleanChange(const BooleanChange& change, bool after);
+    void finishModelingInteraction();
     gp_Pnt partLocalCenter(const CadPart& part) const;
     gp_Pnt partLocalGizmoCenter(const CadPart& part) const;
     void applyPartState(size_t index, const std::array<double, 3>& min,

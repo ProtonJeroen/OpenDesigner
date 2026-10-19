@@ -7,6 +7,7 @@
 #include <QHeaderView>
 #include <QBrush>
 #include <QColor>
+#include <QColorDialog>
 #include <QDockWidget>
 #include <QMenuBar>
 #include <QToolBar>
@@ -17,7 +18,7 @@
 #include <QActionGroup>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.20 (prototype)");
+    setWindowTitle("OpenDesigner 0.3 — Boolean Operations (prototype)");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     setCentralWidget(viewport_);
@@ -54,6 +55,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(sphereAction, &QAction::triggered, viewport_, &CadViewport::addSphere);
     auto* coneAction = model->addAction(tr("Create C&one"));
     connect(coneAction, &QAction::triggered, viewport_, &CadViewport::addCone);
+    auto* booleanMenu = model->addMenu(tr("&Boolean"));
+    connect(booleanMenu->addAction(tr("&Unite")),&QAction::triggered,viewport_,&CadViewport::uniteSelectedParts);
+    connect(booleanMenu->addAction(tr("&Subtract...")),&QAction::triggered,viewport_,&CadViewport::subtractSelectedParts);
+    connect(booleanMenu->addAction(tr("&Intersect")),&QAction::triggered,viewport_,&CadViewport::intersectSelectedParts);
     auto* duplicateAction = model->addAction(tr("&Duplicate Selected Parts"));
     duplicateAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
     connect(duplicateAction, &QAction::triggered, viewport_, &CadViewport::duplicateSelectedParts);
@@ -113,7 +118,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.19 — Duplicate Parts prototype."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.3 — Boolean Operations prototype."));
     });
     auto* toolbar = addToolBar(tr("Modeling"));
     toolbar->addAction(boxAction);
@@ -130,12 +135,33 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     toolbar->addAction(undoAction);
     toolbar->addAction(redoAction);
     connect(viewport_, &CadViewport::partCreated, this, [this, root](const QString& name) {
+        const QSignalBlocker blocker(structure_);
         auto* item = new QTreeWidgetItem(root, QStringList{name});
         item->setData(0, Qt::UserRole, root->childCount() - 1);
         item->setFlags(item->flags() | Qt::ItemIsEditable);
         item->setText(1, QStringLiteral("👁"));
         root->setExpanded(true);
         statusBar()->showMessage(name + tr(" created"), 3000);
+    });
+    // Rows retain their stable slot IDs. Boolean-consumed parts and undone
+    // results are hidden rather than renumbering other browser references.
+    connect(viewport_, &CadViewport::partsChanged, this, [this,root]() {
+        const QSignalBlocker blocker(structure_);
+        for (int i = 0; i < root->childCount(); ++i) {
+            auto* item = root->child(i);
+            const size_t index = item->data(0,Qt::UserRole).toULongLong();
+            const bool active = viewport_->isPartActive(index);
+            item->setHidden(!active);
+            if (!active) { item->setSelected(false); continue; }
+            item->setText(0,viewport_->partName(index));
+            const bool visible = viewport_->isPartVisible(index);
+            item->setText(1,visible ? QStringLiteral("👁") : QStringLiteral("—"));
+            item->setForeground(0,visible ? QBrush() : QBrush(QColor(Qt::gray)));
+        }
+    });
+    connect(structure_, &QTreeWidget::itemChanged, this, [this,root](QTreeWidgetItem* item,int column) {
+        if (column == 0 && item->parent() == root)
+            viewport_->renamePart(item->data(0,Qt::UserRole).toULongLong(),item->text(0));
     });
     connect(structure_, &QTreeWidget::itemSelectionChanged, this, [this, root]() {
         std::vector<size_t> visibleIndices;
@@ -193,6 +219,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         auto* select = menu.addAction(tr("Select"));
         auto* rename = menu.addAction(tr("Rename (F2)"));
         auto* duplicate = menu.addAction(tr("Duplicate Selected Parts"));
+        auto* color = menu.addAction(tr("Color..."));
         menu.addSeparator();
         auto* hide = menu.addAction(targets.size() > 1 ? tr("Hide Selected Parts") : tr("Hide"));
         auto* show = menu.addAction(targets.size() > 1 ? tr("Show Selected Parts") : tr("Show"));
@@ -210,6 +237,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             }
             viewport_->selectParts(indices);
             viewport_->duplicateSelectedParts();
+        } else if (chosen == color) {
+            const QColor selected = QColorDialog::getColor(viewport_->partColor(index),this,tr("Part Color"));
+            if (selected.isValid())
+                for (auto* target : targets)
+                    viewport_->setPartColor(target->data(0,Qt::UserRole).toULongLong(),selected);
         } else if (chosen == rename) {
             structure_->setCurrentItem(item, 0);
             structure_->editItem(item, 0);
