@@ -15,6 +15,9 @@ The menu accepts a selected face, a part, or a group of parts; a group rotation
 is one Undo Modeling step. The angle dialog and gizmo exact-angle editor retain
 the existing controls and units.
 
+For interactive preview and confirmation behavior from v0.3.2 onward, see
+[Command sessions](COMMAND_SESSIONS.md). The pivot and axis conventions above remain in effect.
+
 ## Automated verification
 
 ```sh

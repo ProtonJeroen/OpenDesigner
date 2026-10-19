@@ -2,13 +2,14 @@
 
 OpenDesigner is an open-source cross-platform 3D direct-modeling application inspired by classic CoCreate SolidDesigner.
 
-**Status:** v0.3.1 consistent rotation pivot prototype; not a packaged release.
+**Status:** v0.3.2 Command Sessions & Preview prototype; not a packaged release.
 
 ## Prototype features
 - Qt 6 desktop window with dockable Structure Browser
 - Open CASCADE B-Rep viewport
 - Box, Cylinder, Sphere and Cone primitives with direct Pull and exact dimensions
 - Move/Rotate gizmos centered on B-Rep volume centroids, selection and duplication
+- Interactive Move/Rotate preview with OK/Enter, Cancel/Esc and one shared Undo/Redo step
 - Unite, explicit-target Subtract and Intersect with validated results and Undo/Redo
 - Structure Browser with names, color, visibility and stable Boolean result selection
 - Orbit, pan and zoom
@@ -36,3 +37,5 @@ integration tests with `-DOPENDESIGNER_BUILD_TESTS=ON`, build, then run
 
 Rotation behavior, regression coverage and manual checks: [Consistent rotation pivot](docs/ROTATION_PIVOT.md).
 The repository also includes an original [SolidDesigner 16 workflow analysis](docs/SOLIDDESIGNER16_WORKFLOWS.md), without proprietary manual assets.
+
+Interactive transformation workflow and architecture: [Command sessions and preview](docs/COMMAND_SESSIONS.md). Primitive Pull and Booleans retain their current confirmation behavior.

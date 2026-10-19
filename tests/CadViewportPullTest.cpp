@@ -4,6 +4,9 @@
 #include <QDialog>
 #include <QDoubleSpinBox>
 #include <QTimer>
+#include <QDialogButtonBox>
+#include <QPushButton>
+#include <QKeyEvent>
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <QLineEdit>
@@ -776,21 +779,17 @@ struct CadViewportPullTest {
                 v.rotationIndex_ = indices.front(); v.rotationAxis_ = 0;
                 v.rotationBefore_ = before.front();
                 v.groupRotationDragging_ = indices.size()>1;
-                v.groupRotationEditing_ = false;
                 v.groupRotationCenter_ = pivot;
-                v.groupRotationDirection_ = gp_Dir(1,0,0).Transformed(before.front());
-                v.groupRotationBefore_.clear();
-                for (auto i : indices) {
-                    const auto& p = v.boxes_[i];
-                    v.groupRotationBefore_.push_back({i,p.min,p.max,p.min,p.max,p.orientation,p.orientation});
-                }
                 gp_Trsf rotation;
                 rotation.SetRotation(gp_Ax1(pivot,gp_Dir(1,0,0).Transformed(before.front())),37*std::acos(-1.0)/180);
                 v.draggingRotation_ = true;
+                v.beginCommandSession(CadViewport::CommandSession::Kind::Rotate,indices,
+                    gp_Dir(1,0,0).Transformed(before.front()),pivot);
                 v.applyRotationAngle(37);
                 for (size_t n=0; n<indices.size(); ++n) {
                     expected.push_back(rotation*before[n]);
-                    compare(v.boxes_[indices[n]].orientation,expected.back());
+                    compare(v.boxes_[indices[n]].orientation,before[n]);
+                    compare(v.boxes_[indices[n]].presentation->LocalTransformation(),expected.back());
                 }
                 QMouseEvent releaseEvent(QEvent::MouseButtonRelease,QPointF(10,10),QPointF(10,10),
                                          Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
@@ -827,6 +826,177 @@ struct CadViewportPullTest {
                 for (size_t n=0;n<indices.size();++n) compare(v.boxes_[indices[n]].orientation,expected[n]);
             }
         }
+    }
+
+    static void runSessions(CadViewport& v) {
+        using Kind = CadViewport::CommandSession::Kind;
+        using State = CadViewport::CommandSession::State;
+        v.addBox(); v.addCone();
+        const auto sameTransform = [](const gp_Trsf& a, const gp_Trsf& b) {
+            for (int r=1;r<=3;++r) for (int c=1;c<=4;++c)
+                near(a.Value(r,c),b.Value(r,c),"session transform mismatch");
+        };
+        const auto owners = [&]() {
+            std::vector<Handle(SelectMgr_EntityOwner)> result;
+            for (v.context_->InitSelected();v.context_->MoreSelected();v.context_->NextSelected())
+                result.push_back(v.context_->SelectedOwner());
+            return result;
+        };
+        for (auto kind : {Kind::Move,Kind::Rotate}) {
+            for (bool group : {false,true}) {
+                for (bool transformed : {false,true}) {
+                    const std::vector<size_t> indices = group ? std::vector<size_t>{0,1} : std::vector<size_t>{1};
+                    v.cancelCommandSession();
+                    for (auto i : indices) {
+                        gp_Trsf rotation, shift;
+                        if (transformed) {
+                            rotation.SetRotation(gp_Ax1(gp_Pnt(7,-2,11),gp_Dir(1,2,3)),0.63);
+                            shift.SetTranslation(gp_Vec(32,-17,24));
+                        }
+                        v.applyPartState(i,v.boxes_[i].min,v.boxes_[i].max,shift*rotation);
+                    }
+                    v.setDirectMoveMode(kind==Kind::Move); v.setRotateMode(kind==Kind::Rotate);
+                    v.selectParts(indices);
+                    const auto original = v.boxes_;
+                    const auto selection = owners();
+                    const auto undoSize = v.undoStack_.size(), redoSize = v.redoStack_.size();
+                    const gp_Pnt pivot = v.rotationCenter(indices);
+                    const gp_Dir direction = gp_Dir(1,0,0).Transformed(original[indices.front()].orientation);
+                    const auto unchanged = [&]() {
+                        for (auto i : indices) {
+                            require(v.boxes_[i].shape.IsSame(original[i].shape),"preview replaced canonical B-Rep");
+                            require(v.boxes_[i].min==original[i].min && v.boxes_[i].max==original[i].max,
+                                    "preview changed bounds metadata");
+                            sameTransform(v.boxes_[i].orientation,original[i].orientation);
+                        }
+                        require(v.selectedPartIndices_==indices && owners()==selection,"session changed selection");
+                        require(v.undoStack_.size()==undoSize && v.redoStack_.size()==redoSize,
+                                "preview or cancellation changed history");
+                    };
+                    const auto start = [&]() {
+                        v.beginCommandSession(kind,indices,direction,pivot);
+                        require(v.commandSession_->state==State::Parameters,"missing parameter state");
+                        require(v.commandButtons_->isVisible(),"missing OK/Cancel controls");
+                        v.previewCommand(12);
+                        v.previewCommand(27.5);
+                        require(v.commandSession_->state==State::Preview,"missing preview state");
+                        unchanged();
+                        gp_Trsf delta;
+                        if (kind==Kind::Move) delta.SetTranslation(gp_Vec(direction)*27.5);
+                        else delta.SetRotation(gp_Ax1(pivot,direction),27.5*std::acos(-1.0)/180);
+                        for (auto i : indices)
+                            sameTransform(v.boxes_[i].presentation->LocalTransformation(),delta*original[i].orientation);
+                        // Releasing the pointer keeps a preview and creates no history entry.
+                        v.draggingFace_ = kind==Kind::Move; v.draggingRotation_ = kind==Kind::Rotate;
+                        QMouseEvent releaseEvent(QEvent::MouseButtonRelease,QPointF(200,200),QPointF(200,200),
+                                                 Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+                        v.mouseReleaseEvent(&releaseEvent);
+                        unchanged();
+                        return delta;
+                    };
+                    start();
+                    v.dragDimension_->setText(QLocale().toString(29.75,'f',2));
+                    require(QMetaObject::invokeMethod(v.dragDimension_,"textEdited",Qt::DirectConnection,
+                        Q_ARG(QString,v.dragDimension_->text())),"could not edit preview parameter");
+                    near(v.commandSession_->value,29.75,"numeric edit did not refresh preview");
+                    unchanged();
+                    v.commandButtons_->button(QDialogButtonBox::Cancel)->click();
+                    require(!v.commandSession_,"Cancel left session active"); unchanged();
+                    for (auto i : indices) sameTransform(v.boxes_[i].presentation->LocalTransformation(),original[i].orientation);
+                    start();
+                    v.setMovePartMode(!v.movePartMode_);
+                    require(!v.commandSession_,"tool change left preview active"); unchanged();
+                    start();
+                    v.dragDimension_->setText(QStringLiteral("invalid"));
+                    v.commandButtons_->button(QDialogButtonBox::Ok)->click();
+                    require(v.commandSession_.has_value(),"invalid input committed a command"); unchanged();
+                    v.cancelCommandSession();
+                    start();
+                    v.commandPanel_->close();
+                    require(!v.commandSession_,"closing preview controls left a pending command"); unchanged();
+                    v.beginCommandSession(kind,indices,direction,pivot);
+                    v.commandButtons_->button(QDialogButtonBox::Ok)->click();
+                    require(!v.commandSession_,"zero command left a session active"); unchanged();
+                    const auto delta = start();
+                    v.commandButtons_->button(QDialogButtonBox::Ok)->click();
+                    require(!v.commandSession_,"OK left session active");
+                    require(v.undoStack_.size()==undoSize+1 && v.redoStack_.empty(),"confirmation is not one history entry");
+                    for (auto i : indices) {
+                        sameTransform(v.boxes_[i].orientation,delta*original[i].orientation);
+                        require(v.boxes_[i].shape.IsSame(original[i].shape),"transform rebuilt canonical shape");
+                    }
+                    v.confirmCommandSession();
+                    require(v.undoStack_.size()==undoSize+1,"double confirmation duplicated undo");
+                    v.undoPull();
+                    for (auto i : indices) sameTransform(v.boxes_[i].orientation,original[i].orientation);
+                    v.redoPull();
+                    for (auto i : indices) sameTransform(v.boxes_[i].orientation,delta*original[i].orientation);
+                    v.undoPull(); // Leave a redo entry: cancellation must preserve it.
+                }
+            }
+        }
+        // Real pointer startup and keyboard controls, with a face-owner snapshot.
+        v.setMovePartMode(false); v.setDirectMoveMode(true); v.setRotateMode(false);
+        v.selectParts({0}); v.fitAll();
+        const auto before = v.boxes_[0];
+        const size_t undoSize = v.undoStack_.size();
+        const auto origin = center(v,0);
+        const auto axis = gp_Dir(1,0,0).Transformed(before.orientation);
+        const auto grab = project(v,origin.Translated(gp_Vec(axis)*25));
+        require(v.beginMoveAxisDrag(grab),"session move gizmo startup failed");
+        dragBy(v,grab,25);
+        require(v.commandSession_ && v.commandSession_->value!=0,"pointer did not update preview");
+        sameTransform(v.boxes_[0].orientation,before.orientation);
+        v.dragDimension_->setFocus(); QApplication::processEvents();
+        QKeyEvent escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier);
+        QApplication::sendEvent(v.dragDimension_,&escape);
+        require(!v.commandSession_,"Escape did not cancel preview");
+        sameTransform(v.boxes_[0].presentation->LocalTransformation(),before.orientation);
+        require(v.undoStack_.size()==undoSize,"Escape added history");
+        // A pending session also cancels when another transform tool is selected.
+        require(v.beginMoveAxisDrag(grab),"second move startup failed"); dragBy(v,grab,15);
+        v.setRotateMode(true);
+        require(!v.commandSession_,"Move-to-Rotate kept a pending preview");
+        sameTransform(v.boxes_[0].presentation->LocalTransformation(),before.orientation);
+        v.setDirectMoveMode(false);
+        const auto y = gp_Dir(0,1,0).Transformed(before.orientation);
+        const double radius = 0.65*std::max({before.max[0]-before.min[0],before.max[1]-before.min[1],before.max[2]-before.min[2]});
+        const gp_Circ ring(gp_Ax2(origin,y,axis),radius);
+        require(v.beginRotationDrag(project(v,ElCLib::Value(0.7,ring))),"session rotate gizmo startup failed");
+        v.applyRotationAngle(31);
+        sameTransform(v.boxes_[0].orientation,before.orientation);
+        v.dragDimension_->setText(QLocale().toString(31.0,'f',2));
+        v.dragDimension_->setFocus(); QApplication::processEvents();
+        QKeyEvent enter(QEvent::KeyPress,Qt::Key_Return,Qt::NoModifier);
+        QApplication::sendEvent(v.dragDimension_,&enter);
+        require(!v.commandSession_,"Enter did not confirm preview");
+        require(v.undoStack_.size()==undoSize+1,"Enter did not add exactly one command");
+
+        // Face owners survive preview/cancel unchanged, rather than being regenerated.
+        v.setRotateMode(false); v.setDirectMoveMode(false); v.selectParts({});
+        TopExp_Explorer faces(v.boxes_[0].shape,TopAbs_FACE);
+        Handle(StdSelect_BRepOwner) face = new StdSelect_BRepOwner(faces.Current(),v.boxes_[0].presentation,5,Standard_True);
+        v.context_->AddOrRemoveSelected(face,Standard_False);
+        const auto faceSelection = owners();
+        v.beginCommandSession(Kind::Move,{0},gp_Dir(1,0,0)); v.previewCommand(14);
+        v.cancelCommandSession();
+        require(owners()==faceSelection && v.selectedPartIndices_.empty(),"Cancel lost original face owner");
+        // The lower face's orange Move arrow retains its outward direction.
+        v.setMovePartMode(true);
+        v.arrowPartIndex_=0; v.arrowAxis_=2; v.arrowMax_=false; v.arrowVisible_=true;
+        v.updateFaceArrow();
+        const auto lowerBefore = v.boxes_[0];
+        const gp_Pnt lower((lowerBefore.min[0]+lowerBefore.max[0])*0.5,
+                           (lowerBefore.min[1]+lowerBefore.max[1])*0.5,lowerBefore.min[2]);
+        const auto lowerGrab = project(v,lower.Translated(gp_Vec(0,0,-15)).Transformed(lowerBefore.orientation));
+        require(v.beginArrowDrag(lowerGrab),"lower Move arrow startup failed");
+        dragBy(v,lowerGrab,18);
+        sameTransform(v.boxes_[0].orientation,lowerBefore.orientation);
+        exact(v,18);
+        gp_Trsf lowerShift;
+        lowerShift.SetTranslation(gp_Vec(0,0,-18).Transformed(lowerBefore.orientation));
+        sameTransform(v.boxes_[0].orientation,lowerShift*lowerBefore.orientation);
+        v.undoPull(); sameTransform(v.boxes_[0].orientation,lowerBefore.orientation);
     }
 
     static gp_Pnt capCenter(const CadViewport& v, size_t index, bool top) {
@@ -867,7 +1037,9 @@ int main(int argc, char** argv) {
     viewport.show();
     app.processEvents();
     try {
-        if (app.arguments().contains(QStringLiteral("--rotation")))
+        if (app.arguments().contains(QStringLiteral("--sessions")))
+            CadViewportPullTest::runSessions(viewport);
+        else if (app.arguments().contains(QStringLiteral("--rotation")))
             CadViewportPullTest::runRotation(viewport);
         else if (app.arguments().contains(QStringLiteral("--gizmo")))
             CadViewportPullTest::runGizmo(viewport);

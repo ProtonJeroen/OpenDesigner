@@ -109,12 +109,15 @@ std::vector<size_t> CadViewport::selectedBooleanParts() const {
     return result;
 }
 void CadViewport::uniteSelectedParts() {
+    cancelCommandSession();
     applyBoolean(BooleanOperation::Unite,selectedBooleanParts());
 }
 void CadViewport::intersectSelectedParts() {
+    cancelCommandSession();
     applyBoolean(BooleanOperation::Intersect,selectedBooleanParts());
 }
 void CadViewport::subtractSelectedParts() {
+    cancelCommandSession();
     const auto selected = selectedBooleanParts();
     if (selected.size() < 2) {
         emit statusMessage(tr("Subtract: select a target and at least one tool first."));
@@ -150,17 +153,19 @@ void CadViewport::subtractSelectedParts() {
         applyBoolean(BooleanOperation::Subtract,selected,selected[static_cast<size_t>(target.currentIndex())]);
 }
 void CadViewport::finishModelingInteraction() {
+    cancelCommandSession();
     dragDimension_->hide();
-    dimensionEditing_ = rotationEditing_ = primitivePullEditing_ = false;
-    multiFaceEditing_ = groupMoveEditing_ = groupRotationEditing_ = false;
+    dimensionEditing_ = primitivePullEditing_ = false;
+    multiFaceEditing_ = false;
     draggingFace_ = draggingRotation_ = primitivePullDragging_ = false;
-    multiFaceDragging_ = groupMoveDragging_ = groupRotationDragging_ = false;
+    multiFaceDragging_ = groupRotationDragging_ = false;
     multiFaceParts_.clear();
     clearMultiFaceHighlight();
     hideFaceArrow(); hideMoveAxes(); hideRotationRings();
 }
 bool CadViewport::applyBoolean(BooleanOperation operation, const std::vector<size_t>& parts,
                                std::optional<size_t> target) {
+    cancelCommandSession();
     const QString name = operation == BooleanOperation::Unite ? tr("Unite")
         : operation == BooleanOperation::Subtract ? tr("Subtract") : tr("Intersect");
     const auto fail = [&](const QString& reason) {
