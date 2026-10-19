@@ -27,3 +27,13 @@ OpenDesigner targets Windows, Linux and macOS. This roadmap describes planned wo
 - Cone parameters survive transforms, duplication and Pull undo/redo. Equal diameters remain editable through a cylinder B-Rep.
 - Transform gizmos use the current B-Rep volume centroid, including after Pull and undo/redo; multipart pivots retain unweighted averaging.
 - Regression coverage and manual checks: [Create Cone and Pull](CONE_PULL.md).
+
+
+## v0.3 — Boolean Operations
+- Modeling > Boolean provides Unite, Subtract and Intersect for primitives and GeneralBRep solids in world coordinates.
+- Subtract explicitly selects a target and lists the remaining selected parts as tools.
+- Validated results replace sources transactionally; cached Boolean commands share the modeling undo/redo history.
+- Stable inactive part slots synchronize browser rows and selection across Boolean undo/redo without renumbering IDs.
+- Results support transforms, color, visibility, duplication and further Booleans; multi-solid disjoint unions are supported.
+- Automated checks and manual smoke steps: [Boolean Operations](BOOLEAN_OPERATIONS.md).
+- Follow-up: general face-offset editing, history compaction, persistent IDs and cancellable background operations.

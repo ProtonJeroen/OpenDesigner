@@ -375,7 +375,7 @@ void CadViewport::addBox() {
         Standard_False);
     boxes_.push_back(part);
     ++partCount_;
-    emit partCreated(QString("Part %1").arg(partCount_));
+    announcePartCreated(QString("Part %1").arg(partCount_));
     fitAll();
 }
 void CadViewport::addCylinder() {
@@ -404,7 +404,7 @@ void CadViewport::addCylinder() {
         Standard_False);
     boxes_.push_back(part);
     ++partCount_;
-    emit partCreated(QString("Cylinder %1").arg(partCount_));
+    announcePartCreated(QString("Cylinder %1").arg(partCount_));
     fitAll();
 }
 void CadViewport::addSphere() {
@@ -428,7 +428,7 @@ void CadViewport::addSphere() {
     context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
     boxes_.push_back(part);
     ++partCount_;
-    emit partCreated(QString("Sphere %1").arg(partCount_));
+    announcePartCreated(QString("Sphere %1").arg(partCount_));
     fitAll();
 }
 void CadViewport::addCone() {
@@ -451,7 +451,7 @@ void CadViewport::addCone() {
     context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
     boxes_.push_back(part);
     ++partCount_;
-    emit partCreated(QString("Cone %1").arg(partCount_));
+    announcePartCreated(QString("Cone %1").arg(partCount_));
     fitAll();
 }
 void CadViewport::duplicateSelectedParts() {
@@ -478,7 +478,7 @@ void CadViewport::duplicateSelectedParts() {
     std::vector<size_t> copies;
     constexpr double offsetMm = 25.0;
     for (const size_t index : sources) {
-        if (index >= boxes_.size() || !boxes_[index].visible) continue;
+        if (!isPartVisible(index)) continue;
         const CadPart original = boxes_[index];
         CadPart copy;
         copy.geometryKind = original.geometryKind;
@@ -486,6 +486,7 @@ void CadViewport::duplicateSelectedParts() {
         copy.spherePrimitive = original.spherePrimitive;
         copy.conePrimitive = original.conePrimitive;
         copy.cone = original.cone;
+        copy.color = original.color;
         copy.sphereRadius = original.sphereRadius;
         copy.cylinderRadius = original.cylinderRadius;
         copy.cylinderHeight = original.cylinderHeight;
@@ -504,7 +505,7 @@ void CadViewport::duplicateSelectedParts() {
         // TopoDS_Shape is reference-counted and can be shared across instances.
         copy.shape = original.shape;
         copy.presentation = new AIS_Shape(copy.shape);
-        copy.presentation->SetColor(Quantity_NOC_LIGHTGRAY);
+        copy.presentation->SetColor(Quantity_Color(copy.color.redF(),copy.color.greenF(),copy.color.blueF(),Quantity_TOC_RGB));
         copy.presentation->SetLocalTransformation(copy.orientation);
         context_->Display(copy.presentation, Standard_False);
         context_->SetDisplayMode(copy.presentation, AIS_Shaded, Standard_False);
@@ -515,7 +516,7 @@ void CadViewport::duplicateSelectedParts() {
         boxes_.push_back(copy);
         copies.push_back(boxes_.size() - 1);
         ++partCount_;
-        emit partCreated(QString("Part %1").arg(partCount_));
+        announcePartCreated(QString("Part %1").arg(partCount_));
     }
     if (copies.empty()) return;
     selectParts(copies);
@@ -760,7 +761,7 @@ gp_Pnt CadViewport::partLocalGizmoCenter(const CadPart& part) const {
 }
 void CadViewport::applyPartState(size_t index, const std::array<double, 3>& min,
                                  const std::array<double, 3>& max, const gp_Trsf& orientation) {
-    if (index >= boxes_.size()) return;
+    if (!isPartActive(index)) return;
     auto& part = boxes_[index];
     if (part.geometryKind == CadPart::GeometryKind::GeneralBRep) {
         // The caller supplies the complete target instance transform.
@@ -812,18 +813,15 @@ void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
     }
 }
 void CadViewport::undoPull() {
-    if (primitivePullEditing_) {
-        primitivePullEditing_ = false;
-        dimensionEditing_ = false;
-        dragDimension_->hide();
-    }
     if (undoStack_.empty()) {
         emit statusMessage(tr("Nothing to undo."));
         return;
     }
+    finishModelingInteraction();
     const PullChange change = undoStack_.back();
     undoStack_.pop_back();
-    if (!change.groupedChanges.empty()) {
+    if (change.booleanChange) restoreBooleanChange(*change.booleanChange,false);
+    else if (!change.groupedChanges.empty()) {
         batchingPartUpdates_ = true;
         for (const auto& item : change.groupedChanges)
             restorePullChange(item, false);
@@ -831,21 +829,18 @@ void CadViewport::undoPull() {
         refreshPartSelection();
     } else restorePullChange(change, false);
     redoStack_.push_back(change);
-    emit statusMessage(tr("Pull Face undone."));
+    emit statusMessage(tr("Modeling operation undone."));
 }
 void CadViewport::redoPull() {
-    if (primitivePullEditing_) {
-        primitivePullEditing_ = false;
-        dimensionEditing_ = false;
-        dragDimension_->hide();
-    }
     if (redoStack_.empty()) {
         emit statusMessage(tr("Nothing to redo."));
         return;
     }
+    finishModelingInteraction();
     const PullChange change = redoStack_.back();
     redoStack_.pop_back();
-    if (!change.groupedChanges.empty()) {
+    if (change.booleanChange) restoreBooleanChange(*change.booleanChange,true);
+    else if (!change.groupedChanges.empty()) {
         batchingPartUpdates_ = true;
         for (const auto& item : change.groupedChanges)
             restorePullChange(item, true);
@@ -853,7 +848,7 @@ void CadViewport::redoPull() {
         refreshPartSelection();
     } else restorePullChange(change, true);
     undoStack_.push_back(change);
-    emit statusMessage(tr("Pull Face redone."));
+    emit statusMessage(tr("Modeling operation redone."));
 }
 void CadViewport::fitAll() {
     if (!view_.IsNull()) { view_->FitAll(0.01, Standard_False); view_->ZFitAll(); view_->Redraw(); }
@@ -1218,7 +1213,7 @@ gp_Pnt CadViewport::selectionCenter() const {
     double x = 0, y = 0, z = 0;
     size_t count = 0;
     for (const size_t index : selectedPartIndices_) {
-        if (index >= boxes_.size()) continue;
+        if (!isPartActive(index)) continue;
         const auto& part = boxes_[index];
         const gp_Pnt p = partLocalGizmoCenter(part).Transformed(part.orientation);
         x += p.X(); y += p.Y(); z += p.Z(); ++count;
@@ -1226,9 +1221,9 @@ gp_Pnt CadViewport::selectionCenter() const {
     return count ? gp_Pnt(x/count, y/count, z/count) : gp_Pnt(0, 0, 0);
 }
 void CadViewport::setPartVisible(size_t index, bool visible) {
-    if (index >= boxes_.size()) return;
+    if (!isPartActive(index)) return;
     auto& part = boxes_[index];
-    if (part.visible == visible) return;
+    if (!part.active || part.visible == visible) return;
     part.visible = visible;
     if (!context_.IsNull()) {
         if (visible) {
@@ -1243,18 +1238,18 @@ void CadViewport::setPartVisible(size_t index, bool visible) {
     }
     std::vector<size_t> remaining;
     for (const auto selected : selectedPartIndices_)
-        if (selected < boxes_.size() && boxes_[selected].visible)
+        if (isPartVisible(selected))
             remaining.push_back(selected);
     selectParts(remaining);
 }
 bool CadViewport::isPartVisible(size_t index) const {
-    return index < boxes_.size() && boxes_[index].visible;
+    return isPartActive(index) && boxes_[index].visible;
 }
 void CadViewport::fitSelection(const std::vector<size_t>& indices) {
     if (view_.IsNull()) return;
     Bnd_Box bounds;
     for (const auto index : indices) {
-        if (index >= boxes_.size() || !boxes_[index].visible) continue;
+        if (!isPartVisible(index)) continue;
         const auto& part = boxes_[index];
         BRepBndLib::Add(part.presentation->Shape().Moved(TopLoc_Location(part.orientation)), bounds);
     }
@@ -1266,7 +1261,7 @@ void CadViewport::fitSelection(const std::vector<size_t>& indices) {
 void CadViewport::selectParts(const std::vector<size_t>& indices) {
     selectedPartIndices_.clear();
     for (const size_t index : indices) {
-        if (index < boxes_.size() && boxes_[index].visible &&
+        if (isPartVisible(index) &&
             std::find(selectedPartIndices_.begin(), selectedPartIndices_.end(), index)
                 == selectedPartIndices_.end())
             selectedPartIndices_.push_back(index);
@@ -1451,7 +1446,7 @@ void CadViewport::applyGroupMove(double distance) {
 }
 void CadViewport::updateMoveAxes() {
     hideMoveAxes();
-    if (!directMoveMode_ || moveIndex_ >= boxes_.size() || context_.IsNull()) return;
+    if (!directMoveMode_ || !isPartVisible(moveIndex_) || context_.IsNull()) return;
     const auto& part = boxes_[moveIndex_];
     const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter() : partLocalGizmoCenter(part).Transformed(part.orientation);
     for (int axis=0; axis<3; ++axis) {
@@ -1477,6 +1472,7 @@ void CadViewport::setTransformSelectionMode() {
     if (context_.IsNull()) return;
     const int mode = AIS_Shape::SelectionMode(TopAbs_FACE);
     for (auto& part : boxes_) {
+        if (!part.active || !part.visible) continue;
         context_->Deactivate(part.presentation);
         context_->Activate(part.presentation, mode, Standard_False);
     }
@@ -1496,7 +1492,7 @@ void CadViewport::setDirectMoveMode(bool enabled) {
         : tr("Move disabled. Selection preserved."));
 }
 bool CadViewport::beginMoveAxisDrag(const QPoint& point) {
-    if (!directMoveMode_ || moveIndex_>=boxes_.size() || view_.IsNull()) return false;
+    if (!directMoveMode_ || !isPartVisible(moveIndex_) || view_.IsNull()) return false;
     const auto& part=boxes_[moveIndex_];
     const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter()
         : partLocalGizmoCenter(part).Transformed(part.orientation);
@@ -1554,7 +1550,7 @@ void CadViewport::hideRotationRings() {
 }
 void CadViewport::updateRotationRings() {
     hideRotationRings();
-    if (!rotateMode_ || rotationIndex_ >= boxes_.size() || context_.IsNull()) return;
+    if (!rotateMode_ || !isPartVisible(rotationIndex_) || context_.IsNull()) return;
     const auto& part = boxes_[rotationIndex_];
     const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter()
         : partLocalGizmoCenter(part).Transformed(part.orientation);
@@ -1601,7 +1597,7 @@ void CadViewport::updateRotationRings() {
     view_->Redraw();
 }
 bool CadViewport::beginRotationDrag(const QPoint& point) {
-    if (!rotateMode_ || rotationIndex_ >= boxes_.size() || view_.IsNull()) return false;
+    if (!rotateMode_ || !isPartVisible(rotationIndex_) || view_.IsNull()) return false;
     const auto& part = boxes_[rotationIndex_];
     const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter()
         : partLocalGizmoCenter(part).Transformed(part.orientation);
@@ -1740,7 +1736,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             && beginArrowDrag(e->pos())) return;
         // Only reconfigure picking when actually selecting geometry.
         for (auto& part : boxes_) {
-            if (!part.visible) continue;
+            if (!part.active || !part.visible) continue;
             context_->Deactivate(part.presentation);
             context_->Activate(part.presentation,
                 partPicking ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE), Standard_False);
@@ -1807,6 +1803,13 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
         context_->SelectDetected(additiveSelection
             ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
         hideFaceArrow();
+        if (context_->NbSelected() == 0) {
+            // A background click must not leave former part IDs as Boolean
+            // operands after their visible selection has been cleared.
+            selectedPartIndices_.clear();
+            hideMoveAxes(); hideRotationRings();
+            emit partSelectionChanged(selectedPartIndices_);
+        }
         // For a general B-Rep in transform mode, a normal click should
         // select its whole part, just like Alt+click/Structure Browser.
         // This keeps both enabled gizmos visible immediately instead of
@@ -1951,6 +1954,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                         break;
                     }
                     cylinderRadialArrow_ = false;
+                    if (boxes_[i].geometryKind != CadPart::GeometryKind::Box && !movePartMode_) break;
                     if (surf.GetType() != GeomAbs_Plane) break;
                     const gp_Dir normal = surf.Plane().Axis().Direction();
                     const double components[3] = {normal.X(), normal.Y(), normal.Z()};
