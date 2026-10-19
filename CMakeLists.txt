@@ -22,7 +22,7 @@ target_include_directories(OpenDesigner PRIVATE ${OpenCASCADE_INCLUDE_DIR})
 
 # Do not link every OCCT toolkit (Draw, STEP, VTK, etc.) for a basic viewer.
 # Use only the libraries required by our current modeling and display code.
-target_link_libraries(OpenDesigner PRIVATE
+set(OPENDESIGNER_LIBRARIES
     Qt6::Widgets
     TKOpenGl
     TKV3d
@@ -38,7 +38,22 @@ target_link_libraries(OpenDesigner PRIVATE
     TKMath
     TKernel
 )
+target_link_libraries(OpenDesigner PRIVATE ${OPENDESIGNER_LIBRARIES})
 if(WIN32)
     set_target_properties(OpenDesigner PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()
 install(TARGETS OpenDesigner RUNTIME DESTINATION bin)
+
+# These integration tests need an X11/OpenGL display (or xvfb-run on Linux).
+option(OPENDESIGNER_BUILD_TESTS "Build viewport pull regression tests" OFF)
+if(OPENDESIGNER_BUILD_TESTS)
+    enable_testing()
+    add_executable(OpenDesignerPullTests
+        tests/CadViewportPullTest.cpp
+        src/CadViewport.h src/CadViewport.cpp
+    )
+    target_include_directories(OpenDesignerPullTests PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
+    target_link_libraries(OpenDesignerPullTests PRIVATE ${OPENDESIGNER_LIBRARIES})
+    add_test(NAME primitive-pull COMMAND OpenDesignerPullTests)
+    set_tests_properties(primitive-pull PROPERTIES TIMEOUT 60)
+endif()
