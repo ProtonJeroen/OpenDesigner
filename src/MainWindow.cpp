@@ -18,7 +18,7 @@
 #include <QActionGroup>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.3.2 — Command Sessions & Preview (prototype)");
+    setWindowTitle("OpenDesigner 0.3.3 — General Move Face (prototype)");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     setCentralWidget(viewport_);
@@ -62,32 +62,23 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* duplicateAction = model->addAction(tr("&Duplicate Selected Parts"));
     duplicateAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
     connect(duplicateAction, &QAction::triggered, viewport_, &CadViewport::duplicateSelectedParts);
-    auto* pullAction = model->addAction(tr("&Pull Face..."));
-    connect(pullAction, &QAction::triggered, viewport_, &CadViewport::pullSelectedFace);
+    auto* moveFaceAction = model->addAction(tr("Move Face"));
+    connect(moveFaceAction,&QAction::triggered,viewport_,&CadViewport::moveFace);
+    auto* pullAction = model->addAction(tr("Primitive Pull / Resize"));
+    connect(pullAction, &QAction::triggered, viewport_, &CadViewport::startPrimitivePull);
     auto* movePartAction = model->addAction(tr("Move &Part Along Face..."));
     connect(movePartAction, &QAction::triggered, viewport_, &CadViewport::movePartAlongSelectedFace);
     auto* rotatePartAction = model->addAction(tr("&Rotate Part..."));
     connect(rotatePartAction, &QAction::triggered, viewport_, &CadViewport::rotateSelectedPart);
-    auto* interactiveMove = model->addAction(tr("Interactive &Move Part Mode"));
+    auto* interactiveMove = model->addAction(tr("Interactive &Move Part Along Face"));
     interactiveMove->setCheckable(true);
     connect(interactiveMove, &QAction::toggled, viewport_, &CadViewport::setMovePartMode);
-    auto* interactiveRotate = model->addAction(tr("Interactive &Rotate Part Mode"));
+    auto* interactiveRotate = model->addAction(tr("Interactive &Rotate Part"));
     interactiveRotate->setCheckable(true);
     connect(interactiveRotate, &QAction::toggled, viewport_, &CadViewport::setRotateMode);
-    auto* directMove = model->addAction(tr("Direct Move Part Mode"));
+    auto* directMove = model->addAction(tr("Interactive Move Part"));
     directMove->setCheckable(true);
     connect(directMove, &QAction::toggled, viewport_, &CadViewport::setDirectMoveMode);
-    auto* transform = model->addAction(tr("Combined Transform Gizmo"));
-    transform->setCheckable(true);
-    connect(transform, &QAction::toggled, this, [this, directMove, interactiveRotate](bool enabled) {
-        if (enabled) {
-            directMove->setChecked(true);
-            interactiveRotate->setChecked(true);
-        } else {
-            directMove->setChecked(false);
-            interactiveRotate->setChecked(false);
-        }
-    });
     auto* angleMenu = model->addMenu(tr("Angle Snapping"));
     auto* angleGroup = new QActionGroup(this);
     angleGroup->setExclusive(true);
@@ -118,18 +109,22 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.3.2 — Command Sessions & Preview prototype."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.3.3 — General Move Face prototype."));
     });
     auto* toolbar = addToolBar(tr("Modeling"));
+    connect(viewport_,&CadViewport::transformModesChanged,this,[interactiveMove,directMove,interactiveRotate](bool faceNormal,bool move,bool rotate) {
+        const QSignalBlocker a(interactiveMove),b(directMove),c(interactiveRotate);
+        interactiveMove->setChecked(faceNormal);directMove->setChecked(move);interactiveRotate->setChecked(rotate);
+    });
     toolbar->addAction(boxAction);
     toolbar->addAction(duplicateAction);
     toolbar->addAction(pullAction);
+    toolbar->addAction(moveFaceAction);
     toolbar->addAction(movePartAction);
     toolbar->addAction(rotatePartAction);
     toolbar->addAction(interactiveMove);
     toolbar->addAction(interactiveRotate);
     toolbar->addAction(directMove);
-    toolbar->addAction(transform);
     toolbar->addAction(fitAction);
     toolbar->addSeparator();
     toolbar->addAction(undoAction);
@@ -259,5 +254,5 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(viewport_, &CadViewport::statusMessage, this, [this](const QString& msg) {
         statusBar()->showMessage(msg, 5000);
     });
-    statusBar()->showMessage(tr("Left: select face | Drag orange arrow: Pull Face / Move Part (toggle mode) | Shift during drag: free movement | Middle: orbit | Shift+middle: pan | Wheel: zoom"));
+    statusBar()->showMessage(tr("Selection: Faces / Parts | Right-click selected geometry: commands | Drag orange arrow: Pull Face / Move Part (toggle mode) | Shift during drag: free movement | Middle: orbit | Shift+middle: pan | Wheel: zoom"));
 }

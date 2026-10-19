@@ -48,5 +48,35 @@ OpenDesigner targets Windows, Linux and macOS. This roadmap describes planned wo
 - Interactive Move and Rotate, including groups, use temporary presentation transforms until OK/Enter.
 - Cancel/Esc and tool changes discard the preview and preserve original geometry, transforms and selection.
 - Confirmation adds one operation to the existing modeling history; cancellation preserves Undo/Redo.
-- Primitive Pull, Booleans and modal transform dialogs retain their current confirmation behavior.
+- At v0.3.2, Primitive Pull, Booleans and modal transform dialogs retain their confirmation behavior; Booleans migrate to sessions in v0.3.3.
 - Architecture, future adapters and verification: [Command sessions](COMMAND_SESSIONS.md).
+
+## v0.3.3 — General Move Face
+- Modeling > Move Face provides signed planar face offsets with a normal arrow and exact input.
+- OCCT intersection offsets rebuild adjacent plane/cylinder/cone boundaries; supported results are validated before confirmation.
+- Geometry previews share command sessions; direct edits retain stable part/browser IDs and use the existing Undo/Redo history.
+- Edited primitives become GeneralBRep; Undo restores their original primitive state.
+- Single-solid, single-wire and unchanged-topology scope, verification and manual checks: [Move Face](MOVE_FACE.md).
+- Follow-up: holes/cavities, topology transitions, blends/freeform, multiple faces and asynchronous calculation.
+
+### v0.3.3 — selection and context workflow
+- Passive Face/Alt-Part selection retains Ctrl and Ctrl+Alt controls; no selection dropdown or automatic manipulators.
+- Viewport context menus dispatch to existing Part operations, supported Move Face and primitive/multi-Box Pull.
+- Face selection stays explicit on GeneralBRep/Boolean geometry; incompatible Part tools are disabled and their previews cancelled.
+- Move Face and Primitive Pull share orange arrow styling; future face commands have an extension point without placeholder actions.
+- Capabilities, tests and manual checks: [Selection/context menus](SELECTION_CONTEXT.md).
+
+### v0.3.3 — tool compatibility and Boolean sessions
+- Selecting new geometry cancels incompatible previews and removes old manipulators.
+- Context/Modeling actions explicitly activate one tool; no combined Move/Rotate set. Normal picking always follows modifiers.
+- Boolean sessions start from one explicit Target or request one, capture editable Tools via viewport/browser, and provide Keep Tools (default off), Preview, OK/Enter and Cancel/Esc.
+- Preview shares existing OCCT validation and leaves document geometry intact. One confirmation creates one existing Boolean history entry; cancellation creates none.
+- Keep Tools preserves tool identities and properties; only Target is consumed into a new stable result slot. Cached Undo/Redo uses the existing chronological history.
+- Automated regression coverage includes selection/tool transitions, Target/Tools, both Keep Tools policies and metadata/browser/history preservation. Manual Fedora KDE retest pending.
+
+### v0.3.3 — explicit selection-driven lifecycle
+- Passive selection, ordinary right-click menus and optional default Face picking with no prior selection.
+- Central tool cleanup on OK/Enter, Cancel/Esc, tool changes, one-shot operations and Undo/Redo; no persistent last-used tool.
+- Explicit Primitive Pull / Resize now has rollback snapshots and deferred one-step history; existing geometry and absolute numeric dimensions are retained.
+- Pull still uses its live working B-Rep calculation during preview; immutable candidate extraction is a future architecture improvement.
+- Regression coverage for passive selection, explicit activation, complete termination and Boolean operand-selection exceptions. Fedora KDE retest pending.

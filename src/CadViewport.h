@@ -7,9 +7,12 @@
 class QLineEdit;
 class QDialogButtonBox;
 class QShortcut;
+class QMenu;
+class QContextMenuEvent;
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
 #include <TopoDS_Shape.hxx>
+#include <TopoDS_Face.hxx>
 #include <gp_Trsf.hxx>
 #include <V3d_Viewer.hxx>
 #include <V3d_View.hxx>
@@ -31,7 +34,7 @@ public:
     void subtractSelectedParts();
     void intersectSelectedParts();
     bool applyBoolean(BooleanOperation operation, const std::vector<size_t>& parts,
-                      std::optional<size_t> target = std::nullopt);
+                      std::optional<size_t> target = std::nullopt, bool keepTools = false);
     bool isPartActive(size_t index) const;
     QString partName(size_t index) const;
     void renamePart(size_t index, const QString& name);
@@ -39,6 +42,11 @@ public:
     void setPartColor(size_t index, const QColor& color);
     void fitAll();
     void pullSelectedFace();
+    void startPrimitivePull();
+    void moveFace();
+    enum class SelectionMode { Face, Part };
+    void setSelectionMode(SelectionMode mode);
+    SelectionMode selectionMode() const { return selectionMode_; }
     void movePartAlongSelectedFace();
     void rotateSelectedPart();
     void undoPull();
@@ -57,6 +65,8 @@ signals:
     void partsChanged();
     void partSelectionChanged(const std::vector<size_t>& indices);
     void statusMessage(const QString& message);
+    void selectionModeChanged(SelectionMode mode);
+    void transformModesChanged(bool faceNormalMove, bool move, bool rotate);
 protected:
     QPaintEngine* paintEngine() const override;
     void paintEvent(QPaintEvent*) override;
@@ -65,10 +75,27 @@ protected:
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
     void wheelEvent(QWheelEvent*) override;
+    void contextMenuEvent(QContextMenuEvent*) override;
     bool eventFilter(QObject*, QEvent*) override;
 private:
     friend struct CadViewportPullTest;
     friend struct BooleanOperationsTest;
+    friend struct MoveFaceTest;
+    friend struct SelectionContextTest;
+    struct SelectedFace { size_t partIndex; TopoDS_Face face; };
+    struct SelectionContext {
+        enum class Kind { None, Parts, Faces };
+        Kind kind = Kind::None;
+        std::vector<size_t> parts;
+        std::vector<SelectedFace> faces;
+    };
+    SelectionMode selectionMode_ = SelectionMode::Face;
+    SelectionContext selectionContext() const;
+    QMenu* createSelectionMenu(const QPoint& anchor);
+    void populatePartMenu(QMenu& menu, const SelectionContext& selection);
+    void populateFaceMenu(QMenu& menu, const SelectionContext& selection, const QPoint& anchor);
+    bool supportsResize(const SelectionContext& selection) const;
+    void updateSelectedFaceArrow(const QPoint& point);
     struct ConeParameters {
         double bottomRadius = 40.0;
         double topRadius = 20.0;
@@ -108,6 +135,7 @@ private:
         CadPart resultState;
         std::vector<size_t> beforeSelection;
     };
+    struct FaceChange { CadPart before, after; };
     struct PullChange {
         size_t partIndex;
         std::array<double, 3> beforeMin, beforeMax;
@@ -120,11 +148,12 @@ private:
         ConeParameters beforeCone, afterCone;
         std::vector<PullChange> groupedChanges;
         std::shared_ptr<BooleanChange> booleanChange;
+        std::shared_ptr<FaceChange> faceChange;
     };
     // Transaction state only: confirmed changes use the existing modeling history.
     struct CommandSession {
         enum class State { Selection, Parameters, Preview, Confirmed, Cancelled };
-        enum class Kind { Move, Rotate };
+        enum class Kind { Move, Rotate, MoveFace, Boolean, Pull };
         State state = State::Selection;
         Kind kind = Kind::Move;
         std::vector<PullChange> changes;
@@ -134,16 +163,31 @@ private:
         gp_Dir direction = gp_Dir(1,0,0);
         gp_Trsf delta;
         double value = 0;
+        TopoDS_Face face;
+        std::shared_ptr<CadPart> faceBefore;
+        TopoDS_Shape candidate;
+        Handle(AIS_Shape) preview;
+        bool valid = true;
+        BooleanOperation operation = BooleanOperation::Unite;
+        std::optional<size_t> target;
+        std::vector<size_t> tools, initialParts;
+        bool keepTools = false, chooseTarget = false;
+        std::shared_ptr<BooleanChange> booleanChange;
     };
     std::optional<CommandSession> commandSession_;
     QWidget* commandPanel_ = nullptr;
     QDialogButtonBox* commandButtons_ = nullptr;
-    QShortcut* commandConfirm_ = nullptr;
-    QShortcut* commandKeypadConfirm_ = nullptr;
     QShortcut* cancelDimension_ = nullptr;
     void beginCommandSession(CommandSession::Kind kind, const std::vector<size_t>& indices,
                              const gp_Dir& direction, const gp_Pnt& pivot = gp_Pnt());
-    void previewCommand(double value);
+    bool previewCommand(double value);
+    bool startMoveFace(size_t index, const TopoDS_Face& face);
+    bool previewMoveFace(double value);
+    bool beginMoveFaceDrag(const QPoint& point);
+    void applyFaceState(size_t index, const CadPart& state);
+    bool moveFacePicking_ = false;
+    double moveFaceDragStart_ = 0;
+    Handle(AIS_Shape) moveFaceArrow_;
     bool updateCommandParameter(bool reportError = true);
     void confirmCommandSession();
     void cancelCommandSession();
@@ -153,6 +197,18 @@ private:
     std::vector<size_t> selectedBooleanParts() const;
     void restoreBooleanChange(const BooleanChange& change, bool after);
     void finishModelingInteraction();
+    void resetModelingTools();
+    void beginPullSession();
+    bool previewPrimitivePull(double value);
+    bool pullMode_ = false;
+    bool calculateBoolean(BooleanOperation operation, const std::vector<size_t>& parts,
+                          std::optional<size_t> target, bool keepTools, bool previewOnly);
+    QWidget* booleanControls_ = nullptr;
+    void beginBooleanSession(BooleanOperation operation);
+    void selectBooleanParts(const std::vector<size_t>& indices, bool toggle);
+    void updateBooleanControls();
+    bool previewBooleanSession();
+    void commitBooleanChange(const std::shared_ptr<BooleanChange>& command);
     gp_Pnt partLocalCenter(const CadPart& part) const;
     gp_Pnt partLocalGizmoCenter(const CadPart& part) const;
     void applyPartState(size_t index, const std::array<double, 3>& min,

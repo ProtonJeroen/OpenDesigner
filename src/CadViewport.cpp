@@ -8,6 +8,9 @@
 #include <QDoubleValidator>
 #include <QShortcut>
 #include <QVBoxLayout>
+#include <QApplication>
+#include <QKeyEvent>
+#include <QPushButton>
 #include <QLocale>
 #include <algorithm>
 #include <Aspect_NeutralWindow.hxx>
@@ -83,6 +86,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_NoSystemBackground);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
+    qApp->installEventFilter(this);
     dragDimension_ = new QLineEdit(this);
     dragDimension_->setFixedWidth(160);
     dragDimension_->setAlignment(Qt::AlignCenter);
@@ -101,112 +105,13 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     connect(dragDimension_, &QLineEdit::textEdited, this, [this]() {
         if (commandSession_) updateCommandParameter(false);
     });
-    commandConfirm_ = new QShortcut(QKeySequence(Qt::Key_Return), this);
-    commandKeypadConfirm_ = new QShortcut(QKeySequence(Qt::Key_Enter), this);
-    for (auto* shortcut : {commandConfirm_,commandKeypadConfirm_}) {
-        shortcut->setContext(Qt::WidgetWithChildrenShortcut);
-        shortcut->setEnabled(false);
-        connect(shortcut, &QShortcut::activated, this, &CadViewport::confirmCommandSession);
-    }
-    connect(dragDimension_, &QLineEdit::returnPressed, this, [this]() {
-        if (commandSession_) { confirmCommandSession(); return; }
-        if (!dimensionEditing_) return;
-        if (multiFaceEditing_) {
-            bool ok = false;
-            const double distance = QLocale().toDouble(dragDimension_->text(), &ok);
-            if (!ok || !applyMultiFaceDrag(distance)) {
-                emit statusMessage(tr("Invalid distance: one or more boxes would collapse."));
-                return;
-            }
-            if (!undoStack_.empty()) {
-                for (auto& change : undoStack_.back().groupedChanges) {
-                    change.afterMin = boxes_[change.partIndex].min;
-                    change.afterMax = boxes_[change.partIndex].max;
-                }
-            }
-            // The old OCCT face owners are invalid after rebuilding the B-Reps.
-            // Finish the operation cleanly: require a fresh selection for another pull.
-            clearMultiFaceHighlight();
-            hideFaceArrow();
-            context_->ClearSelected(Standard_False);
-            multiFaceParts_.clear();
-            multiFaceEditing_ = false;
-            dimensionEditing_ = false;
-            dragDimension_->hide();
-            view_->Redraw();
-            setFocus();
-            return;
-        }
-        if (primitivePullEditing_) {
-            bool ok = false;
-            const double dimension = QLocale().toDouble(dimensionNumber(dragDimension_->text()), &ok);
-            if (!ok || !std::isfinite(dimension)) return;
-            // The drag operates in outward travel; numeric input specifies the
-            // final diameter/height relative to the geometry at drag start.
-            const double distance = (dimension - primitivePullStartDimension())
-                / (primitivePullIsDiameter() ? 2.0 : 1.0);
-            if (!applyPrimitivePull(distance)) return;
-            dragDimension_->setText(primitivePullDimensionText());
-            if (!undoStack_.empty()) {
-                auto& last = undoStack_.back();
-                const auto& part = boxes_[last.partIndex];
-                last.afterShape = part.shape;
-                last.afterCone = part.cone;
-                last.afterRadius = part.spherePrimitive ? part.sphereRadius : part.cylinderRadius;
-                last.afterHeight = part.cylinderHeight;
-                last.afterBaseOffset = part.cylinderBaseOffset;
-                last.afterMin = part.min;
-                last.afterMax = part.max;
-                emit statusMessage(primitivePullDimensionText());
-            }
-            primitivePullEditing_ = false;
-            dimensionEditing_ = false;
-            dragDimension_->hide();
-            setFocus();
-            return;
-        }
-        bool ok = false;
-        const double distance = QLocale().toDouble(dragDimension_->text(), &ok);
-        if (!ok) { emit statusMessage(tr("Enter a valid distance in mm.")); return; }
-        if (undoStack_.empty()) { dragDimension_->hide(); dimensionEditing_ = false; return; }
-        auto& last = undoStack_.back();
-        if (last.partIndex != dragIndex_) { dragDimension_->hide(); dimensionEditing_ = false; return; }
-        auto min = last.beforeMin;
-        auto max = last.beforeMax;
-        if (dragMax_) max[dragAxis_] += distance;
-        else min[dragAxis_] -= distance;
-        if (max[dragAxis_] - min[dragAxis_] <= 0.001) {
-            emit statusMessage(tr("Distance would collapse or invert the box."));
-            return;
-        }
-        applyBoxBounds(last.partIndex, min, max);
-        last.afterMin = min;
-        last.afterMax = max;
-        dragDimension_->hide();
-        dimensionEditing_ = false;
-        setFocus();
-        emit statusMessage(tr("Exact face distance: %1 mm").arg(distance));
-    });
+    connect(dragDimension_, &QLineEdit::returnPressed, this, &CadViewport::confirmCommandSession);
     cancelDimension_ = new QShortcut(QKeySequence(Qt::Key_Escape), this);
-    connect(cancelDimension_, &QShortcut::activated, this, [this]() {
-        if (commandSession_) { cancelCommandSession(); return; }
-        dragDimension_->hide();
-        dimensionEditing_ = false;
-        primitivePullEditing_ = false;
-        if (multiFaceEditing_) {
-            clearMultiFaceHighlight();
-            hideFaceArrow();
-            if (!context_.IsNull()) context_->ClearSelected(Standard_False);
-            multiFaceParts_.clear();
-            if (!view_.IsNull()) view_->Redraw();
-        }
-        multiFaceEditing_ = false;
-        setFocus();
-    });
+    connect(cancelDimension_, &QShortcut::activated, this, &CadViewport::cancelCommandSession);
 }
 void CadViewport::beginCommandSession(CommandSession::Kind kind,
         const std::vector<size_t>& indices, const gp_Dir& direction, const gp_Pnt& pivot) {
-    cancelCommandSession();
+    if(commandSession_) cancelCommandSession();
     commandSession_.emplace();
     auto& session = *commandSession_;
     session.kind = kind;
@@ -226,9 +131,7 @@ void CadViewport::beginCommandSession(CommandSession::Kind kind,
     static_cast<QVBoxLayout*>(commandPanel_->layout())->insertWidget(0,dragDimension_);
     dragDimension_->setToolTip(kind == CommandSession::Kind::Rotate ? tr("Angle in degrees") : tr("Distance in mm"));
     dragDimension_->setText(QLocale().toString(0.0,'f',2));
-    cancelDimension_->setContext(Qt::WidgetWithChildrenShortcut);
-    commandConfirm_->setEnabled(true);
-    commandKeypadConfirm_->setEnabled(true);
+    commandButtons_->button(QDialogButtonBox::Ok)->setEnabled(true);
     showCommandControls(dragStart_);
 }
 void CadViewport::showCommandControls(const QPoint& position) {
@@ -240,8 +143,10 @@ void CadViewport::showCommandControls(const QPoint& position) {
     commandPanel_->show();
     commandPanel_->raise();
 }
-void CadViewport::previewCommand(double value) {
-    if (!commandSession_ || !std::isfinite(value)) return;
+bool CadViewport::previewCommand(double value) {
+    if (!commandSession_ || !std::isfinite(value)) return false;
+    if (commandSession_->kind==CommandSession::Kind::MoveFace) return previewMoveFace(value);
+    if (commandSession_->kind==CommandSession::Kind::Pull) return previewPrimitivePull(value);
     auto& session = *commandSession_;
     session.value = value;
     if (session.kind == CommandSession::Kind::Rotate)
@@ -261,34 +166,66 @@ void CadViewport::previewCommand(double value) {
         context_->Redisplay(faceArrow_,Standard_False);
     }
     view_->Redraw();
+    return true;
 }
 bool CadViewport::updateCommandParameter(bool reportError) {
     bool ok = false;
-    const double value = QLocale().toDouble(dragDimension_->text(), &ok);
+    double value = QLocale().toDouble(dimensionNumber(dragDimension_->text()), &ok);
     if (!ok || !std::isfinite(value) || !dragDimension_->hasAcceptableInput()) {
         if (reportError) emit statusMessage(tr("Enter a valid finite angle or distance before confirming."));
         return false;
     }
-    previewCommand(value);
-    return true;
+    if(commandSession_ && commandSession_->kind==CommandSession::Kind::Pull && primitivePullDragging_)
+        value=(value-primitivePullStartDimension())/(primitivePullIsDiameter()?2.0:1.0);
+    return previewCommand(value);
 }
 void CadViewport::confirmCommandSession() {
+    if(commandSession_ && commandSession_->kind==CommandSession::Kind::Boolean) {
+        if(previewBooleanSession()) closeCommandSession(true);
+        return;
+    }
     if (commandSession_ && updateCommandParameter()) closeCommandSession(true);
 }
 void CadViewport::cancelCommandSession() {
+    moveFacePicking_=false;
     if (commandSession_) closeCommandSession(false);
+    else resetModelingTools();
 }
 void CadViewport::closeCommandSession(bool confirm) {
     commandSession_->state = confirm ? CommandSession::State::Confirmed : CommandSession::State::Cancelled;
     const auto session = std::move(*commandSession_);
     commandSession_.reset();
+    if(session.kind==CommandSession::Kind::Boolean) {
+        if(!session.preview.IsNull()) context_->Remove(session.preview,Standard_False);
+        delete booleanControls_; booleanControls_=nullptr;
+        commandPanel_->hide(); commandButtons_->hide(); dragDimension_->hide();
+        commandPanel_->layout()->removeWidget(dragDimension_);
+        dragDimension_->setParent(this);
+        selectedPartIndices_=session.selection;
+        context_->ClearSelected(Standard_False);
+        for(const auto& owner:session.owners) context_->AddOrRemoveSelected(owner,Standard_False);
+        emit partSelectionChanged(selectedBooleanParts());
+        if(confirm && session.booleanChange) commitBooleanChange(session.booleanChange);
+        resetModelingTools(); view_->Redraw(); setFocus(); return;
+    }
+    const bool pullCommand=session.kind==CommandSession::Kind::Pull;
+    const bool faceCommand=session.kind==CommandSession::Kind::MoveFace || pullCommand;
+    if (!session.preview.IsNull()) context_->Remove(session.preview,Standard_False);
+    if (!moveFaceArrow_.IsNull()) { context_->Remove(moveFaceArrow_,Standard_False); moveFaceArrow_.Nullify(); }
     for (const auto& change : session.changes) {
         auto& part = boxes_[change.partIndex];
-        if (confirm) part.orientation = change.afterOrientation;
+        if (confirm && faceCommand && std::abs(session.value)>1.e-7 && change.faceChange) applyFaceState(change.partIndex,change.faceChange->after);
+        else if(pullCommand && change.faceChange) applyFaceState(change.partIndex,change.faceChange->before);
+        else if (confirm) part.orientation = change.afterOrientation;
+        if (faceCommand && part.visible) {
+            context_->Display(part.presentation,Standard_False);
+            context_->Deactivate(part.presentation);
+            context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
+        }
         part.presentation->SetLocalTransformation(part.orientation);
         context_->Redisplay(part.presentation,Standard_False);
     }
-    if (confirm && std::abs(session.value)>1.0e-10 && !session.changes.empty()) {
+    if (confirm && std::abs(session.value)>(faceCommand?1.e-7:1.e-10) && !session.changes.empty()) {
         PullChange operation = session.changes.front();
         if (session.changes.size()>1) operation.groupedChanges = session.changes;
         undoStack_.push_back(operation);
@@ -296,23 +233,50 @@ void CadViewport::closeCommandSession(bool confirm) {
     }
     selectedPartIndices_ = session.selection;
     context_->ClearSelected(Standard_False);
-    for (const auto& owner : session.owners) context_->AddOrRemoveSelected(owner,Standard_False);
+    if (faceCommand && confirm && std::abs(session.value)>=1.e-7) {
+        selectedPartIndices_.clear();
+        for(const auto& change:session.changes) selectedPartIndices_.push_back(change.partIndex);
+        refreshPartSelection();
+        emit partSelectionChanged(selectedPartIndices_);
+        emit partsChanged();
+    } else for (const auto& owner : session.owners) context_->AddOrRemoveSelected(owner,Standard_False);
     draggingFace_ = draggingRotation_ = dimensionEditing_ = false;
     groupRotationDragging_ = false;
     dragDimension_->hide(); commandButtons_->hide(); commandPanel_->hide();
     commandPanel_->layout()->removeWidget(dragDimension_);
     dragDimension_->setParent(this);
-    commandConfirm_->setEnabled(false); commandKeypadConfirm_->setEnabled(false);
-    cancelDimension_->setContext(Qt::WindowShortcut);
-    if (directMoveMode_) updateMoveAxes();
-    if (rotateMode_) updateRotationRings();
-    if (!faceArrow_.IsNull()) faceArrow_->ResetTransformation();
-    updateFaceArrow();
+    resetModelingTools();
     view_->Redraw();
     setFocus();
     emit statusMessage(confirm ? tr("Transformation confirmed.") : tr("Transformation cancelled."));
 }
 bool CadViewport::eventFilter(QObject* watched, QEvent* event) {
+    if(!commandSession_ && (pullMode_ || movePartMode_ || directMoveMode_ || rotateMode_ || moveFacePicking_)
+        && (event->type()==QEvent::ShortcutOverride || event->type()==QEvent::KeyPress)) {
+        const auto* widget=qobject_cast<QWidget*>(watched);
+        const auto* key=static_cast<QKeyEvent*>(event);
+        if(widget && (widget==this || isAncestorOf(widget))
+            && (key->key()==Qt::Key_Escape || key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter)) {
+            event->accept();
+            if(event->type()==QEvent::KeyPress) cancelCommandSession();
+            return true;
+        }
+    }
+    if (commandSession_ && (event->type()==QEvent::ShortcutOverride || event->type()==QEvent::KeyPress)) {
+        const auto* widget=qobject_cast<QWidget*>(watched);
+        const auto* key=static_cast<QKeyEvent*>(event);
+        const bool sessionWidget=widget && (widget==this || isAncestorOf(widget)
+            || widget==commandPanel_ || commandPanel_->isAncestorOf(widget)
+            || (commandSession_->kind==CommandSession::Kind::Boolean && widget && widget->window()==window()));
+        if (sessionWidget && (key->key()==Qt::Key_Escape || key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter)) {
+            event->accept();
+            if (event->type()==QEvent::KeyPress) {
+                if (key->key()==Qt::Key_Escape) cancelCommandSession();
+                else confirmCommandSession();
+            }
+            return true;
+        }
+    }
     if (watched == commandPanel_ && event->type() == QEvent::Close) {
         cancelCommandSession();
         return true;
@@ -600,7 +564,7 @@ void CadViewport::duplicateSelectedParts() {
         context_->SetDisplayMode(copy.presentation, AIS_Shaded, Standard_False);
         context_->Deactivate(copy.presentation);
         context_->Activate(copy.presentation,
-            (directMoveMode_ || rotateMode_) ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE),
+            selectionMode_==SelectionMode::Part ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE),
             Standard_False);
         boxes_.push_back(copy);
         copies.push_back(boxes_.size() - 1);
@@ -900,7 +864,7 @@ void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
     context_->Redisplay(part.presentation, Standard_False);
     context_->Deactivate(part.presentation);
     context_->Activate(part.presentation,
-        (directMoveMode_ || rotateMode_) ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE),
+        selectionMode_==SelectionMode::Part ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE),
         Standard_False);
     part.min = min;
     part.max = max;
@@ -1009,6 +973,7 @@ bool CadViewport::beginFaceDrag(const QPoint& origin) {
     dragMmPerPixel_ = 100.0 / pixels;
     dragMovesPart_ = movePartMode_;
     multiFaceDragging_ = !dragMovesPart_ && prepareMultiFaceDrag();
+    if(!dragMovesPart_) beginPullSession();
     if (multiFaceDragging_) updateMultiFaceHighlight();
     draggingFace_ = true;
     if (dragMovesPart_)
@@ -1069,11 +1034,13 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
         dragScreenY_ = dy/pixels;
         dragMmPerPixel_ = 31.0/pixels;
         draggingFace_ = true;
+        beginPullSession();
         context_->ClearSelected(Standard_False);
         context_->MoveTo(-1,-1,view_,Standard_False);
         dragDimension_->setToolTip(primitivePullIsDiameter()
             ? tr("Final diameter in mm") : tr("Final height in mm"));
         showDragDimension(origin);
+        dragDimension_->setText(primitivePullDimensionText());
         return true;
     }
     dragIndex_ = arrowPartIndex_;
@@ -1089,6 +1056,7 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
     dragMmPerPixel_ = 31.0 / pixels;
     dragMovesPart_ = movePartMode_;
     multiFaceDragging_ = !dragMovesPart_ && prepareMultiFaceDrag();
+    if(!dragMovesPart_) beginPullSession();
     if (multiFaceDragging_) {
         // Preserve face identities in multiFaceParts_ before clearing OCCT owners.
         // The old selection highlight otherwise remains at its original position.
@@ -1344,7 +1312,7 @@ void CadViewport::setPartVisible(size_t index, bool visible) {
             context_->Display(part.presentation, Standard_False);
             context_->Deactivate(part.presentation);
             context_->Activate(part.presentation,
-                (directMoveMode_ || rotateMode_) ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE),
+                selectionMode_==SelectionMode::Part ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE),
                 Standard_False);
         } else {
             context_->Erase(part.presentation, Standard_False);
@@ -1373,6 +1341,7 @@ void CadViewport::fitSelection(const std::vector<size_t>& indices) {
     view_->Redraw();
 }
 void CadViewport::selectParts(const std::vector<size_t>& indices) {
+    if (commandSession_ && commandSession_->kind==CommandSession::Kind::Boolean) { selectBooleanParts(indices,false); return; }
     cancelCommandSession();
     selectedPartIndices_.clear();
     for (const size_t index : indices) {
@@ -1511,6 +1480,11 @@ bool CadViewport::applyPrimitivePull(double distance) {
     return true;
 }
 void CadViewport::restorePullChange(const PullChange& change, bool after) {
+    if (change.faceChange) {
+        applyFaceState(change.partIndex,after?change.faceChange->after:change.faceChange->before);
+        if(!batchingPartUpdates_) { selectParts({change.partIndex}); emit partsChanged(); }
+        return;
+    }
     applyPartState(change.partIndex,after?change.afterMin:change.beforeMin,
         after?change.afterMax:change.beforeMax,
         after?change.afterOrientation:change.beforeOrientation);
@@ -1562,7 +1536,7 @@ void CadViewport::updateMoveAxes() {
 }
 void CadViewport::setTransformSelectionMode() {
     if (context_.IsNull()) return;
-    const int mode = AIS_Shape::SelectionMode(TopAbs_FACE);
+    const int mode = selectionMode_==SelectionMode::Part ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE);
     for (auto& part : boxes_) {
         if (!part.active || !part.visible) continue;
         context_->Deactivate(part.presentation);
@@ -1576,16 +1550,21 @@ void CadViewport::setTransformSelectionMode() {
     else view_->Redraw();
 }
 void CadViewport::setDirectMoveMode(bool enabled) {
-    cancelCommandSession();
+    if(enabled || directMoveMode_) cancelCommandSession();
+    if(enabled && selectedPartIndices_.empty()) {
+        emit statusMessage(tr("Move Part: select Parts with Alt+click or the Structure Browser, then choose this command."));
+        return;
+    }
     directMoveMode_ = enabled;
     setTransformSelectionMode();
     if (enabled) hideFaceArrow();
+    emit transformModesChanged(movePartMode_,directMoveMode_,rotateMode_);
     emit statusMessage(enabled
-        ? tr("Move: select parts with Alt+click (Ctrl+Alt for groups), then drag an axis.")
+        ? tr("Move Part: drag an axis; OK/Enter confirms, Cancel/Esc closes.")
         : tr("Move disabled. Selection preserved."));
 }
 bool CadViewport::beginMoveAxisDrag(const QPoint& point) {
-    if (!directMoveMode_ || !isPartVisible(moveIndex_) || view_.IsNull()) return false;
+    if (!directMoveMode_ || !isPartVisible(moveIndex_) || view_.IsNull() || moveAxes_[0].IsNull()) return false;
     const auto& part=boxes_[moveIndex_];
     const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter()
         : partWorldRotationCenter(part, part.orientation);
@@ -1605,7 +1584,6 @@ bool CadViewport::beginMoveAxisDrag(const QPoint& point) {
         if (distance<best) { best=distance;hit=axis;bestDx=dx;bestDy=dy;bestPixels=std::sqrt(len2); }
     }
     if (hit<0) return false;
-    cancelCommandSession();
     dragIndex_=moveIndex_;
     dragAxis_=hit;
     dragMax_=true;
@@ -1683,7 +1661,7 @@ void CadViewport::updateRotationRings() {
     view_->Redraw();
 }
 bool CadViewport::beginRotationDrag(const QPoint& point) {
-    if (!rotateMode_ || !isPartVisible(rotationIndex_) || view_.IsNull()) return false;
+    if (!rotateMode_ || !isPartVisible(rotationIndex_) || view_.IsNull() || rotationRings_[0].IsNull()) return false;
     const auto& part = boxes_[rotationIndex_];
     const gp_Pnt center = selectedPartIndices_.size() > 1 ? selectionCenter()
         : partWorldRotationCenter(part, part.orientation);
@@ -1709,7 +1687,6 @@ bool CadViewport::beginRotationDrag(const QPoint& point) {
         }
     }
     if (axisHit < 0) return false;
-    cancelCommandSession();
     rotationAxis_ = axisHit;
     groupRotationDragging_ = selectedPartIndices_.size() > 1;
     groupRotationCenter_ = center;
@@ -1764,23 +1741,56 @@ void CadViewport::applyRotationAngle(double degrees) {
     previewCommand(degrees);
 }
 void CadViewport::setRotateMode(bool enabled) {
-    cancelCommandSession();
+    if(enabled || rotateMode_) cancelCommandSession();
+    if(enabled && selectedPartIndices_.empty()) {
+        emit statusMessage(tr("Rotate Part: select Parts with Alt+click or the Structure Browser, then choose this command."));
+        return;
+    }
     rotateMode_ = enabled;
     setTransformSelectionMode();
     if (enabled) hideFaceArrow();
+    emit transformModesChanged(movePartMode_,directMoveMode_,rotateMode_);
     emit statusMessage(enabled
-        ? tr("Rotate: select parts with Alt+click (Ctrl+Alt for groups), then drag a ring.")
+        ? tr("Rotate Part: drag a ring; OK/Enter confirms, Cancel/Esc closes.")
         : tr("Rotate disabled. Selection preserved."));
 }
 void CadViewport::setAngleSnap(double degrees) { rotationSnap_ = degrees; }
 
 void CadViewport::mousePressEvent(QMouseEvent* e) {
+    if (e->button()==Qt::RightButton) return;
     previous_ = e->pos();
     rotating_ = e->button() == Qt::MiddleButton && !(e->modifiers() & Qt::ShiftModifier);
     panning_ = e->button() == Qt::MiddleButton && (e->modifiers() & Qt::ShiftModifier);
     if (rotating_ && !view_.IsNull()) view_->StartRotation(previous_.x(), previous_.y());
     if (e->button() == Qt::LeftButton && !context_.IsNull()) {
-        cancelCommandSession();
+        if (commandSession_ && commandSession_->kind==CommandSession::Kind::Boolean) {
+            context_->MoveTo(e->pos().x(),e->pos().y(),view_,Standard_True);
+            if(context_->HasDetected()) {
+                const auto object=context_->DetectedInteractive();
+                for(size_t i=0;i<boxes_.size();++i) if(boxes_[i].presentation==object) { selectBooleanParts({i},true); break; }
+            }
+            return;
+        }
+        if (commandSession_ && commandSession_->kind==CommandSession::Kind::MoveFace && beginMoveFaceDrag(e->pos())) return;
+        if (moveFacePicking_) {
+            for (const auto& part : boxes_) if (part.active && part.visible) {
+                context_->Deactivate(part.presentation);
+                context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
+            }
+            context_->MoveTo(e->pos().x(),e->pos().y(),view_,Standard_True);
+            context_->SelectDetected(AIS_SelectionScheme_Replace);
+            selectedPartIndices_.clear();
+            emit partSelectionChanged(selectionContext().parts);
+            if (context_->NbSelected()==1) {
+                context_->InitSelected();
+                const auto owner=Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
+                const auto object=context_->SelectedInteractive();
+                if (!owner.IsNull() && !owner->Shape().IsNull() && owner->Shape().ShapeType()==TopAbs_FACE)
+                    for (size_t i=0;i<boxes_.size();++i)
+                        if (boxes_[i].presentation==object) { startMoveFace(i,TopoDS::Face(owner->Shape())); break; }
+            }
+            return;
+        }
         if (dimensionEditing_) {
             clearMultiFaceHighlight();
             multiFaceEditing_ = false;
@@ -1792,10 +1802,11 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
         const bool additiveSelection = (e->modifiers() & Qt::ControlModifier);
         // Start manipulator drags BEFORE changing OCCT selection modes:
         // Deactivate/Activate may discard selected subshape owners.
-        if (!partPicking && !additiveSelection && beginRotationDrag(e->pos())) return;
-        if (!partPicking && !additiveSelection && beginMoveAxisDrag(e->pos())) return;
+        if (!(e->modifiers() & Qt::AltModifier) && !additiveSelection && beginRotationDrag(e->pos())) return;
+        if (!(e->modifiers() & Qt::AltModifier) && !additiveSelection && beginMoveAxisDrag(e->pos())) return;
         if (!partPicking && !additiveSelection && !directMoveMode_ && !rotateMode_
             && beginArrowDrag(e->pos())) return;
+        cancelCommandSession();
         // Only reconfigure picking when actually selecting geometry.
         for (auto& part : boxes_) {
             if (!part.active || !part.visible) continue;
@@ -1862,6 +1873,10 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
         // Highlight selected faces by cyan edges only, preserving their material.
         if (!context_->SelectionStyle().IsNull())
             context_->SelectionStyle()->SetDisplayMode(AIS_WireFrame);
+        // Additive selection stays typed: Ctrl on a face starts a face set
+        // if the prior selection consisted of whole parts (and vice versa).
+        if (selectionContext().kind!=SelectionContext::Kind::Faces)
+            context_->ClearSelected(Standard_False);
         context_->SelectDetected(additiveSelection
             ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
         hideFaceArrow();
@@ -1872,171 +1887,13 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             hideMoveAxes(); hideRotationRings();
             emit partSelectionChanged(selectedPartIndices_);
         }
-        // For a general B-Rep in transform mode, a normal click should
-        // select its whole part, just like Alt+click/Structure Browser.
-        // This keeps both enabled gizmos visible immediately instead of
-        // showing only rotation until the first drag refreshes selection.
-        if (!additiveSelection && (directMoveMode_ || rotateMode_)
-            && context_->NbSelected() == 1) {
-            context_->InitSelected();
-            if (context_->MoreSelected()) {
-                const auto object = context_->SelectedInteractive();
-                for (size_t i = 0; i < boxes_.size(); ++i) {
-                    if (boxes_[i].presentation == object
-                        && boxes_[i].geometryKind == CadPart::GeometryKind::GeneralBRep) {
-                        selectParts({i});
-                        // Clear the face's dynamic hover outline. The cylinder
-                        // remains selected in our part model and both gizmos
-                        // stay visible, but the stale white OCCT face outline
-                        // should not linger while manipulating the part.
-                        context_->MoveTo(-1, -1, view_, Standard_False);
-                        view_->Redraw();
-                        return;
-                    }
-                }
-            }
-        }
-        if (rotateMode_ && !additiveSelection) {
-            hideRotationRings();
-            if (context_->NbSelected() == 1) {
-                context_->InitSelected();
-                const auto selected = context_->SelectedInteractive();
-                for (size_t i=0; i<boxes_.size(); ++i)
-                    if (boxes_[i].presentation == selected) {
-                        rotationIndex_ = i;
-                        updateRotationRings();
-                        break;
-                    }
-            }
-        }
-        // Keep one manipulation arrow as an anchor for a multi-face selection.
-        // The grouped drag operation will use all selected face owners.
-        if (context_->NbSelected() >= 1) {
-            context_->InitSelected();
-            Handle(StdSelect_BRepOwner) arrowOwner =
-                Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
-            if (!arrowOwner.IsNull() && !arrowOwner->Shape().IsNull()
-                && arrowOwner->Shape().ShapeType() == TopAbs_FACE) {
-                Handle(AIS_InteractiveObject) selected = context_->SelectedInteractive();
-                for (size_t i = 0; i < boxes_.size(); ++i) {
-                    if (boxes_[i].presentation != selected) continue;
-                    const BRepAdaptor_Surface surf(TopoDS::Face(arrowOwner->Shape()));
-                    if (boxes_[i].conePrimitive && !movePartMode_) {
-                        const auto& part = boxes_[i];
-                        Standard_Real x,y,z,rx,ry,rz;
-                        view_->Convert(e->pos().x(),e->pos().y(),x,y,z);
-                        view_->Convert(e->pos().x()+40,e->pos().y(),rx,ry,rz);
-                        const gp_Vec right = gp_Vec(gp_Pnt(x,y,z),gp_Pnt(rx,ry,rz))
-                            .Transformed(part.orientation.Inverted());
-                        gp_Vec radial(right.X(),right.Y(),0);
-                        if (radial.Magnitude() < 1.0e-6) radial = gp_Vec(1,0,0);
-                        coneRadialDirection_ = gp_Dir(radial);
-                        conePullTarget_ = ConePullTarget::TopHeight;
-                        primitiveArrowOrigin_ = coneArrowOrigin(part,conePullTarget_);
-                        primitiveArrowDirection_ = coneArrowDirection(conePullTarget_);
-                        arrowPartIndex_ = i;
-                        arrowVisible_ = true;
-                        updateFaceArrow();
-                        emit statusMessage(tr("Cone: radial arrows set bottom/top diameter; "
-                            "axial arrows set height with the opposite end fixed."));
-                        break;
-                    }
-                    if (boxes_[i].spherePrimitive && !movePartMode_) {
-                        const auto& part = boxes_[i];
-                        const gp_Pnt center = partLocalCenter(part);
-                        Standard_Real eyeX, eyeY, eyeZ, rayX, rayY, rayZ;
-                        view_->ConvertWithProj(e->pos().x(), e->pos().y(),
-                            eyeX, eyeY, eyeZ, rayX, rayY, rayZ);
-                        const gp_Trsf inverse = part.orientation.Inverted();
-                        const gp_Pnt rayOrigin = gp_Pnt(eyeX,eyeY,eyeZ).Transformed(inverse);
-                        const gp_Vec rayDirection = gp_Vec(rayX,rayY,rayZ).Transformed(inverse);
-                        const gp_Vec toCenter(rayOrigin,center);
-                        const double t = toCenter.Dot(rayDirection)/rayDirection.SquareMagnitude();
-                        gp_Vec radial(center,rayOrigin.Translated(rayDirection*t));
-                        if (radial.Magnitude() < 1.0e-6) {
-                            // Use screen right for a visible, draggable arrow even
-                            // when the user clicks the center of the sphere.
-                            Standard_Real rightX, rightY, rightZ;
-                            view_->Convert(e->pos().x()+40,e->pos().y(),rightX,rightY,rightZ);
-                            radial = gp_Vec(gp_Pnt(eyeX,eyeY,eyeZ),
-                                gp_Pnt(rightX,rightY,rightZ)).Transformed(inverse);
-                        }
-                        if (radial.Magnitude() < 1.0e-6) break;
-                        primitiveArrowDirection_ = gp_Dir(radial);
-                        primitiveArrowOrigin_ = center.Translated(
-                            gp_Vec(primitiveArrowDirection_)*part.sphereRadius);
-                        arrowPartIndex_ = i;
-                        arrowVisible_ = true;
-                        updateFaceArrow();
-                        emit statusMessage(tr("Drag the orange arrow; enter the final diameter in mm. "
-                            "Current diameter: Ø %1 mm.")
-                            .arg(QLocale().toString(2.0*part.sphereRadius,'f',2)));
-                        break;
-                    }
-                    if (boxes_[i].cylinderPrimitive && !movePartMode_) {
-                        const auto& part = boxes_[i];
-                        const gp_Pnt base((part.baseMin[0]+part.baseMax[0])*0.5,
-                            (part.baseMin[1]+part.baseMax[1])*0.5,part.baseMin[2]+part.cylinderBaseOffset);
-                        cylinderRadialArrow_ = surf.GetType() == GeomAbs_Cylinder;
-                        if (!cylinderRadialArrow_ && surf.GetType() != GeomAbs_Plane) break;
-                        if (cylinderRadialArrow_) {
-                            // Choose a stable outward radial arrow based on cursor position.
-                            // Project the cursor ray into the cylinder's local XY plane.
-                            // AIS_InteractiveContext::DetectedPoint is not available
-                            // in the OCCT version shipped by Fedora.
-                            Standard_Real eyeX, eyeY, eyeZ, rayX, rayY, rayZ;
-                            view_->ConvertWithProj(e->pos().x(), e->pos().y(),
-                                eyeX, eyeY, eyeZ, rayX, rayY, rayZ);
-                            const gp_Pnt rayOrigin = gp_Pnt(eyeX,eyeY,eyeZ)
-                                .Transformed(part.orientation.Inverted());
-                            const gp_Vec rayDirection = gp_Vec(rayX,rayY,rayZ)
-                                .Transformed(part.orientation.Inverted());
-                            const double middleZ = base.Z()+part.cylinderHeight*0.5;
-                            double t = 0.0;
-                            if (std::abs(rayDirection.Z()) > 1.0e-8)
-                                t = (middleZ-rayOrigin.Z())/rayDirection.Z();
-                            const gp_Pnt hit = rayOrigin.Translated(rayDirection.Multiplied(t));
-                            const gp_Vec radial(base,gp_Pnt(hit.X(),hit.Y(),base.Z()));
-                            if (radial.Magnitude() < 1.0e-6) break;
-                            primitiveArrowDirection_ = gp_Dir(radial);
-                            primitiveArrowOrigin_ = gp_Pnt(base.X()+primitiveArrowDirection_.X()*part.cylinderRadius,
-                                base.Y()+primitiveArrowDirection_.Y()*part.cylinderRadius,
-                                base.Z()+part.cylinderHeight*0.5);
-                        } else {
-                            const double z = surf.Plane().Location().Z();
-                            const bool top = std::abs(z-(base.Z()+part.cylinderHeight)) <
-                                std::abs(z-base.Z());
-                            primitiveArrowDirection_ = gp_Dir(0,0,top?1:-1);
-                            primitiveArrowOrigin_ = gp_Pnt(base.X(),base.Y(),
-                                top?base.Z()+part.cylinderHeight:base.Z());
-                        }
-                        arrowPartIndex_ = i;
-                        arrowVisible_ = true;
-                        updateFaceArrow();
-                        break;
-                    }
-                    cylinderRadialArrow_ = false;
-                    if (boxes_[i].geometryKind != CadPart::GeometryKind::Box && !movePartMode_) break;
-                    if (surf.GetType() != GeomAbs_Plane) break;
-                    const gp_Dir normal = surf.Plane().Axis().Direction();
-                    const double components[3] = {normal.X(), normal.Y(), normal.Z()};
-                    int axis = 0;
-                    for (int k = 1; k < 3; ++k)
-                        if (std::abs(components[k]) > std::abs(components[axis])) axis = k;
-                    if (std::abs(components[axis]) < 0.999) break;
-                    const double pos = surf.Plane().Location().Coord(axis + 1);
-                    const bool onMax = std::abs(pos - boxes_[i].max[axis]) < 0.001;
-                    const bool onMin = std::abs(pos - boxes_[i].min[axis]) < 0.001;
-                    if (!onMax && !onMin) break;
-                    arrowPartIndex_ = i;
-                    arrowAxis_ = axis;
-                    arrowMax_ = onMax;
-                    arrowVisible_ = true;
-                    updateFaceArrow();
-                    break;
-                }
-            }
-        }
+        // Face selection has its own owners; browser rows reflect their owning parts,
+        // without turning the face selection into a whole-part gizmo group.
+        selectedPartIndices_.clear();
+        emit partSelectionChanged(selectionContext().parts);
+        directMoveMode_=rotateMode_=false;
+        hideMoveAxes(); hideRotationRings();
+        emit transformModesChanged(movePartMode_,false,false);
         if (context_->NbSelected() == 1
             && !(arrowVisible_ && (boxes_[arrowPartIndex_].spherePrimitive
                 || boxes_[arrowPartIndex_].conePrimitive))) {
@@ -2049,13 +1906,153 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
         view_->Redraw();
     }
 }
+void CadViewport::updateSelectedFaceArrow(const QPoint& point) {
+    // Keep one manipulation arrow as an anchor for a multi-face selection.
+    // The grouped drag operation will use all selected face owners.
+    if (context_->NbSelected() >= 1) {
+        context_->InitSelected();
+        Handle(StdSelect_BRepOwner) arrowOwner =
+            Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
+        if (!arrowOwner.IsNull() && !arrowOwner->Shape().IsNull()
+            && arrowOwner->Shape().ShapeType() == TopAbs_FACE) {
+            Handle(AIS_InteractiveObject) selected = context_->SelectedInteractive();
+            for (size_t i = 0; i < boxes_.size(); ++i) {
+                if (boxes_[i].presentation != selected) continue;
+                const BRepAdaptor_Surface surf(TopoDS::Face(arrowOwner->Shape()));
+                if (boxes_[i].conePrimitive && !movePartMode_) {
+                    const auto& part = boxes_[i];
+                    Standard_Real x,y,z,rx,ry,rz;
+                    view_->Convert(point.x(),point.y(),x,y,z);
+                    view_->Convert(point.x()+40,point.y(),rx,ry,rz);
+                    const gp_Vec right = gp_Vec(gp_Pnt(x,y,z),gp_Pnt(rx,ry,rz))
+                        .Transformed(part.orientation.Inverted());
+                    gp_Vec radial(right.X(),right.Y(),0);
+                    if (radial.Magnitude() < 1.0e-6) radial = gp_Vec(1,0,0);
+                    coneRadialDirection_ = gp_Dir(radial);
+                    conePullTarget_ = ConePullTarget::TopHeight;
+                    primitiveArrowOrigin_ = coneArrowOrigin(part,conePullTarget_);
+                    primitiveArrowDirection_ = coneArrowDirection(conePullTarget_);
+                    arrowPartIndex_ = i;
+                    arrowVisible_ = true;
+                    updateFaceArrow();
+                    emit statusMessage(tr("Cone: radial arrows set bottom/top diameter; "
+                        "axial arrows set height with the opposite end fixed."));
+                    break;
+                }
+                if (boxes_[i].spherePrimitive && !movePartMode_) {
+                    const auto& part = boxes_[i];
+                    const gp_Pnt center = partLocalCenter(part);
+                    Standard_Real eyeX, eyeY, eyeZ, rayX, rayY, rayZ;
+                    view_->ConvertWithProj(point.x(), point.y(),
+                        eyeX, eyeY, eyeZ, rayX, rayY, rayZ);
+                    const gp_Trsf inverse = part.orientation.Inverted();
+                    const gp_Pnt rayOrigin = gp_Pnt(eyeX,eyeY,eyeZ).Transformed(inverse);
+                    const gp_Vec rayDirection = gp_Vec(rayX,rayY,rayZ).Transformed(inverse);
+                    const gp_Vec toCenter(rayOrigin,center);
+                    const double t = toCenter.Dot(rayDirection)/rayDirection.SquareMagnitude();
+                    gp_Vec radial(center,rayOrigin.Translated(rayDirection*t));
+                    if (radial.Magnitude() < 1.0e-6) {
+                        // Use screen right for a visible, draggable arrow even
+                        // when the user clicks the center of the sphere.
+                        Standard_Real rightX, rightY, rightZ;
+                        view_->Convert(point.x()+40,point.y(),rightX,rightY,rightZ);
+                        radial = gp_Vec(gp_Pnt(eyeX,eyeY,eyeZ),
+                            gp_Pnt(rightX,rightY,rightZ)).Transformed(inverse);
+                    }
+                    if (radial.Magnitude() < 1.0e-6) break;
+                    primitiveArrowDirection_ = gp_Dir(radial);
+                    primitiveArrowOrigin_ = center.Translated(
+                        gp_Vec(primitiveArrowDirection_)*part.sphereRadius);
+                    arrowPartIndex_ = i;
+                    arrowVisible_ = true;
+                    updateFaceArrow();
+                    emit statusMessage(tr("Drag the orange arrow; enter the final diameter in mm. "
+                        "Current diameter: Ø %1 mm.")
+                        .arg(QLocale().toString(2.0*part.sphereRadius,'f',2)));
+                    break;
+                }
+                if (boxes_[i].cylinderPrimitive && !movePartMode_) {
+                    const auto& part = boxes_[i];
+                    const gp_Pnt base((part.baseMin[0]+part.baseMax[0])*0.5,
+                        (part.baseMin[1]+part.baseMax[1])*0.5,part.baseMin[2]+part.cylinderBaseOffset);
+                    cylinderRadialArrow_ = surf.GetType() == GeomAbs_Cylinder;
+                    if (!cylinderRadialArrow_ && surf.GetType() != GeomAbs_Plane) break;
+                    if (cylinderRadialArrow_) {
+                        // Choose a stable outward radial arrow based on cursor position.
+                        // Project the cursor ray into the cylinder's local XY plane.
+                        // AIS_InteractiveContext::DetectedPoint is not available
+                        // in the OCCT version shipped by Fedora.
+                        Standard_Real eyeX, eyeY, eyeZ, rayX, rayY, rayZ;
+                        view_->ConvertWithProj(point.x(), point.y(),
+                            eyeX, eyeY, eyeZ, rayX, rayY, rayZ);
+                        const gp_Pnt rayOrigin = gp_Pnt(eyeX,eyeY,eyeZ)
+                            .Transformed(part.orientation.Inverted());
+                        const gp_Vec rayDirection = gp_Vec(rayX,rayY,rayZ)
+                            .Transformed(part.orientation.Inverted());
+                        const double middleZ = base.Z()+part.cylinderHeight*0.5;
+                        double t = 0.0;
+                        if (std::abs(rayDirection.Z()) > 1.0e-8)
+                            t = (middleZ-rayOrigin.Z())/rayDirection.Z();
+                        const gp_Pnt hit = rayOrigin.Translated(rayDirection.Multiplied(t));
+                        const gp_Vec radial(base,gp_Pnt(hit.X(),hit.Y(),base.Z()));
+                        if (radial.Magnitude() < 1.0e-6) break;
+                        primitiveArrowDirection_ = gp_Dir(radial);
+                        primitiveArrowOrigin_ = gp_Pnt(base.X()+primitiveArrowDirection_.X()*part.cylinderRadius,
+                            base.Y()+primitiveArrowDirection_.Y()*part.cylinderRadius,
+                            base.Z()+part.cylinderHeight*0.5);
+                    } else {
+                        const double z = surf.Plane().Location().Z();
+                        const bool top = std::abs(z-(base.Z()+part.cylinderHeight)) <
+                            std::abs(z-base.Z());
+                        primitiveArrowDirection_ = gp_Dir(0,0,top?1:-1);
+                        primitiveArrowOrigin_ = gp_Pnt(base.X(),base.Y(),
+                            top?base.Z()+part.cylinderHeight:base.Z());
+                    }
+                    arrowPartIndex_ = i;
+                    arrowVisible_ = true;
+                    updateFaceArrow();
+                    break;
+                }
+                cylinderRadialArrow_ = false;
+                if (boxes_[i].geometryKind != CadPart::GeometryKind::Box && !movePartMode_) break;
+                if (surf.GetType() != GeomAbs_Plane) break;
+                const gp_Dir normal = surf.Plane().Axis().Direction();
+                const double components[3] = {normal.X(), normal.Y(), normal.Z()};
+                int axis = 0;
+                for (int k = 1; k < 3; ++k)
+                    if (std::abs(components[k]) > std::abs(components[axis])) axis = k;
+                if (std::abs(components[axis]) < 0.999) break;
+                const double pos = surf.Plane().Location().Coord(axis + 1);
+                const bool onMax = std::abs(pos - boxes_[i].max[axis]) < 0.001;
+                const bool onMin = std::abs(pos - boxes_[i].min[axis]) < 0.001;
+                if (!onMax && !onMin) break;
+                arrowPartIndex_ = i;
+                arrowAxis_ = axis;
+                arrowMax_ = onMax;
+                arrowVisible_ = true;
+                updateFaceArrow();
+                break;
+            }
+        }
+    }
+}
 void CadViewport::setMovePartMode(bool enabled) {
-    cancelCommandSession();
+    if(enabled || movePartMode_) cancelCommandSession();
     if (arrowVisible_ && boxes_[arrowPartIndex_].conePrimitive) hideFaceArrow();
     movePartMode_ = enabled;
+    if(enabled) {
+        updateSelectedFaceArrow(previous_);
+        if(!arrowVisible_) {
+            resetModelingTools();
+            emit statusMessage(tr("Move Part Along Face: select a supported face before choosing this command."));
+            return;
+        }
+    }
+    else hideFaceArrow();
+    emit transformModesChanged(movePartMode_,directMoveMode_,rotateMode_);
     emit statusMessage(enabled
         ? tr("Move Part mode: select a face, then drag its orange arrow.")
-        : tr("Pull Face mode: select a face, then drag its orange arrow."));
+        : tr("Move Part Along Face closed. Select geometry and choose a command."));
 }
 void CadViewport::setSnapStep(double stepMm) {
     snapStepMm_ = stepMm;
@@ -2085,7 +2082,8 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
         }
     } else if (draggingFace_) {
         const double rawDistance = ((p.x() - dragStart_.x()) * dragScreenX_
-                                  + (p.y() - dragStart_.y()) * dragScreenY_) * dragMmPerPixel_;
+                                  + (p.y() - dragStart_.y()) * dragScreenY_) * dragMmPerPixel_
+            + (commandSession_ && commandSession_->kind==CommandSession::Kind::MoveFace ? moveFaceDragStart_ : 0.0);
         const bool snapping = snapStepMm_ > 0.0 && !(e->modifiers() & Qt::ShiftModifier);
         const double requested = snapping
             ? std::round(rawDistance / snapStepMm_) * snapStepMm_
@@ -2093,40 +2091,12 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
         if (commandSession_) {
             dragDistance_ = requested;
             previewCommand(requested);
-            dragDimension_->setText(QLocale().toString(requested,'f',2));
+            dragDimension_->setText(commandSession_->kind==CommandSession::Kind::Pull && primitivePullDragging_ ? primitivePullDimensionText() : QLocale().toString(requested,'f',2));
             showCommandControls(p);
             previous_ = p;
             return;
         }
-        if (primitivePullDragging_) {
-            if (std::abs(requested-dragDistance_) > 0.0001 && applyPrimitivePull(requested)) {
-                dragDistance_ = requested;
-                showDragDimension(p);
-                emit statusMessage(primitivePullDimensionText());
-            }
-            previous_ = p;
-            return;
-        }
-        if (multiFaceDragging_) {
-            if (std::abs(requested - dragDistance_) > 0.0001 && applyMultiFaceDrag(requested)) {
-                dragDistance_ = requested;
-                showDragDimension(p);
-                emit statusMessage(tr("Multi-Face Pull: %1 mm").arg(requested, 0, 'f', 1));
-            }
-            previous_ = p;
-            return;
-        }
-        auto min = dragMin_;
-        auto max = dragMaxBounds_;
-        if (dragMax_) max[dragAxis_] += requested;
-        else min[dragAxis_] -= requested;
-        if (max[dragAxis_] - min[dragAxis_] > 0.001
-            && std::abs(requested - dragDistance_) > 0.0001) {
-            dragDistance_ = requested;
-            applyBoxBounds(dragIndex_, min, max);
-            emit statusMessage(tr("Pull Face: %1 mm").arg(dragDistance_, 0, 'f', 1));
-            showDragDimension(p);
-        }
+        cancelCommandSession();
     } else if (rotating_) view_->Rotation(p.x(), p.y());
     else if (panning_) view_->Pan(p.x() - previous_.x(), previous_.y() - p.y());
     else if (!context_.IsNull()) context_->MoveTo(p.x(), p.y(), view_, Standard_True);
@@ -2134,76 +2104,18 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
 }
 void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     if (e->button() == Qt::MiddleButton) { rotating_ = false; panning_ = false; }
+    if(e->button()==Qt::LeftButton && commandSession_ && commandSession_->kind==CommandSession::Kind::Boolean) return;
     if (e->button()==Qt::LeftButton && commandSession_) {
         draggingFace_ = draggingRotation_ = false;
         groupRotationDragging_ = false;
         showCommandControls(e->pos());
-        dragDimension_->setText(QLocale().toString(commandSession_->value,'f',2));
+        dragDimension_->setText(commandSession_->kind==CommandSession::Kind::Pull && primitivePullDragging_ ? primitivePullDimensionText() : QLocale().toString(commandSession_->value,'f',2));
         commandPanel_->activateWindow();
         dragDimension_->setFocus(); dragDimension_->selectAll();
         emit statusMessage(tr("Preview: enter an exact value; OK/Enter confirms, Cancel/Esc discards."));
         return;
     }
-    if (e->button() != Qt::LeftButton || !draggingFace_) return;
-    draggingFace_ = false;
-    if (primitivePullDragging_) {
-        primitivePullDragging_ = false;
-        const auto& part = boxes_[dragIndex_];
-        primitivePullBefore_.afterShape = part.shape;
-        primitivePullBefore_.afterCone = part.cone;
-        primitivePullBefore_.afterRadius = part.spherePrimitive ? part.sphereRadius : part.cylinderRadius;
-        primitivePullBefore_.afterHeight = part.cylinderHeight;
-        primitivePullBefore_.afterBaseOffset = part.cylinderBaseOffset;
-        primitivePullBefore_.afterMin = part.min;
-        primitivePullBefore_.afterMax = part.max;
-        undoStack_.push_back(primitivePullBefore_);
-        redoStack_.clear();
-        primitivePullEditing_ = true;
-        dimensionEditing_ = true;
-        dragDimension_->setToolTip(primitivePullIsDiameter()
-            ? tr("Final diameter in mm") : tr("Final height in mm"));
-        showDragDimension(e->pos());
-        dragDimension_->setFocus();
-        dragDimension_->selectAll();
-        return;
-    }
-    if (multiFaceDragging_) {
-        multiFaceDragging_ = false;
-        // Keep the live overlay visible while the exact distance is being edited.
-        if (std::abs(dragDistance_) < 0.0001) {
-            clearMultiFaceHighlight();
-            dragDimension_->hide();
-            return;
-        }
-        PullChange operation = multiFaceParts_.front().before;
-        operation.groupedChanges.clear();
-        for (const auto& item : multiFaceParts_) {
-            auto change = item.before;
-            change.afterMin = boxes_[change.partIndex].min;
-            change.afterMax = boxes_[change.partIndex].max;
-            operation.groupedChanges.push_back(change);
-        }
-        undoStack_.push_back(operation);
-        redoStack_.clear();
-        multiFaceEditing_ = true;
-        dimensionEditing_ = true;
-        showDragDimension(e->pos());
-        dragDimension_->setFocus();
-        dragDimension_->selectAll();
-        emit statusMessage(tr("Multi-Face Pull: enter exact mm or Esc to keep."));
-        return;
-    }
-    if (std::abs(dragDistance_) < 0.0001) { dragDimension_->hide(); return; }
-    const auto& part = boxes_[dragIndex_];
-    undoStack_.push_back({dragIndex_, dragMin_, dragMaxBounds_, part.min, part.max,
-        part.orientation, part.orientation});
-    redoStack_.clear();
-    dimensionEditing_ = true;
-    showDragDimension(e->pos());
-    dragDimension_->setFocus();
-    dragDimension_->selectAll();
-    emit statusMessage(tr("Pull Face: %1 mm. Type exact mm and press Enter, or Esc to keep.")
-        .arg(dragDistance_, 0, 'f', 1));
+
 }
 void CadViewport::wheelEvent(QWheelEvent* e) {
     if (view_.IsNull()) return;

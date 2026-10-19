@@ -77,6 +77,7 @@ struct CadViewportPullTest {
     static void pickSphere(CadViewport& v, size_t index) {
         // The center click also covers the screen-right radial fallback.
         click(v,project(v,center(v,index)));
+        v.startPrimitivePull();
         require(v.arrowVisible_ && v.arrowPartIndex_ == index,
                 "sphere picking did not create a pull arrow");
         require(!v.faceArrow_.IsNull(), "missing orange arrow presentation");
@@ -119,6 +120,9 @@ struct CadViewportPullTest {
     static void run(CadViewport& v) {
         v.addSphere();
         const gp_Pnt originalCenter = center(v,0);
+        const auto originalShape=v.boxes_[0].shape;
+        pickSphere(v,0); const auto cancelled=beginPull(v); dragBy(v,cancelled,7); v.cancelCommandSession();
+        require(v.boxes_[0].shape.IsSame(originalShape) && v.undoStack_.empty() && !v.arrowVisible_,"Sphere Cancel failed to restore original/close tool");
         pickSphere(v,0);
         const QPoint start = beginPull(v);
         checkDimension(v,80.0,true);
@@ -155,7 +159,7 @@ struct CadViewportPullTest {
         release(v,inward);
         exact(v,-100.0);
         checkSphere(v,0,draggedRadius,originalCenter);
-        require(v.primitivePullEditing_, "invalid radius closed the editor");
+        require(v.commandSession_ && v.commandPanel_->isVisible(), "invalid radius closed the editor");
         require(!v.applyPrimitivePull(std::numeric_limits<double>::quiet_NaN()),
                 "NaN radius accepted");
         exact(v,89.50);
@@ -329,7 +333,7 @@ struct CadViewportPullTest {
         require(v.dragDimension_->text() == draggedHeightText,"height changed on release");
         exact(v,0.0);
         near(v.boxes_[4].cylinderHeight,draggedHeight,"zero height changed geometry");
-        require(v.primitivePullEditing_,"invalid height closed editor");
+        require(v.commandSession_ && v.commandPanel_->isVisible(),"invalid height closed editor");
         exact(v,120.50);
         near(v.boxes_[4].cylinderHeight,120.50,"absolute bottom height incorrect");
         near(capCenter(v,4,true).Distance(fixedTop),0.0,"transformed top moved with bottom pull");
@@ -398,6 +402,8 @@ struct CadViewportPullTest {
         const gp_Pnt bottom = coneEnd(v,index,false);
         const gp_Pnt interior = bottom.Translated(gp_Vec(bottom,coneEnd(v,index,true))*0.4);
         click(v,project(v,interior));
+        v.startPrimitivePull();
+        v.startPrimitivePull();
         require(v.arrowVisible_ && v.arrowPartIndex_ == index,"cone surface picking failed");
         for (const auto& arrow : v.coneArrows_)
             require(!arrow.IsNull(),"missing cone pull manipulator");
@@ -419,6 +425,10 @@ struct CadViewportPullTest {
     }
     static void runCone(CadViewport& v) {
         v.addCone();
+        checkCone(v,0,80,40,80);
+        const auto originalShape=v.boxes_[0].shape;
+        const auto cancelled=beginConePull(v,0,ConeTarget::BottomHeight); dragBy(v,cancelled,12); v.cancelCommandSession();
+        require(v.boxes_[0].shape.IsSame(originalShape) && v.undoStack_.empty() && !v.arrowVisible_,"Cone Cancel failed to restore original/close tool");
         checkCone(v,0,80,40,80);
         const gp_Pnt bottom = coneEnd(v,0,false), top = coneEnd(v,0,true);
         QPoint start = beginConePull(v,0,ConeTarget::BottomDiameter);
@@ -451,7 +461,7 @@ struct CadViewportPullTest {
         release(v,start);
         exact(v,-1.0);
         checkCone(v,0,100.50,0,80);
-        require(v.primitivePullEditing_,"invalid cone diameter closed editor");
+        require(v.commandSession_ && v.commandPanel_->isVisible(),"invalid cone diameter closed editor");
         exact(v,60.25);
         checkCone(v,0,100.50,60.25,80);
 
@@ -473,7 +483,7 @@ struct CadViewportPullTest {
         checkDimension(v,91.50,false);
         release(v,start);
         exact(v,0.0);
-        require(v.primitivePullEditing_,"invalid cone height closed editor");
+        require(v.commandSession_ && v.commandPanel_->isVisible(),"invalid cone height closed editor");
         exact(v,70.25);
         checkCone(v,0,100.50,60.25,70.25);
         near(coneEnd(v,0,false).Distance(newBottom),0,"bottom moved during top-height pull");
@@ -491,8 +501,8 @@ struct CadViewportPullTest {
         v.redoPull(); checkCone(v,0,100.50,120,70.25);
 
         // Exercise the real move/rotation gizmo command lifecycles and their undo.
-        v.setDirectMoveMode(true);
         v.selectParts({0});
+        v.setDirectMoveMode(true);
         const gp_Pnt beforeMove = coneEnd(v,0,false);
         const gp_Pnt gizmoCenter = v.partLocalGizmoCenter(v.boxes_[0]);
         const QPoint moveGrab = project(v,gizmoCenter.Translated(gp_Vec(25,0,0)));
@@ -571,6 +581,7 @@ struct CadViewportPullTest {
         const gp_Pnt boxTop((boxBefore.min[0]+boxBefore.max[0])*0.5,
             (boxBefore.min[1]+boxBefore.max[1])*0.5,boxBefore.max[2]);
         click(v,project(v,boxTop));
+        v.startPrimitivePull();
         require(v.arrowVisible_ && v.arrowPartIndex_ == 2 && v.arrowAxis_ == 2 && v.arrowMax_,
                 "box top-face arrow regression");
         const QPoint boxGrab = project(v,boxTop.Translated(gp_Vec(0,0,15)));
@@ -600,6 +611,9 @@ struct CadViewportPullTest {
         const double ringRadius = group ? 60.0 : 0.65*std::max({part.max[0]-part.min[0],
             part.max[1]-part.min[1],part.max[2]-part.min[2]});
         for (int axis = 0; axis < 3; ++axis) {
+            if(!v.directMoveMode_) require(v.moveAxes_[axis].IsNull(),"idle Move gizmo remains");
+            if(!v.rotateMode_) require(v.rotationRings_[axis].IsNull(),"idle Rotate gizmo remains");
+            if(v.directMoveMode_) {
             require(!v.moveAxes_[axis].IsNull(),"missing move gizmo");
             bool foundShaft = false;
             for (TopExp_Explorer faces(v.moveAxes_[axis]->Shape(),TopAbs_FACE);faces.More();faces.Next()) {
@@ -609,6 +623,8 @@ struct CadViewportPullTest {
                 foundShaft = true;
             }
             require(foundShaft,"move shaft geometry missing");
+            }
+            if(v.rotateMode_) {
             require(!v.rotationRings_[axis].IsNull(),"missing rotation gizmo");
             bool foundSection = false;
             for (TopExp_Explorer edges(v.rotationRings_[axis]->Shape(),TopAbs_EDGE);edges.More();edges.Next()) {
@@ -621,12 +637,12 @@ struct CadViewportPullTest {
                 foundSection = true;
             }
             require(foundSection,"rotation shaft profile missing");
+            }
         }
     }
     static void checkGizmo(CadViewport& v, size_t index, const gp_Pnt& expected) {
-        v.setDirectMoveMode(true);
-        v.setRotateMode(true);
         v.selectParts({index});
+        v.setDirectMoveMode(true);
         near(v.partLocalGizmoCenter(v.boxes_[index]).Transformed(v.boxes_[index].orientation)
             .Distance(expected),0,"incorrect world gizmo center");
         checkDisplayedGizmos(v,expected);
@@ -634,6 +650,8 @@ struct CadViewportPullTest {
         require(v.beginMoveAxisDrag(project(v,expected.Translated(gp_Vec(x)*25.0))),
                 "move hit testing is not aligned with centroid");
         v.draggingFace_ = false;
+        v.setRotateMode(true);
+        checkDisplayedGizmos(v,expected);
         const gp_Dir y = gp_Dir(0,1,0).Transformed(v.boxes_[index].orientation);
         const auto& part = v.boxes_[index];
         const double radius = 0.65*std::max({part.max[0]-part.min[0],part.max[1]-part.min[1],
@@ -674,7 +692,7 @@ struct CadViewportPullTest {
         release(v,start); exact(v,70);
         checkGizmo(v,3,expectedConeCenter(v,3));
         // Undo/redo while the transform tools are enabled must refresh after B-Rep restore.
-        v.setDirectMoveMode(true); v.setRotateMode(true); v.selectParts({3});
+        v.selectParts({3}); v.setRotateMode(true);
         v.undoPull();
         near(v.boxes_[3].cone.height,100,"cone height undo failed");
         checkDisplayedGizmos(v,expectedConeCenter(v,3));
@@ -714,7 +732,7 @@ struct CadViewportPullTest {
         v.setPartVisible(0,true); v.setPartVisible(3,true);
         const gp_Pnt a(50,40,30), b = expectedConeCenter(v,3);
         const gp_Pnt average((a.X()+b.X())*0.5,(a.Y()+b.Y())*0.5,(a.Z()+b.Z())*0.5);
-        v.setDirectMoveMode(true); v.setRotateMode(true); v.selectParts({0,3});
+        v.selectParts({0,3}); v.setRotateMode(true);
         near(v.selectionCenter().Distance(average),0,"multipart averaging changed");
         checkDisplayedGizmos(v,average,true);
         const gp_Circ groupRing(gp_Ax2(average,gp_Dir(0,1,0),gp_Dir(1,0,0)),60);
@@ -766,7 +784,7 @@ struct CadViewportPullTest {
                     }
                     v.applyPartState(i,v.boxes_[i].min,v.boxes_[i].max,orientation);
                 }
-                v.setRotateMode(true); v.selectParts(indices);
+                v.selectParts(indices); v.setRotateMode(true);
                 std::vector<gp_Trsf> before, expected;
                 gp_XYZ sum(0,0,0);
                 for (auto i : indices) {
@@ -855,8 +873,8 @@ struct CadViewportPullTest {
                         }
                         v.applyPartState(i,v.boxes_[i].min,v.boxes_[i].max,shift*rotation);
                     }
-                    v.setDirectMoveMode(kind==Kind::Move); v.setRotateMode(kind==Kind::Rotate);
                     v.selectParts(indices);
+                    v.setDirectMoveMode(kind==Kind::Move); v.setRotateMode(kind==Kind::Rotate);
                     const auto original = v.boxes_;
                     const auto selection = owners();
                     const auto undoSize = v.undoStack_.size(), redoSize = v.redoStack_.size();
@@ -936,8 +954,7 @@ struct CadViewportPullTest {
             }
         }
         // Real pointer startup and keyboard controls, with a face-owner snapshot.
-        v.setMovePartMode(false); v.setDirectMoveMode(true); v.setRotateMode(false);
-        v.selectParts({0}); v.fitAll();
+        v.selectParts({0}); v.setDirectMoveMode(true); v.fitAll();
         const auto before = v.boxes_[0];
         const size_t undoSize = v.undoStack_.size();
         const auto origin = center(v,0);
@@ -954,6 +971,7 @@ struct CadViewportPullTest {
         sameTransform(v.boxes_[0].presentation->LocalTransformation(),before.orientation);
         require(v.undoStack_.size()==undoSize,"Escape added history");
         // A pending session also cancels when another transform tool is selected.
+        v.setDirectMoveMode(true);
         require(v.beginMoveAxisDrag(grab),"second move startup failed"); dragBy(v,grab,15);
         v.setRotateMode(true);
         require(!v.commandSession_,"Move-to-Rotate kept a pending preview");

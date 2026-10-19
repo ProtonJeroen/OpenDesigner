@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(OpenDesigner VERSION 0.3.2 LANGUAGES CXX)
+project(OpenDesigner VERSION 0.3.3 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -17,6 +17,7 @@ add_executable(OpenDesigner
     src/main.cpp
     src/MainWindow.h src/MainWindow.cpp
     src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
+    src/MoveFaceGeometry.cpp src/MoveFaceGeometry.h src/MoveFace.cpp src/SelectionContext.cpp
 )
 target_include_directories(OpenDesigner PRIVATE ${OpenCASCADE_INCLUDE_DIR})
 
@@ -53,6 +54,7 @@ if(OPENDESIGNER_BUILD_TESTS)
     add_executable(OpenDesignerPullTests
         tests/CadViewportPullTest.cpp
         src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
+        src/MoveFaceGeometry.cpp src/MoveFaceGeometry.h src/MoveFace.cpp src/SelectionContext.cpp
     )
     target_include_directories(OpenDesignerPullTests PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
     target_link_libraries(OpenDesignerPullTests PRIVATE ${OPENDESIGNER_LIBRARIES})
@@ -65,10 +67,25 @@ if(OPENDESIGNER_BUILD_TESTS)
         tests/BooleanOperationsTest.cpp
         src/MainWindow.h src/MainWindow.cpp
         src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
+        src/MoveFaceGeometry.cpp src/MoveFaceGeometry.h src/MoveFace.cpp src/SelectionContext.cpp
     )
     target_include_directories(OpenDesignerBooleanTests PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
     target_link_libraries(OpenDesignerBooleanTests PRIVATE ${OPENDESIGNER_LIBRARIES})
     add_test(NAME boolean-operations COMMAND OpenDesignerBooleanTests)
     set_tests_properties(primitive-pull cone-pull gizmo-center rotation-pivot command-sessions PROPERTIES TIMEOUT 60)
-    set_tests_properties(boolean-operations PROPERTIES TIMEOUT 120)
+    add_executable(OpenDesignerMoveFaceTests
+        tests/MoveFaceTest.cpp src/MainWindow.h src/MainWindow.cpp
+        src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
+        src/MoveFace.cpp src/SelectionContext.cpp src/MoveFaceGeometry.h src/MoveFaceGeometry.cpp)
+    target_include_directories(OpenDesignerMoveFaceTests PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
+    target_link_libraries(OpenDesignerMoveFaceTests PRIVATE ${OPENDESIGNER_LIBRARIES})
+    add_test(NAME move-face COMMAND OpenDesignerMoveFaceTests)
+    add_executable(OpenDesignerSelectionContextTests
+        tests/SelectionContextTest.cpp src/MainWindow.h src/MainWindow.cpp
+        src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
+        src/MoveFace.cpp src/SelectionContext.cpp src/MoveFaceGeometry.h src/MoveFaceGeometry.cpp)
+    target_include_directories(OpenDesignerSelectionContextTests PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
+    target_link_libraries(OpenDesignerSelectionContextTests PRIVATE ${OPENDESIGNER_LIBRARIES})
+    add_test(NAME selection-context COMMAND OpenDesignerSelectionContextTests)
+    set_tests_properties(boolean-operations move-face selection-context PROPERTIES TIMEOUT 120)
 endif()
