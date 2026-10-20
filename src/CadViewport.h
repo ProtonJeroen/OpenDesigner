@@ -8,12 +8,16 @@ class QLineEdit;
 class QDialogButtonBox;
 class QShortcut;
 class QMenu;
+class QComboBox;
+class QLabel;
 class QContextMenuEvent;
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Face.hxx>
 #include <gp_Trsf.hxx>
+#include <gp_Ax1.hxx>
+#include <gp_Pln.hxx>
 #include <V3d_Viewer.hxx>
 #include <V3d_View.hxx>
 #include <Aspect_DisplayConnection.hxx>
@@ -44,6 +48,8 @@ public:
     void pullSelectedFace();
     void startPrimitivePull();
     void moveFace();
+    void rotateFace();
+    void alignFace();
     enum class SelectionMode { Face, Part };
     void setSelectionMode(SelectionMode mode);
     SelectionMode selectionMode() const { return selectionMode_; }
@@ -153,7 +159,7 @@ private:
     // Transaction state only: confirmed changes use the existing modeling history.
     struct CommandSession {
         enum class State { Selection, Parameters, Preview, Confirmed, Cancelled };
-        enum class Kind { Move, Rotate, MoveFace, Boolean, Pull };
+        enum class Kind { Move, Rotate, MoveFace, RotateFace, AlignFace, Boolean, Pull };
         State state = State::Selection;
         Kind kind = Kind::Move;
         std::vector<PullChange> changes;
@@ -164,6 +170,13 @@ private:
         gp_Trsf delta;
         double value = 0;
         TopoDS_Face face;
+        gp_Ax1 faceAxis = gp_Ax1(gp_Pnt(0,0,0),gp_Dir(1,0,0));
+        gp_Pln referencePlane = gp_Pln(gp_Pnt(0,0,0),gp_Dir(0,0,1));
+        size_t referencePart = 0;
+        TopoDS_Face referenceFace;
+        bool hasReference = false;
+        bool coplanar = true;
+        bool changed = false;
         std::shared_ptr<CadPart> faceBefore;
         TopoDS_Shape candidate;
         Handle(AIS_Shape) preview;
@@ -183,11 +196,33 @@ private:
     bool previewCommand(double value);
     bool startMoveFace(size_t index, const TopoDS_Face& face);
     bool previewMoveFace(double value);
+    bool startRotateFace(size_t index, const TopoDS_Face& face);
+    bool startAlignFace(size_t index, const TopoDS_Face& face);
+    bool previewFaceTransform(double value);
+    void chooseFaceRotationAxis(int choice);
+    void updateFaceRotationManipulator();
+    bool beginFaceRotationDrag(const QPoint& point);
+    double faceRotationCursorAngle(const QPoint& point) const;
+    bool pickFaceRotationAxis(const QPoint& point);
+    bool pickAlignReference(const QPoint& point);
     bool beginMoveFaceDrag(const QPoint& point);
     void applyFaceState(size_t index, const CadPart& state);
     bool moveFacePicking_ = false;
     double moveFaceDragStart_ = 0;
     Handle(AIS_Shape) moveFaceArrow_;
+    Handle(AIS_Shape) faceRotationManipulator_;
+    QComboBox* faceAxisSelector_ = nullptr;
+    QComboBox* faceAlignSelector_ = nullptr;
+    QLabel* faceAlignTargetLabel_ = nullptr;
+    QLabel* faceAlignReferenceLabel_ = nullptr;
+    bool faceAxisPicking_ = false;
+    bool alignFacePickingReference_ = false;
+    bool draggingFaceRotation_ = false;
+    double faceRotationPreviousAngle_ = 0.0;
+    double faceRotationAccumulatedAngle_ = 0.0;
+    gp_Pnt faceRotationPivotWorld_;
+    gp_Dir faceRotationAxisWorld_ = gp_Dir(0,0,1);
+    double faceRotationRadius_ = 40.0;
     bool updateCommandParameter(bool reportError = true);
     void confirmCommandSession();
     void cancelCommandSession();

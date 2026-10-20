@@ -3,6 +3,10 @@
 > Historische analyse van de hieronder genoemde v0.3-broncode. De afwijkende
 > rotatiepivot van het menucommando is in v0.3.1 verholpen; zie
 > [consistente rotatiepivot](ROTATION_PIVOT.md) voor het actuele gedrag en tests.
+> Deze analyse beschrijft de oorspronkelijke v0.3-codevergelijking. Sindsdien
+> zijn Move Face (v0.3.3), Rotate Face en Align Face (v0.3.4) geïmplementeerd;
+> zie [Move Face](MOVE_FACE.md), [Rotate Face](ROTATE_FACE.md) en
+> [Align Face](ALIGN_FACE.md) voor actuele grenzen en bediening.
 
 
 ## Afbakening en werkwijze

@@ -1,4 +1,4 @@
-# Selection and explicit modeling commands (v0.3.3)
+# Selection and explicit modeling commands (v0.3.3–v0.3.4)
 
 Selection is passive. There is no Faces/Parts dropdown.
 
@@ -23,16 +23,19 @@ and unrelated-object right clicks do not replace an existing selection.
 
 Part menus provide Move Part, Rotate Part, Duplicate, supported Boolean
 operations, Hide and Color. Hidden Parts can still be shown through the Structure
-Browser. Face menus contain only supported operations: Move Face for accepted
-planar B-Reps and Primitive Pull / Resize for supported primitive/Box faces.
-Unsupported Face functions and future Rotate/Align Face placeholders are absent.
+Browser. Face menus contain only supported operations: Move Face, Rotate Face
+and Align Face for accepted planar analytic B-Reps, plus Primitive Pull / Resize
+for supported primitive/Box faces. Rotate Face asks for a straight target edge
+or projected World X/Y/Z axis. Align Face asks for a separate planar reference
+and offers Coplanar/Parallel. Unsupported Face functions are absent.
 An unsupported Face with no available operations has no empty context menu.
 
 ## Explicit activation and complete termination
 
 Choose a context action or Modeling menu command to activate its manipulators.
-Move Face and Resize use orange arrows. Move Part uses local XYZ axes; Rotate
-Part uses local rings and the existing volume centroid pivot. The old combined
+Move Face and Resize use orange arrows. Rotate Face uses an orange ring around
+the chosen edge/reference axis. Move Part uses local XYZ axes; Rotate Part uses
+local rings and the existing volume centroid pivot. The old combined
 Move/Rotate gizmo is removed: one command has one manipulator set.
 
 OK/Enter confirms and closes a session. Cancel/Esc restores its original state
@@ -44,6 +47,11 @@ Duplicate, creation, modal numeric operations and Undo/Redo also clear old tools
 Invalid parameters leave the explicit editor available for correction or
 Cancel/Esc, rather than installing invalid geometry. An unsupported Move Face
 selection reports an error and clears the pending tool.
+
+Rotate Face and Align Face use a separate temporary B-Rep presentation and
+commit `FaceChange` snapshots to the existing undo history. Align Face keeps the
+reference Part read-only. OCCT rejects unsupported topology without mutating
+the source.
 
 Boolean has its own explicit operand-selection phase inside the same lifecycle:
 Target → Tools → Keep Tools → Preview → OK/Cancel. Tool picking through the
@@ -64,7 +72,7 @@ right-click and default Face picking, explicit activation, exclusive gizmos,
 OK/Cancel, tool changes, Pull rollback/history, Boolean Tool capture and complete
 termination, Duplicate cleanup and unsupported geometry actions. Geometry,
 pivots, world transforms, numeric input and Undo/Redo remain covered by the
-existing Pull, rotation, command-session, Move Face and Boolean suites.
+existing Pull, rotation, command-session, Move Face, face-transform and Boolean suites.
 
 For Fedora KDE, select Faces/Parts without invoking a command and verify no
 arrows appear. Start each context function explicitly, test OK/Enter and

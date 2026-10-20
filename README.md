@@ -2,7 +2,8 @@
 
 OpenDesigner is an open-source cross-platform 3D direct-modeling application inspired by classic CoCreate SolidDesigner.
 
-**Status:** v0.3.3 General Move Face prototype; not a packaged release.
+**Status:** v0.3.4 Rotate Face & Align Face prototype; not a packaged release.
+Manual Fedora KDE validation for v0.3.4 is pending.
 
 ## Prototype features
 - Qt 6 desktop window with dockable Structure Browser
@@ -11,13 +12,15 @@ OpenDesigner is an open-source cross-platform 3D direct-modeling application ins
 - Move/Rotate gizmos centered on B-Rep volume centroids, selection and duplication
 - Interactive Move/Rotate preview with OK/Enter, Cancel/Esc and one shared Undo/Redo step
 - General Move Face for supported planar faces, with validated B-Rep preview and Undo/Redo
+- Rotate Face about a straight target edge or projected world axis
+- Align Face as Coplanar or Parallel to a selected planar reference face
 - Passive Face/Alt-Part selection and capability-aware viewport context menus
 - Unite, explicit-target Subtract and Intersect with validated results and Undo/Redo
 - Structure Browser with names, color, visibility and stable Boolean result selection
 - Orbit, pan and zoom
 
 ## Build (Linux)
-Requires CMake 3.21+, a C++20 compiler, Qt 6.4+ Widgets and Open CASCADE visualization and modeling algorithms development libraries (including TKBO/TKBool).
+Requires CMake 3.21+, a C++20 compiler, Qt 6.4+ Widgets and Open CASCADE visualization and modeling algorithms development libraries (including TKBO/TKBool/TKFeat).
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -44,9 +47,12 @@ Interactive transformation workflow and architecture: [Command sessions and prev
 
 Supported surfaces, direct-edit behavior and limitations: [General Move Face](docs/MOVE_FACE.md).
 
+Planar face rotation and alignment behavior, validation and limitations:
+[Rotate Face](docs/ROTATE_FACE.md) and [Align Face](docs/ALIGN_FACE.md).
+
 Selection shortcuts, explicit context actions and eligibility: [Selection and context menus](docs/SELECTION_CONTEXT.md).
 
-The v0.3.3 interaction workflow uses passive selection: click Faces, Alt+click Parts,
+The v0.3.4 interaction workflow retains passive selection: click Faces, Alt+click Parts,
 Ctrl to add/remove. Choose a context or Modeling action to show its manipulators.
 OK/Enter and Cancel/Esc completely close the function and remove all temporary UI;
 selection remains available for another explicit command. There is no selection

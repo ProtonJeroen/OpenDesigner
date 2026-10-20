@@ -63,7 +63,7 @@ OpenDesigner targets Windows, Linux and macOS. This roadmap describes planned wo
 - Passive Face/Alt-Part selection retains Ctrl and Ctrl+Alt controls; no selection dropdown or automatic manipulators.
 - Viewport context menus dispatch to existing Part operations, supported Move Face and primitive/multi-Box Pull.
 - Face selection stays explicit on GeneralBRep/Boolean geometry; incompatible Part tools are disabled and their previews cancelled.
-- Move Face and Primitive Pull share orange arrow styling; future face commands have an extension point without placeholder actions.
+- Move Face and Primitive Pull share orange arrow styling; unavailable face actions are omitted rather than shown as placeholders.
 - Capabilities, tests and manual checks: [Selection/context menus](SELECTION_CONTEXT.md).
 
 ### v0.3.3 — tool compatibility and Boolean sessions
@@ -80,3 +80,11 @@ OpenDesigner targets Windows, Linux and macOS. This roadmap describes planned wo
 - Explicit Primitive Pull / Resize now has rollback snapshots and deferred one-step history; existing geometry and absolute numeric dimensions are retained.
 - Pull still uses its live working B-Rep calculation during preview; immutable candidate extraction is a future architecture improvement.
 - Regression coverage for passive selection, explicit activation, complete termination and Boolean operand-selection exceptions. Fedora KDE retest pending.
+
+## v0.3.4 — Rotate Face & Align Face
+- Rotate Face accepts one planar target, a bordering straight edge or projected world reference axis, signed degrees and an orange rotation ring.
+- Align Face keeps Target and Reference separate and supports Coplanar and Parallel against a planar face on the same or another Part.
+- OCCT DraftAngle and intersecting planar offset operations rebuild supported adjacent analytic surfaces. Candidates must preserve face/edge/vertex counts, wire connectivity and neighboring supports; no sweep/revolve bridge fallback is used.
+- Both adapters use the existing CommandSession preview and geometry snapshot history; part identity, metadata, browser rows and reference Parts are preserved.
+- Geometry, selection, preview, cancel, confirmation and history coverage: [Rotate Face](ROTATE_FACE.md), [Align Face](ALIGN_FACE.md).
+- Support remains conservative for analytic single-solid topology. Regression coverage includes safe refusal of a narrow Unite transition between overlapping Boxes of different heights, plus direct edits of topology-preserving Box and simple Subtract faces. Fedora KDE manual verification for this refinement is pending.

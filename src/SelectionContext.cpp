@@ -4,6 +4,8 @@
 #include <QLineEdit>
 #include <QAction>
 #include <QColorDialog>
+#include <QComboBox>
+#include <QLabel>
 #include <QContextMenuEvent>
 #include <StdSelect_BRepOwner.hxx>
 #include <TopoDS.hxx>
@@ -135,8 +137,6 @@ void CadViewport::populatePartMenu(QMenu& menu,const SelectionContext& selection
     });
 }
 void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection,const QPoint& anchor) {
-    // Capability-gated face commands live here. Future Rotate/Align Face adapters
-    // can add real actions without exposing placeholders or changing selection.
     auto* move=menu.addAction(tr("Move Face"));move->setObjectName(QStringLiteral("context.move_face"));
     QString error=tr("Select exactly one supported planar face.");gp_Pnt center;gp_Dir direction;
     const bool supported=selection.faces.size()==1 && MoveFaceGeometry::reference(
@@ -144,6 +144,14 @@ void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection
     if(!supported) { delete move; move=nullptr; }
     else move->setToolTip(error);
     if(move) connect(move,&QAction::triggered,this,&CadViewport::moveFace);
+    if(supported) {
+        auto* rotate=menu.addAction(tr("Rotate Face"));
+        rotate->setObjectName(QStringLiteral("context.rotate_face"));
+        connect(rotate,&QAction::triggered,this,&CadViewport::rotateFace);
+        auto* align=menu.addAction(tr("Align Face"));
+        align->setObjectName(QStringLiteral("context.align_face"));
+        connect(align,&QAction::triggered,this,&CadViewport::alignFace);
+    }
     auto* resize=menu.addAction(tr("Pull / Resize"));resize->setObjectName(QStringLiteral("context.resize"));
     if(!supportsResize(selection)) { delete resize; return; }
     connect(resize,&QAction::triggered,this,[this,anchor]() { previous_=anchor; startPrimitivePull(); });
@@ -184,14 +192,30 @@ void CadViewport::contextMenuEvent(QContextMenuEvent* event) {
 }
 
 void CadViewport::resetModelingTools() {
+    const bool restoreFacePicker=faceAxisPicking_ || selectionMode_!=SelectionMode::Face;
+    std::vector<Handle(SelectMgr_EntityOwner)> retainedOwners;
+    if(restoreFacePicker && !context_.IsNull())
+        for(context_->InitSelected();context_->MoreSelected();context_->NextSelected()) retainedOwners.push_back(context_->SelectedOwner());
     movePartMode_=directMoveMode_=rotateMode_=pullMode_=moveFacePicking_=false;
     draggingFace_=draggingRotation_=primitivePullDragging_=multiFaceDragging_=groupRotationDragging_=false;
     dimensionEditing_=primitivePullEditing_=multiFaceEditing_=false;
     hideFaceArrow(); hideMoveAxes(); hideRotationRings(); clearMultiFaceHighlight();
     if(!moveFaceArrow_.IsNull() && !context_.IsNull()) { context_->Remove(moveFaceArrow_,Standard_False); moveFaceArrow_.Nullify(); }
+    if(!faceRotationManipulator_.IsNull() && !context_.IsNull()) { context_->Remove(faceRotationManipulator_,Standard_False); faceRotationManipulator_.Nullify(); }
+    faceAxisPicking_=alignFacePickingReference_=draggingFaceRotation_=false;
     multiFaceParts_.clear();
     selectionMode_=SelectionMode::Face;
+    if(restoreFacePicker && !context_.IsNull()) {
+        for(auto& part:boxes_) if(part.active && part.visible) {
+            context_->Deactivate(part.presentation);
+            context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
+        }
+        context_->ClearSelected(Standard_False);
+        for(const auto& owner:retainedOwners) context_->AddOrRemoveSelected(owner,Standard_False);
+    }
     dragDimension_->hide(); commandPanel_->hide();
+    faceAxisSelector_->hide(); faceAlignSelector_->hide();
+    faceAlignTargetLabel_->hide(); faceAlignReferenceLabel_->hide();
     emit transformModesChanged(false,false,false);
     emit selectionModeChanged(selectionMode_);
     if(!view_.IsNull()) view_->Redraw();
