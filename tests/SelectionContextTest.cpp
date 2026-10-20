@@ -2,6 +2,12 @@
 #include "MainWindow.h"
 #include <QApplication>
 #include <QComboBox>
+#include <QToolBar>
+#include <QToolButton>
+#include <QMenuBar>
+#include <QSignalBlocker>
+#include <StdSelect_ViewerSelector3d.hxx>
+#include <BRepCheck_Analyzer.hxx>
 #include <QMenu>
 #include <QAction>
 #include <QColorDialog>
@@ -66,6 +72,94 @@ struct SelectionContextTest {
         v.selectParts({});
         Handle(StdSelect_BRepOwner) owner=new StdSelect_BRepOwner(face,v.boxes_[index].presentation,5,Standard_True);
         v.context_->AddOrRemoveSelected(owner,Standard_False);
+    }
+    static void historyDeselect() {
+        // Exercise the real shared actions through all three UI entry points.
+        for(int operation=0;operation<3;++operation) for(int route=0;route<4;++route) {
+            MainWindow window;window.show();window.activateWindow();QApplication::processEvents();
+            auto& v=*window.findChild<CadViewport*>();auto* tree=window.findChild<QTreeWidget*>();auto* root=tree->topLevelItem(0);
+            v.addBox();v.addBox();v.addBox();v.setPartVisible(2,false);
+            v.applyPartState(1,{50,0,0},{150,80,60},gp_Trsf());
+            v.renamePart(0,"History identity");v.setPartColor(0,Qt::red);
+            const auto before=v.boxes_[0];const auto beforeSecond=v.boxes_[1];
+            const auto original=topFace(before.shape);
+            if(operation<2) {
+                chooseFace(v,0,original);
+                if(operation==0) require(v.startMoveFace(0,original),"history Move start failed");
+                else {require(v.startRotateFace(0,original),"history Rotate start failed");v.chooseFaceRotationAxis(2);}
+                v.dragDimension_->setText(operation==0?"5":"12");v.confirmCommandSession();
+            } else require(v.applyBoolean(CadViewport::BooleanOperation::Unite,{0,1}),"history Boolean setup failed");
+            require(v.undoStack_.size()==1&&v.redoStack_.empty(),"history setup did not produce one committed operation");
+            const size_t result=operation==2?v.boxes_.size()-1:0;
+            const auto after=v.boxes_[result];const auto slotCount=v.boxes_.size();
+            auto* toolbar=window.findChild<QToolBar*>();require(toolbar,"modeling toolbar missing");
+            QMenu* edit=nullptr;
+            for(auto* item:window.menuBar()->actions()) if(item->menu()&&item->text().contains("Edit")) edit=item->menu();
+            require(edit&&edit->actions().contains(v.undoAction())&&edit->actions().contains(v.redoAction()),"Edit uses a different history action");
+            const auto trigger=[&](bool redo) {
+                auto* shared=redo?v.redoAction():v.undoAction();require(shared->isEnabled(),"history action unexpectedly disabled");
+                if(route==0) {
+                    auto* button=qobject_cast<QToolButton*>(toolbar->widgetForAction(shared));require(button,"history toolbar button missing");button->click();
+                } else if(route==1) shared->trigger(); // Exact action owned by Edit.
+                else {
+                    QWidget* receiver=&v;
+                    if(route==3) {v.commandPanel_->activateWindow();v.dragDimension_->setFocus();receiver=v.dragDimension_;}
+                    else {window.activateWindow();v.setFocus();}
+                    QApplication::processEvents();
+                    QKeyEvent press(QEvent::KeyPress,redo?Qt::Key_Y:Qt::Key_Z,Qt::ControlModifier);
+                    QApplication::sendEvent(receiver,&press);
+                    QKeyEvent release(QEvent::KeyRelease,redo?Qt::Key_Y:Qt::Key_Z,Qt::ControlModifier);
+                    QApplication::sendEvent(receiver,&release);QApplication::processEvents();
+                }
+            };
+            std::vector<Handle(SelectMgr_EntityOwner)> staleOwners;
+            const auto seedSelection=[&](size_t index) {
+                v.selectedPartIndices_={index};v.context_->ClearSelected(false);
+                TopExp_Explorer edge(v.boxes_[index].shape,TopAbs_EDGE),face(v.boxes_[index].shape,TopAbs_FACE);
+                Handle(StdSelect_BRepOwner) faceOwner=new StdSelect_BRepOwner(face.Current(),v.boxes_[index].presentation,5,true);
+                Handle(StdSelect_BRepOwner) edgeOwner=new StdSelect_BRepOwner(edge.Current(),v.boxes_[index].presentation,5,true);
+                v.context_->AddOrRemoveSelected(faceOwner,false);v.context_->AddOrRemoveSelected(edgeOwner,false);
+                v.context_->AddOrRemoveSelected(v.boxes_[index].presentation,false);
+                staleOwners={faceOwner,edgeOwner};
+                require(v.context_->NbSelected()>0&&!v.selectedPartIndices_.empty(),"selection fixture was empty");
+                {const QSignalBlocker blocked(tree);tree->setCurrentItem(root->child(static_cast<int>(index)));root->child(static_cast<int>(index))->setSelected(true);root->child(2)->setSelected(true);}
+                require(!tree->selectedItems().empty(),"browser selection fixture was empty");
+            };
+            const auto assertClear=[&]() {
+                require(v.selectedPartIndices_.empty()&&v.selectionContext().kind==CadViewport::SelectionContext::Kind::None
+                    &&v.context_->NbSelected()==0,"history retained internal/AIS face, edge or Part selection");
+                require(!v.context_->HasDetected()&&v.context_->MainSelector()->NbPicked()==0,"history retained detected/picked topology owners");
+                for(const auto& owner:staleOwners) require(!owner->IsSelected()&&!v.context_->IsHilighted(owner),"old subshape owner remained selected/highlighted");
+                for(const auto& part:v.boxes_) if(part.active&&part.visible) require(!v.context_->IsHilighted(part.presentation),"Part selection highlight remained");
+                require(tree->selectedItems().empty()&&tree->currentItem()==nullptr,"history retained Structure Browser selection/focus");
+                require(!v.commandSession_&&!v.moveFacePicking_&&!v.faceAxisPicking_&&!v.alignFacePickingReference_
+                    &&!v.movePartMode_&&!v.directMoveMode_&&!v.rotateMode_&&!v.pullMode_,"history retained active tools");
+                require(v.faceArrow_.IsNull()&&v.moveFaceArrow_.IsNull()&&v.faceRotationManipulator_.IsNull()&&v.multiFaceHighlight_.IsNull(),"history retained face tools/highlights");
+                for(const auto& arrow:v.coneArrows_) require(arrow.IsNull(),"history retained cone arrow");
+                for(const auto& arrow:v.moveAxes_) require(arrow.IsNull(),"history retained move axes");
+                for(const auto& ring:v.rotationRings_) require(ring.IsNull(),"history retained rotation rings");
+                require(v.multiFaceParts_.empty()&&!v.commandPanel_->isVisible()&&!v.dragDimension_->isVisible(),"history retained command UI or subshape references");
+                std::unique_ptr<QMenu> menu(v.createSelectionMenu(QPoint(-20,-20)));
+                require(menu&&menu->actions().size()==2&&menu->actions()[0]==v.undoAction()&&menu->actions()[1]==v.redoAction(),"history did not restore background Undo/Redo menu");
+                require(popup(v,QPoint(-20,-20)),"empty-space right click after history did not open a menu");
+            };
+            // Undo while a separate unconfirmed Move candidate is visible.
+            TopExp_Explorer currentFace(after.shape,TopAbs_FACE);
+            require(v.startMoveFace(result,TopoDS::Face(currentFace.Current()))&&v.previewCommand(2),"pending Move preview failed");
+            const auto undoPreview=v.commandSession_->preview;seedSelection(result);
+            trigger(false);assertClear();
+            require(v.context_->DisplayStatus(undoPreview)==PrsMgr_DisplayStatus_None,"Undo retained unconfirmed preview");
+            require(v.undoStack_.empty()&&v.redoStack_.size()==1&&v.boxes_[0].shape.IsSame(before.shape),"Undo committed preview or restored wrong geometry");
+            if(operation==2) require(v.isPartActive(0)&&v.isPartActive(1)&&!v.isPartActive(result)&&v.boxes_[1].shape.IsSame(beforeSecond.shape),"Boolean Undo lost operands");
+            // Redo while a separate unconfirmed Rotate candidate/ring is visible.
+            require(v.startRotateFace(0,topFace(v.boxes_[0].shape)),"pending Rotate start failed");v.chooseFaceRotationAxis(2);
+            require(v.previewCommand(3),"pending Rotate preview failed");const auto redoPreview=v.commandSession_->preview;seedSelection(0);
+            trigger(true);assertClear();
+            require(v.context_->DisplayStatus(redoPreview)==PrsMgr_DisplayStatus_None,"Redo retained unconfirmed preview");
+            require(v.undoStack_.size()==1&&v.redoStack_.empty()&&v.boxes_[result].shape.IsSame(after.shape),"Redo did not restore exactly the cached operation");
+            require(v.boxes_.size()==slotCount&&BRepCheck_Analyzer(v.boxes_[result].shape).IsValid()&&!v.boxes_[2].visible,"history changed slots, validity or hidden Part visibility");
+            require(v.boxes_[0].name==before.name&&v.boxes_[0].color==before.color,"history lost source Part properties");
+        }
     }
     static void run() {
         MainWindow window; window.show(); QApplication::processEvents();
@@ -153,7 +247,7 @@ struct SelectionContextTest {
         v.startPrimitivePull(); require(v.beginArrowDrag(groupGrab()),"group Pull restart failed");
         v.dragDimension_->setText("7"); v.confirmCommandSession(); idle();
         require(v.undoStack_.size()==history+1 && v.selectedPartIndices_.size()==2,"group Pull confirm/history/selection failed");
-        v.undoPull(); idle(); require(v.boxes_[0].shape.IsSame(groupShape0) && v.boxes_[1].shape.IsSame(groupShape1) && v.selectedPartIndices_.size()==2,"group Pull Undo failed");
+        v.undoPull(); idle(); require(v.boxes_[0].shape.IsSame(groupShape0) && v.boxes_[1].shape.IsSame(groupShape1) && v.selectedPartIndices_.empty() && v.context_->NbSelected()==0,"group Pull Undo failed");
         v.redoPull(); idle(); require(v.boxes_[0].max[2]==67 && v.boxes_[1].max[2]==67,"group Pull Redo failed"); v.undoPull();
         v.selectParts({}); require(popup(v,p0),"right click without selection did not pick Face"); idle();
         require(v.selectionContext().kind==CadViewport::SelectionContext::Kind::Faces,"default right click did not retain Face type");
@@ -247,6 +341,6 @@ int main(int argc,char** argv) {
 #endif
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc,argv);
-    try {SelectionContextTest::run();std::cout<<"Selection modes, context menus, shared commands and Boolean Move Face passed.\n";return 0;}
+    try {SelectionContextTest::run();SelectionContextTest::historyDeselect();std::cout<<"Selection modes, context menus, shared commands and Boolean Move Face passed.\n";return 0;}
     catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

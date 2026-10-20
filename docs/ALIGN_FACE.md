@@ -1,4 +1,4 @@
-# Align Face (v0.3.5)
+# Align Face (v0.3.6)
 
 Select one planar target Face and choose **Align Face** from its context menu or
 from **Modeling**. Then select a planar reference Face, on the same Part or a
@@ -19,24 +19,32 @@ tool discards it. Undo/Redo restores the target geometry from cached snapshots;
 target identity, name, color, visibility and browser row remain stable. Reference
 geometry and metadata are never changed.
 
-## Geometry scope (v0.3.5)
+## Geometry scope (v0.3.6)
 
-The planar target uses the shared [B-Rep reconstruction layer](BREP_RECONSTRUCTION.md).
-Parallel tilts through OCCT DraftAngle; Coplanar composes that with an intersecting
-face offset. Redundant Boolean topology is normalized and the target is mapped
-through OCCT history before construction. Neither stage adds a sweep or bridge
-volume. Each stage checks analytic supports, the requested plane, closure,
-positive volume and self-interference. Topological splits/merges are permitted
-without relying on equal face/edge/vertex counts.
+Align Face shares [B-Rep reconstruction](BREP_RECONSTRUCTION.md) with Move and
+Rotate Face. It benefits from final coplanar/edge unification and the bounded
+planar material-cell fallback for controlled topology events. Cleanup must retain
+Common-confirmed material equivalence; constructing a valid solid alone is not
+enough. The reference Part remains read-only.
 
-The two-height Unite riser is verified for Coplanar x=55 and x=65, unchanged
-Parallel, and tilted Parallel/Coplanar planes with slopes ±0.1. Tests compare
-material occupancy and exact volumes, not just validity. Existing Box and
-reference-Part session tests remain enabled; riser transaction tests exercise
-both signs, preview/cancel/confirm and cached Undo/Redo.
+After rotation/unification, Coplanar uses the mapped final target patch for its
+offset. Ambiguous multiple target patches are refused rather than moving an
+arbitrary fragment. A regression first removes the Unite staircase's high cap
+with +75° Rotate, then aligns its surviving mapped riser to an offset reference
+plane and checks exact volume and material occupancy. Existing Parallel/Coplanar
+and external-reference workflows remain tested. The larger signed riser sessions
+also test reference planes at x=0 and x=120, including terrace disappearance.
 
-Freeform/blend supports, multiple shells/solids, loss of original analytic
-supports, ambiguous selected-face mapping and failed reconstruction are refused
-without document mutation. Parallel aligns the plane, not a prescribed outward
-normal direction. Computation remains synchronous and conservative.
-Manual Fedora KDE verification of v0.3.5 passed; the user confirmed the tested geometry and live preview workflow.
+The new cell path is all-planar and bounded to 12 distinct supports and 32 cells;
+target rotation must remain on the original side. Freeform/blend geometry,
+multiple shells/solids, lost targets, ambiguous partitions and unreliable results
+remain refused. The conservative plane/cylinder/cone construction path remains
+available where no new topology algorithm is needed. Calculation is synchronous.
+All previews, orange manipulators, Cancel/OK and cached Undo/Redo behavior remain.
+Manual Fedora KDE verification of v0.3.6 is pending.
+
+The exact Fedora Rotate +30° / Move +49 mm fixture also verifies a subsequent
+coplanar Align using the final mapped oblique face. It shares the correction that
+retains physical target-neighbor trims across material-cell reconstruction.
+Concave/holed or conflicting neighbor-trim decompositions remain refused by the
+planar fallback. See [the diagnosis](BREP_RECONSTRUCTION.md).

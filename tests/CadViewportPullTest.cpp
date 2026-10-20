@@ -520,6 +520,8 @@ struct CadViewportPullTest {
         near(coneEnd(v,0,false).Distance(beforeMove.Translated(gp_Vec(130,0,0))),
              0,"cone move redo failed");
         v.setDirectMoveMode(false);
+        require(v.selectedPartIndices_.empty()&&v.context_->NbSelected()==0,"cone Redo retained selection");
+        v.selectParts({0}); // History navigation requires a fresh explicit selection.
         v.setRotateMode(true);
         const gp_Pnt beforeRotation = coneEnd(v,0,false);
         const auto& part = v.boxes_[0];
@@ -539,6 +541,8 @@ struct CadViewportPullTest {
         v.redoPull();
         near(coneEnd(v,0,false).Distance(rotatedBottom),0,"cone rotation redo failed");
         v.setRotateMode(false);
+        require(v.selectedPartIndices_.empty()&&v.context_->NbSelected()==0,"cone rotation Redo retained selection");
+        v.selectParts({0});
         v.duplicateSelectedParts();
         require(v.boxes_.size() == 2,"cone duplication failed");
         checkCone(v,1,100.50,120,70.25);
@@ -691,7 +695,7 @@ struct CadViewportPullTest {
         start = beginConePull(v,3,ConeTarget::TopHeight);
         release(v,start); exact(v,70);
         checkGizmo(v,3,expectedConeCenter(v,3));
-        // Undo/redo while the transform tools are enabled must refresh after B-Rep restore.
+        // Undo/redo restores geometry and leaves transform tools/selection inactive.
         v.selectParts({3}); v.setRotateMode(true);
         v.undoPull();
         near(v.boxes_[3].cone.height,100,"cone height undo failed");
@@ -750,7 +754,8 @@ struct CadViewportPullTest {
         near(expectedConeCenter(v,3).Distance(b),0,"multipart undo changed cone center");
         checkDisplayedGizmos(v,average,true);
         v.redoPull();
-        near(v.selectionCenter().Distance(average),0,"multipart redo changed pivot");
+        require(v.selectedPartIndices_.empty()&&v.context_->NbSelected()==0,"multipart redo retained selection");
+        near(v.rotationCenter({0,3}).Distance(average),0,"multipart redo changed pivot");
         checkDisplayedGizmos(v,average,true);
     }
 

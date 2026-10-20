@@ -1,6 +1,7 @@
 #include "CadViewport.h"
 #include "MainWindow.h"
 #include "MoveFaceGeometry.h"
+#include "RotateMoveFixture.h"
 #include <QApplication>
 #include <QAction>
 #include <QDialogButtonBox>
@@ -207,8 +208,9 @@ struct MoveFaceTest {
             require(row==root->child(0) && row->isSelected(),"OK changed browser references");
             const auto after=v.boxes_[0].shape;
             v.undoPull(); require(v.boxes_[0].shape.IsSame(original.shape) && v.boxes_[0].geometryKind==original.geometryKind,"Undo lost original shape/type");
-            require(row->isSelected(),"Undo lost browser selection");
+            require(row==root->child(0) && !row->isSelected() && tree->selectedItems().empty() && v.selectedPartIndices_.empty() && v.context_->NbSelected()==0,"Move Face Undo retained selection or changed browser row");
             v.redoPull(); require(v.boxes_[0].shape.IsSame(after),"Redo recalculated/lost cached result");
+            require(tree->selectedItems().empty() && v.selectedPartIndices_.empty() && v.context_->NbSelected()==0,"Move Face Redo retained selection");
             v.undoPull();
         }
         // Real picking must resolve local faces even after a full instance rotation/translation.
@@ -315,9 +317,10 @@ struct MoveFaceTest {
         const auto stamp=brep(stairState.shape);
         const auto presentation=v.boxes_[stairIndex].presentation;
         const auto stairRow=root->child(static_cast<int>(stairIndex));
-        for(int operation=0;operation<3;++operation) for(double sign:{1.0,-1.0}) {
+        for(int operation=0;operation<3;++operation) for(double sign:{1.0,-1.0}) for(int level:{0,1}) {
             const auto undoCount=v.undoStack_.size();
             AIS_ListOfInteractive baselineObjects;v.context_->ObjectsInside(baselineObjects);
+            const double parameter=sign*(operation==1?(level==0?8:75):(level==0?5:60));
             auto start=[&]() {
                 selectFace(v,stairIndex,riser);
                 if(operation==0) require(v.startMoveFace(stairIndex,riser),"riser Move start failed");
@@ -329,11 +332,10 @@ struct MoveFaceTest {
                 if(operation==2) {
                     require(v.startAlignFace(stairIndex,riser),"riser Align start failed");
                     v.commandSession_->hasReference=true;
-                    v.commandSession_->referencePlane=gp_Pln(gp_Pnt(60-5*sign,0,0),gp_Dir(1,0,0));
+                    v.commandSession_->referencePlane=gp_Pln(gp_Pnt(60-parameter,0,0),gp_Dir(1,0,0));
                     v.alignFacePickingReference_=false;
                 }
             };
-            const double parameter=sign*(operation==1?8:5);
             start();require(v.previewCommand(parameter),"riser preview failed");
             visiblePreview(v);
             require(!v.commandSession_->preview.IsNull() && v.boxes_[stairIndex].shape.IsSame(stairState.shape),"riser preview mutated canonical shape");
@@ -384,6 +386,46 @@ struct MoveFaceTest {
             v.undoPull();
         }
 
+        // Exact Fedora report: good Rotate +30 B-Rep, then oblique Move +49.
+        v.addBox();const size_t exactIndex=v.boxes_.size()-1;
+        auto exactState=v.boxes_[exactIndex];exactState.shape=RotateMoveFixture::load("rotated30.brep");
+        exactState.geometryKind=CadViewport::CadPart::GeometryKind::GeneralBRep;
+        exactState.orientation=transform;exactState.min={0,0,0};exactState.max={225,80,60};
+        exactState.baseMin=exactState.min;exactState.baseMax=exactState.max;
+        v.applyFaceState(exactIndex,exactState);v.renamePart(exactIndex,"Fedora Rotate30 Move49");v.setPartColor(exactIndex,QColor(31,129,211));
+        const auto exactTarget=RotateMoveFixture::face(exactState.shape,5);
+        const auto exactStamp=brep(exactState.shape);const auto exactUndo=v.undoStack_.size();
+        const auto exactPresentation=v.boxes_[exactIndex].presentation;const auto exactRow=root->child(static_cast<int>(exactIndex));
+        const auto exactSlots=v.boxes_.size();v.fitSelection({exactIndex});
+        AIS_ListOfInteractive exactBaseline;v.context_->ObjectsInside(exactBaseline);
+        const auto startExact=[&] {
+            selectFace(v,exactIndex,exactTarget);
+            require(v.startMoveFace(exactIndex,exactTarget),"exact oblique Move session failed to start");
+            v.dragDimension_->setText(QStringLiteral("49"));
+            require(v.updateCommandParameter(),"exact oblique +49 preview failed");
+            RotateMoveFixture::verify(v.commandSession_->candidate);visiblePreview(v);
+        };
+        startExact();const auto replaced=v.commandSession_->preview;
+        require(v.previewCommand(49.5),"oblique preview replacement failed");RotateMoveFixture::verify(v.commandSession_->candidate,49.5);
+        require(v.context_->DisplayStatus(replaced)==PrsMgr_DisplayStatus_None,"oblique input replacement retained old preview");
+        require(v.previewCommand(49),"oblique +49 preview recovery failed");visiblePreview(v);
+        const auto cancelled=v.commandSession_->preview;
+        QKeyEvent exactEsc(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier);QApplication::sendEvent(v.dragDimension_,&exactEsc);
+        require(!v.commandSession_&&v.undoStack_.size()==exactUndo&&brep(v.boxes_[exactIndex].shape)==exactStamp,"exact oblique Cancel modified document/history");
+        require(v.context_->DisplayStatus(cancelled)==PrsMgr_DisplayStatus_None&&v.context_->IsDisplayed(exactPresentation),"exact oblique Cancel leaked preview or hid source");
+        startExact();const auto committedExactPreview=v.commandSession_->preview;
+        QKeyEvent exactEnter(QEvent::KeyPress,Qt::Key_Return,Qt::NoModifier);QApplication::sendEvent(v.dragDimension_,&exactEnter);
+        require(!v.commandSession_&&v.undoStack_.size()==exactUndo+1,"exact oblique Enter did not commit one history entry");
+        const auto exactEdited=v.boxes_[exactIndex].shape;RotateMoveFixture::verify(exactEdited);
+        require(v.context_->DisplayStatus(committedExactPreview)==PrsMgr_DisplayStatus_None&&v.moveFaceArrow_.IsNull()
+            &&v.faceRotationManipulator_.IsNull(),"exact oblique confirmation retained AIS tools");
+        AIS_ListOfInteractive exactFinal;v.context_->ObjectsInside(exactFinal);
+        require(exactFinal.Extent()==exactBaseline.Extent(),"exact oblique edit leaked AIS objects");
+        require(v.boxes_.size()==exactSlots&&v.boxes_[exactIndex].presentation==exactPresentation&&root->child(static_cast<int>(exactIndex))==exactRow
+            &&v.partName(exactIndex)=="Fedora Rotate30 Move49"&&v.partColor(exactIndex)==QColor(31,129,211),"exact oblique edit lost Part identity/properties/browser reference");
+        for(int r=1;r<=3;++r) for(int c=1;c<=4;++c) near(v.boxes_[exactIndex].orientation.Value(r,c),transform.Value(r,c),"exact oblique edit changed Part placement");
+        v.undoPull();require(v.boxes_[exactIndex].shape.IsSame(exactState.shape)&&brep(v.boxes_[exactIndex].shape)==exactStamp,"exact oblique Undo did not restore supplied B-Rep");
+        v.redoPull();require(v.boxes_[exactIndex].shape.IsSame(exactEdited),"exact oblique Redo did not restore cached result");RotateMoveFixture::verify(v.boxes_[exactIndex].shape);
     }
 };
 int main(int argc,char** argv) {

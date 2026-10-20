@@ -110,11 +110,35 @@ OpenDesigner targets Windows, Linux and macOS. This roadmap describes planned wo
 - Manual Fedora KDE tests passed; the user confirmed all tested v0.3.5
   functionality, including geometry, live previews and context menus (2026-10-20).
 
-## v0.3.6 — further topology improvements (planned)
+## v0.3.6 — Advanced Face Topology
 
-- Extend controlled topology reconstruction beyond redundant seams, including
-  carefully validated support-disappearance events.
-- Broaden coverage for complex Boolean and curved-neighbor configurations with
-  independent expected-shape checks and safe refusal where reliability is unproven.
-- Keep freeform/blend reconstruction, multi-shell solids and persistent subshape
-  naming outside the v0.3.5 support claim; revisit their scope separately.
+- Every accepted face edit now receives final same-domain normalization and
+  connectivity-checked internal cleanup, with material equivalence checked by
+  OCCT Common before and after normalization.
+- Bounded all-planar material-cell reconstruction uses OCCT Splitter, halfspaces,
+  Common and Fuse to support controlled disappearing supports and new patches on
+  existing planes. Artificial target-plane partitions inside material are removed
+  before editing; nonadjacent supports do not clip legitimate overhangs.
+- Verified Unite-riser +75° rotation removes the former blocking high cap;
+  negative rotations preserve existing overhang behavior. Move crosses the original
+  overlap seam, removes a terrace at +60 mm and exposes an underside at +100 mm.
+- Regressions check analytical volumes, material probes, absence of redundant
+  seams, preservation of disconnected coplanar patches, final target mapping,
+  Align after reconstruction and preview/Cancel/OK/Undo/Redo cleanup.
+- Limits remain explicit: one target patch, up to 12 distinct planes and 32 cells
+  for the new path; no unrestricted curved/freeform/multi-shell reconstruction,
+  lost-target editing or persistent subshape naming. Computation is synchronous.
+- File → Export Debug Model captures exact geometry/meshes, metadata, selection
+  and available command parameters. An isolated inspector supports roundtrip
+  checks, stored/fresh mesh comparison, wireframe and world-space material probes.
+  This is diagnostic ZIP capture, not v0.3.7 `.odc` Save/Open.
+- The exact supplied Rotate +30° → oblique Move +49 mm case now retains physical
+  target-neighbor trims that were previously lost as redundant cell constraints.
+  This removes a real 64981.2085 mm³ triangular wing; it is not a mesh-only fix.
+  Exact B-Rep, independent material oracle, mapping and full preview/history
+  regressions are included. Concave/ambiguous target trim decompositions remain
+  refused by the planar fallback. Fedora KDE retest and release approval are
+  pending. See [B-Rep reconstruction](BREP_RECONSTRUCTION.md).
+
+Remaining work includes broader complex Boolean/curved-neighbor topology events,
+nonconvex cell partitions, persistent subshape IDs and cancellable kernel work.

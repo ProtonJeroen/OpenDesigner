@@ -1,4 +1,5 @@
 #include "CadViewport.h"
+#include <QJsonArray>
 #include <QVBoxLayout>
 #include <QCheckBox>
 #include <QListWidget>
@@ -224,7 +225,7 @@ void CadViewport::commitBooleanChange(const std::shared_ptr<BooleanChange>& comm
     boxes_.push_back(command->resultState); ++partCount_;
     announcePartCreated(command->resultState.name);
     restoreBooleanChange(*command,true);
-    PullChange entry{}; entry.booleanChange=command;
+    PullChange entry{}; entry.booleanChange=command;entry.debugOperation=command->debugOperation;
     undoStack_.push_back(entry); redoStack_.clear();
     updateHistoryActions();
     int solids=0;
@@ -316,6 +317,9 @@ bool CadViewport::calculateBoolean(BooleanOperation operation, const std::vector
         result.presentation->SetColor(Quantity_Color(result.color.redF(),result.color.greenF(),
             result.color.blueF(),Quantity_TOC_RGB));
         auto command = std::make_shared<BooleanChange>();
+        QJsonArray debugOperands;for(auto operand:operands) debugOperands.append(QString::number(operand));
+        command->debugOperation=QJsonObject{{"available",true},{"name",name},{"operandPartIds",debugOperands},
+            {"keepTools",keepTools},{"targetPartId",target?QJsonValue(QString::number(*target)):QJsonValue(QJsonValue::Null)}};
         command->sources = keepTools ? std::vector<size_t>{operands.front()} : operands;
         for (const auto index : command->sources) command->sourceStates.push_back(boxes_[index]);
         command->beforeSelection = selectedBooleanParts();

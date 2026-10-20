@@ -1,0 +1,2 @@
+# Preserve exact OCCT diagnostic fixture bytes, including serializer whitespace.
+tests/fixtures/rotate30-move49/*.brep -text -whitespace

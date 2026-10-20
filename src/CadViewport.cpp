@@ -21,6 +21,7 @@
 #include <Prs3d_ShadingAspect.hxx>
 #include <Graphic3d_ZLayerId.hxx>
 #include <StdSelect_BRepOwner.hxx>
+#include <StdSelect_ViewerSelector3d.hxx>
 #include <SelectMgr_EntityOwner.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
@@ -290,6 +291,8 @@ void CadViewport::closeCommandSession(bool confirm) {
     if (confirm && (faceCommand ? changedFace : std::abs(session.value)>1.e-10) && !session.changes.empty()) {
         PullChange operation = session.changes.front();
         if (session.changes.size()>1) operation.groupedChanges = session.changes;
+        operation.debugOperation=debugCommand(session);
+        operation.debugOperation["available"]=true;
         undoStack_.push_back(operation);
         redoStack_.clear();
         updateHistoryActions();
@@ -333,6 +336,17 @@ bool CadViewport::eventFilter(QObject* watched, QEvent* event) {
         const bool sessionWidget=widget && (widget==this || isAncestorOf(widget)
             || widget==commandPanel_ || commandPanel_->isAncestorOf(widget)
             || (commandSession_->kind==CommandSession::Kind::Boolean && widget && widget->window()==window()));
+        if(sessionWidget && key->modifiers()==Qt::ControlModifier
+            && (key->key()==Qt::Key_Z || key->key()==Qt::Key_Y)) {
+            // The floating parameter editor is a separate tool window. Route
+            // history keys to the same actions instead of its text undo buffer.
+            auto* action=key->key()==Qt::Key_Z?undoAction_:redoAction_;
+            if(action->isEnabled()) {
+                event->accept();
+                if(event->type()==QEvent::KeyPress) action->trigger();
+                return true;
+            }
+        }
         if (sessionWidget && (key->key()==Qt::Key_Escape || key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter)) {
             event->accept();
             if (event->type()==QEvent::KeyPress) {
@@ -947,6 +961,23 @@ void CadViewport::updateHistoryActions() {
     undoAction_->setEnabled(!undoStack_.empty());
     redoAction_->setEnabled(!redoStack_.empty());
 }
+void CadViewport::clearHistorySelection() {
+    // Release subshape owners before rebuilding topology; resetModelingTools
+    // must not retain old owners when restoring the default face picker.
+    selectedPartIndices_.clear();
+    if(!context_.IsNull()) {
+        context_->UnhilightSelected(Standard_False);
+        context_->ClearSelected(Standard_False);
+        context_->ClearDetected(Standard_False);
+        context_->MainSelector()->ClearPicked();
+    }
+    resetModelingTools();
+    primitivePullBefore_={};
+    emit partSelectionChanged({}); // Clear browser-only/hidden selections too.
+    if(!view_.IsNull()) {
+        context_->UpdateCurrentViewer();view_->Invalidate();view_->Redraw();
+    }
+}
 void CadViewport::undoPull() {
     cancelCommandSession();
     if (undoStack_.empty()) {
@@ -954,6 +985,7 @@ void CadViewport::undoPull() {
         return;
     }
     finishModelingInteraction();
+    clearHistorySelection();
     const PullChange change = undoStack_.back();
     undoStack_.pop_back();
     if (change.booleanChange) restoreBooleanChange(*change.booleanChange,false);
@@ -966,6 +998,7 @@ void CadViewport::undoPull() {
     } else restorePullChange(change, false);
     redoStack_.push_back(change);
     updateHistoryActions();
+    clearHistorySelection();
     emit statusMessage(tr("Modeling operation undone."));
 }
 void CadViewport::redoPull() {
@@ -975,6 +1008,7 @@ void CadViewport::redoPull() {
         return;
     }
     finishModelingInteraction();
+    clearHistorySelection();
     const PullChange change = redoStack_.back();
     redoStack_.pop_back();
     if (change.booleanChange) restoreBooleanChange(*change.booleanChange,true);
@@ -987,6 +1021,7 @@ void CadViewport::redoPull() {
     } else restorePullChange(change, true);
     undoStack_.push_back(change);
     updateHistoryActions();
+    clearHistorySelection();
     emit statusMessage(tr("Modeling operation redone."));
 }
 void CadViewport::fitAll() {

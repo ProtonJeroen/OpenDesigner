@@ -95,9 +95,10 @@ struct BooleanOperationsTest {
             require(active(v)==2 && !v.isPartActive(2),"Boolean undo did not restore sources");
             require(v.boxes_[0].shape.IsSame(source.shape),"undo changed original geometry");
             require(v.partName(0)==source.name && v.partColor(0)==Qt::red,"undo lost source metadata");
-            require(v.selectedPartIndices_==std::vector<size_t>({0,1}),"undo did not restore selection");
+            require(v.selectedPartIndices_.empty() && v.context_->NbSelected()==0 && f.tree->selectedItems().empty(),"Boolean Undo did not clear all selections");
             require(!f.row(0)->isHidden() && f.row(2)->isHidden(),"browser undo failed");
             v.redoPull(); checkResult(v,2,expected);
+            require(v.selectedPartIndices_.empty() && v.context_->NbSelected()==0 && f.tree->selectedItems().empty(),"Boolean Redo did not clear all selections");
             require(v.boxes_[2].shape.IsSame(shape),"redo recomputed a different B-Rep");
             require(f.row(2)->data(0,Qt::UserRole).toULongLong()==2,"browser slot changed");
         }
@@ -120,6 +121,7 @@ struct BooleanOperationsTest {
         require(v.selectedBooleanParts().size()==2,"viewport face selection not resolved");
         f.action(QStringLiteral("Intersect"))->trigger(); v.confirmCommandSession(); checkResult(v,3,360000);
         v.undoPull();
+        v.selectParts({0,1});
         f.action(QStringLiteral("Subtract..."))->trigger();
         require(v.commandSession_ && v.commandSession_->target.has_value(),"Subtract missing explicit Target");
         v.commandSession_->chooseTarget=true; v.selectBooleanParts({1},true);
@@ -284,9 +286,9 @@ struct BooleanOperationsTest {
     }
     static void sessionBrowserAndBoolean() {
         Fixture f; auto& v=*f.viewport; overlap(f);
-        const auto checkRows = [&](int expectedSlots = 2) {
+        const auto checkRows = [&](int expectedSlots = 2,bool selected = true) {
             require(f.tree->topLevelItem(0)->childCount()==expectedSlots,"preview changed browser rows");
-            require(f.row(0)->isSelected() && f.row(1)->isSelected(),"preview changed browser selection");
+            require(f.row(0)->isSelected()==selected && f.row(1)->isSelected()==selected,"unexpected browser selection after preview/history");
             require(!f.row(0)->isHidden() && !f.row(1)->isHidden(),"preview hid browser rows");
         };
         v.beginCommandSession(CadViewport::CommandSession::Kind::Move,{0,1},gp_Dir(1,0,0));
@@ -300,7 +302,7 @@ struct BooleanOperationsTest {
         v.confirmCommandSession();
         require(v.undoStack_.size()==1,"Boolean committed the pending transform");
         checkResult(v,2,600000);
-        v.undoPull(); checkRows(3);
+        v.undoPull(); checkRows(3,false);
         require(f.row(2)->isHidden(),"undone Boolean result row should remain inactive");
         near(center(v,0).Distance(gp_Pnt(50,40,30)),0,"Boolean switch retained preview transform");
         v.redoPull(); checkResult(v,2,600000);
