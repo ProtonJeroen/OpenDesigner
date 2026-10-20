@@ -18,7 +18,7 @@
 #include <QActionGroup>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.3.4 — Rotate Face & Align Face (prototype)");
+    setWindowTitle("OpenDesigner 0.3.5 — Advanced B-Rep Reconstruction (prototype)");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     setCentralWidget(viewport_);
@@ -40,12 +40,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* exitAction = file->addAction(tr("E&xit"));
     connect(exitAction, &QAction::triggered, this, &QWidget::close);
     auto* edit = menuBar()->addMenu(tr("&Edit"));
-    auto* undoAction = edit->addAction(tr("&Undo Modeling"));
-    undoAction->setShortcut(QKeySequence::Undo);
-    connect(undoAction, &QAction::triggered, viewport_, &CadViewport::undoPull);
-    auto* redoAction = edit->addAction(tr("&Redo Modeling"));
-    redoAction->setShortcut(QKeySequence::Redo);
-    connect(redoAction, &QAction::triggered, viewport_, &CadViewport::redoPull);
+    auto* undoAction=viewport_->undoAction();
+    auto* redoAction=viewport_->redoAction();
+    edit->addAction(undoAction);
+    edit->addAction(redoAction);
     auto* model = menuBar()->addMenu(tr("&Modeling"));
     auto* boxAction = model->addAction(tr("Create &Box"));
     connect(boxAction, &QAction::triggered, viewport_, &CadViewport::addBox);
@@ -113,7 +111,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.3.4 — Rotate Face and Align Face prototype."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.3.5 — Advanced B-Rep Reconstruction prototype."));
     });
     auto* toolbar = addToolBar(tr("Modeling"));
     connect(viewport_,&CadViewport::transformModesChanged,this,[interactiveMove,directMove,interactiveRotate](bool faceNormal,bool move,bool rotate) {

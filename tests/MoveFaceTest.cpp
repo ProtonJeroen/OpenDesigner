@@ -15,11 +15,14 @@
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepGProp.hxx>
 #include <BRepTools.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <Image_PixMap.hxx>
+#include <BRep_Tool.hxx>
 #include <GProp_GProps.hxx>
 #include <TopoDS.hxx>
 #include <TopExp_Explorer.hxx>
@@ -125,6 +128,36 @@ struct MoveFaceTest {
         Handle(StdSelect_BRepOwner) owner=new StdSelect_BRepOwner(face,v.boxes_[index].presentation,5,Standard_True);
         v.context_->AddOrRemoveSelected(owner,Standard_False);
     }
+    static void visiblePreview(CadViewport& v) {
+        const auto preview=v.commandSession_->preview;
+        require(!preview.IsNull() && v.context_->IsDisplayed(preview),"candidate AIS is not displayed");
+        require(preview->Shape().IsSame(v.commandSession_->candidate),"preview is not the complete reconstructed candidate");
+        Image_PixMap shown,hidden;
+        require(v.view_->ToPixMap(shown,640,480),"cannot render preview");
+        v.context_->Erase(preview,Standard_False);
+        require(v.view_->ToPixMap(hidden,640,480),"cannot render background");
+        v.context_->Display(preview,Standard_False); v.context_->Deactivate(preview);
+        require(!v.context_->IsDisplayed(v.commandSession_->faceBefore->presentation),"original solid obscures the candidate");
+        require(preview->DisplayMode()==AIS_Shaded && preview->Transparency()>0 && preview->Transparency()<0.5,
+            "candidate is not distinctly shaded and translucent");
+        TColStd_ListOfInteger modes;v.context_->ActivatedModes(preview,modes);
+        require(modes.IsEmpty(),"preview participates in operand picking");
+        int changed=0,blue=0,triangulated=0,faces=0;
+        for(TopExp_Explorer f(preview->Shape(),TopAbs_FACE);f.More();f.Next()) {
+            ++faces; TopLoc_Location location;
+            if(!BRep_Tool::Triangulation(TopoDS::Face(f.Current()),location).IsNull()) ++triangulated;
+        }
+        for(int y=0;y<480;++y) for(int x=0;x<640;++x) {
+            const auto color=shown.PixelColor(x,y).GetRGB();
+            if(color.Distance(hidden.PixelColor(x,y).GetRGB())>0.05) {
+                ++changed;
+                if(color.Blue()>color.Red()+0.1 && color.Green()>color.Red()+0.05) ++blue;
+            }
+        }
+        require(changed>500 && blue>500,"candidate has no distinctly visible shaded solid");
+        require(faces>0 && triangulated==faces,"preview has unmeshed faces");
+        v.view_->Invalidate();v.view_->Redraw();
+    }
     static void ui() {
         MainWindow window; window.show(); QApplication::processEvents();
         auto& v=*window.findChild<CadViewport*>();
@@ -151,6 +184,7 @@ struct MoveFaceTest {
             v.dragDimension_->setText(QLocale().toString(distance,'f',2));
             QMetaObject::invokeMethod(v.dragDimension_,"textEdited",Qt::DirectConnection,Q_ARG(QString,v.dragDimension_->text()));
             require(v.commandSession_->valid && !v.commandSession_->preview.IsNull(),"missing valid geometry preview");
+            visiblePreview(v);
             require(v.boxes_[0].shape.IsSame(original.shape) && brep(original.shape)==originalBrep,"preview modified document geometry");
             require(v.boxes_[0].presentation->Shape().IsSame(original.shape),"preview replaced original presentation shape");
             require(v.undoStack_.size()==undo && v.redoStack_.size()==redo,"preview changed history");
@@ -258,6 +292,98 @@ struct MoveFaceTest {
         require(v.boxes_.size()==slotCount && v.isPartActive(result),"Boolean face edit replaced stable result ID");
         near(volume(v.boxes_[result].shape),beforeVolume*70/60,"Boolean face edit volume wrong");
         v.undoPull();require(v.boxes_[result].shape.IsSame(resultShape),"Boolean face edit undo failed");
+        // Every face adapter must preserve the transaction contract when the
+        // shared reconstruction merges Boolean faces/edges.
+        v.addBox(); const size_t stairIndex=v.boxes_.size()-1;
+        auto stairState=v.boxes_[stairIndex];
+        BRepAlgoAPI_Fuse united(BRepPrimAPI_MakeBox(100,80,50).Shape(),
+            BRepPrimAPI_MakeBox(gp_Pnt(60,0,0),100,80,90).Shape());
+        united.Build(); require(united.IsDone(),"UI Unite fixture failed");
+        stairState.shape=united.Shape();
+        stairState.geometryKind=CadViewport::CadPart::GeometryKind::GeneralBRep;
+        stairState.orientation=transform;
+        v.applyFaceState(stairIndex,stairState);
+        v.renamePart(stairIndex,"Reconstruction identity");v.setPartColor(stairIndex,Qt::green);
+        TopoDS_Face riser;
+        for(TopExp_Explorer f(stairState.shape,TopAbs_FACE);f.More();f.Next()) {
+            const auto candidate=TopoDS::Face(f.Current());
+            GProp_GProps props;BRepGProp::SurfaceProperties(candidate,props);
+            if(props.CentreOfMass().Distance(gp_Pnt(60,40,70))<1.e-6) riser=candidate;
+        }
+        require(!riser.IsNull(),"UI riser missing");
+        v.fitSelection({stairIndex});
+        const auto stamp=brep(stairState.shape);
+        const auto presentation=v.boxes_[stairIndex].presentation;
+        const auto stairRow=root->child(static_cast<int>(stairIndex));
+        for(int operation=0;operation<3;++operation) for(double sign:{1.0,-1.0}) {
+            const auto undoCount=v.undoStack_.size();
+            AIS_ListOfInteractive baselineObjects;v.context_->ObjectsInside(baselineObjects);
+            auto start=[&]() {
+                selectFace(v,stairIndex,riser);
+                if(operation==0) require(v.startMoveFace(stairIndex,riser),"riser Move start failed");
+                if(operation==1) {
+                    require(v.startRotateFace(stairIndex,riser),"riser Rotate start failed");
+                    v.chooseFaceRotationAxis(2);
+                    v.commandSession_->faceAxis=gp_Ax1(gp_Pnt(60,0,50),gp_Dir(0,1,0));
+                }
+                if(operation==2) {
+                    require(v.startAlignFace(stairIndex,riser),"riser Align start failed");
+                    v.commandSession_->hasReference=true;
+                    v.commandSession_->referencePlane=gp_Pln(gp_Pnt(60-5*sign,0,0),gp_Dir(1,0,0));
+                    v.alignFacePickingReference_=false;
+                }
+            };
+            const double parameter=sign*(operation==1?8:5);
+            start();require(v.previewCommand(parameter),"riser preview failed");
+            visiblePreview(v);
+            require(!v.commandSession_->preview.IsNull() && v.boxes_[stairIndex].shape.IsSame(stairState.shape),"riser preview mutated canonical shape");
+            require(brep(stairState.shape)==stamp && v.undoStack_.size()==undoCount,"riser preview changed source/history");
+            const auto oldPreview=v.commandSession_->preview;
+            v.dragDimension_->setText(QLocale().toString(parameter*0.5));
+            QMetaObject::invokeMethod(v.dragDimension_,"textEdited",Qt::DirectConnection,Q_ARG(QString,v.dragDimension_->text()));
+            require(v.commandSession_->valid && v.commandSession_->preview!=oldPreview
+                && v.context_->DisplayStatus(oldPreview)==PrsMgr_DisplayStatus_None,"new input retained an old preview");
+            visiblePreview(v);
+            const auto invalidatedPreview=v.commandSession_->preview;
+            QString invalidMessage;
+            const auto connection=QObject::connect(&v,&CadViewport::statusMessage,&v,[&](const QString& message){invalidMessage=message;});
+            v.dragDimension_->setText(QStringLiteral("-"));
+            QMetaObject::invokeMethod(v.dragDimension_,"textEdited",Qt::DirectConnection,Q_ARG(QString,v.dragDimension_->text()));
+            QObject::disconnect(connection);
+            require(!v.commandSession_->valid && v.commandSession_->preview.IsNull()
+                && !v.commandButtons_->button(QDialogButtonBox::Ok)->isEnabled()
+                && v.context_->IsDisplayed(presentation) && !invalidMessage.isEmpty(),"invalid numeric input retained a misleading preview");
+            require(v.context_->DisplayStatus(invalidatedPreview)==PrsMgr_DisplayStatus_None,"invalid input leaked old preview");
+            if(operation==1) require(!v.previewCommand(180),"unsupported Rotate reconstruction was accepted");
+            require(v.previewCommand(parameter),"valid correction did not restore preview");
+            visiblePreview(v);
+            const auto cancelledPreview=v.commandSession_->preview;
+            v.cancelCommandSession();
+            require(v.context_->DisplayStatus(cancelledPreview)==PrsMgr_DisplayStatus_None
+                && v.context_->IsDisplayed(presentation),"Cancel retained preview or hid original");
+            AIS_ListOfInteractive cancelledObjects;v.context_->ObjectsInside(cancelledObjects);
+            require(cancelledObjects.Extent()==baselineObjects.Extent(),"Cancel leaked AIS objects");
+            require(!v.commandSession_ && v.undoStack_.size()==undoCount && v.boxes_[stairIndex].shape.IsSame(stairState.shape),"riser Cancel failed");
+            start();require(v.previewCommand(parameter),"riser second preview failed");
+            const auto committedPreview=v.commandSession_->preview;
+            v.dragDimension_->setText(QLocale().toString(parameter));v.confirmCommandSession();
+            require(v.context_->DisplayStatus(committedPreview)==PrsMgr_DisplayStatus_None
+                && v.context_->IsDisplayed(presentation),"OK retained preview or hid committed solid");
+            AIS_ListOfInteractive committedObjects;v.context_->ObjectsInside(committedObjects);
+            require(committedObjects.Extent()==baselineObjects.Extent() && v.moveFaceArrow_.IsNull()
+                && v.faceRotationManipulator_.IsNull(),"OK leaked AIS objects/manipulators");
+            require(!v.commandSession_ && v.undoStack_.size()==undoCount+1,"riser confirm did not terminate with one history entry");
+            const auto edited=v.boxes_[stairIndex].shape;
+            require(BRepCheck_Analyzer(edited).IsValid() && !edited.IsSame(stairState.shape),"riser commit missing geometry");
+            require(v.boxes_[stairIndex].presentation==presentation && root->child(static_cast<int>(stairIndex))==stairRow
+                && v.partName(stairIndex)=="Reconstruction identity" && v.partColor(stairIndex)==QColor(Qt::green),"riser lost identity/properties/browser row");
+            for(int r=1;r<=3;++r) for(int c=1;c<=4;++c)
+                near(v.boxes_[stairIndex].orientation.Value(r,c),transform.Value(r,c),"riser changed part transform");
+            v.undoPull();require(v.boxes_[stairIndex].shape.IsSame(stairState.shape),"riser Undo lost original topology");
+            v.redoPull();require(v.boxes_[stairIndex].shape.IsSame(edited),"riser Redo did not use cached result");
+            v.undoPull();
+        }
+
     }
 };
 int main(int argc,char** argv) {

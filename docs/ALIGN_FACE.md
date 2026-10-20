@@ -1,4 +1,4 @@
-# Align Face (v0.3.4)
+# Align Face (v0.3.5)
 
 Select one planar target Face and choose **Align Face** from its context menu or
 from **Modeling**. Then select a planar reference Face, on the same Part or a
@@ -19,30 +19,24 @@ tool discards it. Undo/Redo restores the target geometry from cached snapshots;
 target identity, name, color, visibility and browser row remain stable. Reference
 geometry and metadata are never changed.
 
-## Geometry scope
+## Geometry scope (v0.3.5)
 
-The target must be one planar face of a valid closed single-solid B-Rep with one
-shell and plane/cylinder/cone support surfaces. Target tilt uses
-`BRepOffsetAPI_DraftAngle`; Coplanar then uses the shared
-`MoveFaceGeometry`/`BRepOffset_MakeOffset` path. Neither operation creates a
-sweep, revolve or bridge volume. Both must preserve the existing face/edge/
-vertex counts, per-face wire connectivity and neighboring analytic supports,
-while reconstructing only the target plane and trim boundaries. A valid closed
-solid and self-interference checks are also required. Simple planar Boxes,
-edited analytic GeneralBRep and Boolean faces are supported only when OCCT can
-rebuild them without changing that topology.
+The planar target uses the shared [B-Rep reconstruction layer](BREP_RECONSTRUCTION.md).
+Parallel tilts through OCCT DraftAngle; Coplanar composes that with an intersecting
+face offset. Redundant Boolean topology is normalized and the target is mapped
+through OCCT history before construction. Neither stage adds a sweep or bridge
+volume. Each stage checks analytic supports, the requested plane, closure,
+positive volume and self-interference. Topological splits/merges are permitted
+without relying on equal face/edge/vertex counts.
 
-Freeform faces, blends/fillets, multiple shells or solids, unsupported analytic
-neighbours, topology-changing candidates and invalid or self-intersecting
-results are refused without changing the source model. In particular, the
-narrow riser of the two-height Boolean Unite regression is refused because its
-adjacent edge splits are not reconstructed reliably. Align Face uses the same
-topology-preserving geometry validation and diagnostics as Move Face and Rotate
-Face. It does not attempt generic shell sewing or unrestricted reconstruction.
-Parallel is geometric plane alignment; it does not aim a particular face
-normal direction. Alignment computations run synchronously. Automated coverage
-checks Coplanar to a reference plane, Parallel without moving the target offset,
-tilted parallel alignment and preservation of an external reference Part.
+The two-height Unite riser is verified for Coplanar x=55 and x=65, unchanged
+Parallel, and tilted Parallel/Coplanar planes with slopes ±0.1. Tests compare
+material occupancy and exact volumes, not just validity. Existing Box and
+reference-Part session tests remain enabled; riser transaction tests exercise
+both signs, preview/cancel/confirm and cached Undo/Redo.
 
-Align Face is an adapter on the shared `CommandSession` and existing modeling
-history, not a separate transaction or boolean/part-transform operation.
+Freeform/blend supports, multiple shells/solids, loss of original analytic
+supports, ambiguous selected-face mapping and failed reconstruction are refused
+without document mutation. Parallel aligns the plane, not a prescribed outward
+normal direction. Computation remains synchronous and conservative.
+Manual Fedora KDE verification of v0.3.5 passed; the user confirmed the tested geometry and live preview workflow.

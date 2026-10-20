@@ -6,6 +6,12 @@
 #include <QLocale>
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
+#include <BRep_Tool.hxx>
+#include <Poly_Triangulation.hxx>
+#include <TopExp_Explorer.hxx>
+#include <Prs3d_Drawer.hxx>
+#include <Standard_Failure.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <TopoDS.hxx>
 #include <Quantity_Color.hxx>
@@ -57,6 +63,59 @@ bool CadViewport::startMoveFace(size_t index, const TopoDS_Face& face) {
     emit statusMessage(tr("Move Face: drag the normal arrow or type signed mm. OK/Enter applies; Cancel/Esc discards."));
     return true;
 }
+void CadViewport::redrawFacePreview() {
+    // Replacing a retained scene presentation must invalidate the main render
+    // buffer, not just the immediate (manipulator/highlight) layer.
+    context_->UpdateCurrentViewer();
+    view_->Invalidate();
+    view_->Redraw();
+}
+bool CadViewport::presentFacePreview(const CadPart& before,bool changed,QString& error) {
+    auto& session=*commandSession_;
+    if(!session.preview.IsNull()) {
+        context_->Remove(session.preview,Standard_False);
+        session.preview.Nullify();
+    }
+    if(session.valid && changed) {
+        try {
+            // Reconstructed B-Reps are copied without display meshes. Complete
+            // the shaded representation before erasing the original object.
+            BRepMesh_IncrementalMesh mesh(session.candidate,0.1,false,0.35,false);
+            bool meshed=mesh.IsDone();
+            for(TopExp_Explorer f(session.candidate,TopAbs_FACE);f.More()&&meshed;f.Next()) {
+                TopLoc_Location location;
+                const auto triangulation=BRep_Tool::Triangulation(TopoDS::Face(f.Current()),location);
+                meshed=!triangulation.IsNull() && triangulation->NbTriangles()>0;
+            }
+            if(!meshed) throw Standard_Failure("The reconstructed solid could not be tessellated for preview.");
+            session.preview=new AIS_Shape(session.candidate);
+            session.preview->SetLocalTransformation(before.orientation);
+            session.preview->Attributes()->SetAutoTriangulation(true);
+            session.preview->SetColor(Quantity_Color(0.15,0.65,1.0,Quantity_TOC_RGB));
+            session.preview->SetTransparency(0.25);
+            session.preview->SetDisplayMode(AIS_Shaded);
+            // Select mode -1: previews never participate in operand picking.
+            context_->Display(session.preview,AIS_Shaded,-1,Standard_False);
+            context_->Redisplay(session.preview,Standard_False);
+            context_->Erase(before.presentation,Standard_False);
+        } catch(const Standard_Failure& failure) {
+            error=tr("Cannot display the reconstructed preview: %1").arg(QString::fromUtf8(failure.GetMessageString()));
+            if(!session.preview.IsNull()) context_->Remove(session.preview,Standard_False);
+            session.preview.Nullify();
+            session.valid=false;
+        }
+    }
+    if(!session.valid || !changed) {
+        context_->Display(before.presentation,Standard_False);
+        context_->Redisplay(before.presentation,Standard_False);
+    }
+    if(!session.valid) {
+        session.candidate.Nullify();
+        session.changes.front().faceChange.reset();
+    }
+    commandButtons_->button(QDialogButtonBox::Ok)->setEnabled(session.valid);
+    return session.valid;
+}
 bool CadViewport::previewMoveFace(double value) {
     auto& session=*commandSession_;
     session.value=value;
@@ -64,7 +123,6 @@ bool CadViewport::previewMoveFace(double value) {
     QString error;
     const double localDistance=value/std::abs(before.orientation.ScaleFactor());
     const auto candidate=MoveFaceGeometry::move(before.shape,session.face,localDistance,error);
-    if (!session.preview.IsNull()) { context_->Remove(session.preview,Standard_False); session.preview.Nullify(); }
     session.valid=!candidate.IsNull();
     session.candidate=candidate;
     commandButtons_->button(QDialogButtonBox::Ok)->setEnabled(session.valid);
@@ -82,22 +140,14 @@ bool CadViewport::previewMoveFace(double value) {
         after.baseMin=after.min; after.baseMax=after.max;
         change.afterMin=after.min; change.afterMax=after.max;
         change.faceChange=std::make_shared<FaceChange>(FaceChange{before,after});
-        session.preview=new AIS_Shape(candidate);
-        session.preview->SetLocalTransformation(before.orientation);
-        session.preview->SetColor(Quantity_Color(before.color.redF(),before.color.greenF(),before.color.blueF(),Quantity_TOC_RGB));
-        session.preview->SetTransparency(0.25);
-        context_->Erase(before.presentation,Standard_False);
-        context_->Display(session.preview,Standard_False);
-        context_->SetDisplayMode(session.preview,AIS_Shaded,Standard_False);
-        context_->Deactivate(session.preview);
         displayPullArrow(moveFaceArrow_,session.pivot.Translated(gp_Vec(session.direction)*value),gp_Vec(session.direction));
     } else {
-        context_->Display(before.presentation,Standard_False);
         displayPullArrow(moveFaceArrow_,session.pivot,gp_Vec(session.direction));
     }
+    presentFacePreview(before,std::abs(value)>=1.e-7,error);
     session.state=session.valid ? CommandSession::State::Preview : CommandSession::State::Parameters;
     if (!session.valid) emit statusMessage(error);
-    view_->Redraw();
+    redrawFacePreview();
     return session.valid;
 }
 bool CadViewport::beginMoveFaceDrag(const QPoint& point) {

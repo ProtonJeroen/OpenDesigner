@@ -1,4 +1,4 @@
-# Command sessions and preview (v0.3.2–v0.3.4)
+# Command sessions and preview (v0.3.2–v0.3.5)
 
 Interactive Move Part (axis gizmo and orange face-normal arrow) and Rotate Part
 now have a temporary preview. Select geometry and explicitly choose its Modeling/context action to show a gizmo.
@@ -65,7 +65,7 @@ The adapters include rigid Move/Rotate, planar Move Face, edge/axis-driven
 Rotate Face and planar-reference Align Face. Face rotation uses OCCT
 `BRepOffsetAPI_DraftAngle`; Coplanar alignment composes that operation with
 the existing `MoveFaceGeometry` offset. Both share its conservative validity,
-volume, self-interference and topology-count policy. Future geometry commands
+volume, self-interference and analytic-support policy. Future geometry commands
 can extend the candidate state using
 `PullChange`'s existing shape/parameter snapshots and validate candidate B-Reps
 before confirmation. Session keyboard handling is scoped to the viewport and
@@ -151,3 +151,51 @@ group and one Redo reapplies it. Repeat primitive Pull and Boolean operations to
 check their existing confirmation behavior. Verify overlay placement and keyboard
 focus with your display scaling; other operating systems are not yet manually
 verified for this change.
+
+## v0.3.5 shared reconstruction
+
+Move/Rotate/Align Face prepare isolated B-Reps through the shared
+[BRepReconstruction](BREP_RECONSTRUCTION.md) component. Redundant Boolean seams
+can merge before intersection rebuilding; old face owners remain valid only on
+the original preview snapshot and are discarded on confirmation. No session,
+selection, manipulator or history behavior changes. The move-face suite now also
+checks signed riser transactions that change topology, keeping stable Part and
+browser identity across Cancel, OK and one cached Undo/Redo step.
+
+### v0.3.5 visible face previews
+
+Move Face, Rotate Face and Align Face share `presentFacePreview` and
+`redrawFacePreview`. A validated candidate is tessellated on its isolated B-Rep;
+every face must have triangles before the source presentation is hidden. The
+new AIS object has the existing instance transform, explicit shaded mode,
+25% transparency and a distinct blue preview color. Orange manipulators remain
+unchanged. Display uses selection mode -1, so temporary solids cannot become
+operands. The whole reconstructed solid is shown, not a moved face or transition
+volume. No document geometry or Part color changes during preview.
+
+Each input replaces and removes the previous AIS object. The retained viewer
+scene is explicitly redisplayed, updated and invalidated before redraw; OK and
+Cancel also refresh the scene after removing the candidate. Invalid geometry,
+failed tessellation and incomplete numeric input remove the old candidate,
+restore the original, disable OK and report an error. Corrected Rotate input can
+be retried without choosing its axis again. Confirmation still records one
+FaceChange; Cancel records none. All candidate and manipulator objects are
+removed from the AIS context on termination.
+
+The earlier face-preview path used the source material and implicit AIS meshing
+and scene updates. Reconstructed deep copies have no inherited display mesh;
+B-Rep validity and a non-null AIS handle did not establish visible shaded output.
+The revised path makes that display contract explicit. The exact disappearing
+preview reported on Fedora KDE was not reproduced in this test environment;
+OCCT offscreen rendering already showed the former candidate, while native GLX
+window grabs were black even for the ordinary viewport. Offscreen pixel tests
+are not a native-screen proof. The user subsequently completed the Fedora KDE
+manual retest successfully and confirmed all tested functionality, including
+visible previews, cleanup and the Undo/Redo context menu (2026-10-20).
+
+The move-face suite now renders Box and Unite-riser previews and compares images
+with and without the candidate. It checks substantial blue shaded coverage,
+triangulation of every face, original visibility, display mode, transparency,
+replacement, invalid-input recovery and AIS object counts after Cancel/OK for
+all three commands. Existing real drag, numeric, Enter/Esc and selection tests
+remain enabled. Kernel shape/volume validation is unchanged.

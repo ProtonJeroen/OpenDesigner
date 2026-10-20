@@ -1,4 +1,4 @@
-# Rotate Face (v0.3.4)
+# Rotate Face (v0.3.5)
 
 Select one planar Face and choose **Rotate Face** from its context menu or from
 **Modeling**. Choose a straight boundary edge or a projected World X, Y or Z
@@ -15,34 +15,27 @@ cached result. The part slot, name, color, visibility and Structure Browser row
 remain stable. A directly edited primitive becomes GeneralBRep, as it does for
 Move Face. The reference edge is selected again for each new Rotate Face command.
 
-## Supported cases and refusal behavior
+## Supported cases and refusal behavior (v0.3.5)
 
-The operation accepts one planar face of one valid, closed, single-solid B-Rep
-with one shell and plane/cylinder/cone support surfaces. A straight edge
-bordering the target face or a projected world reference axis defines the
-rotation line. OCCT `BRepOffsetAPI_DraftAngle` rotates the target support and
-rebuilds intersections with the existing neighboring surfaces. No revolve,
-rotational sweep, bridge face or Boolean volume is used. The result must remain
-one valid closed solid, preserve face/edge/vertex counts and per-face wire
-connectivity, preserve neighboring analytic supports, and contain the requested
-rotated target plane. Candidates involving unsupported topology changes or
-self-intersections are refused. The original B-Rep is never modified.
+Planar targets on one closed analytic solid use shared
+[B-Rep reconstruction](BREP_RECONSTRUCTION.md). OCCT same-domain unification
+removes redundant Boolean seams before `BRepOffsetAPI_DraftAngle` rebuilds the
+rotated plane and adjacent trims. The requested signed plane, preserved
+analytic supports, solid closure, volume and self-interference are checked.
+No revolve, sweep or bridge geometry is generated. Counts need not remain equal.
 
-Verified automated geometry includes positive and negative Box rotations,
-different straight axes, an edited GeneralBRep and a simple Boolean result where
-DraftAngle preserves the existing topology. The narrow vertical transition on
-the two-height Boolean Unite fixture is explicitly refused: OCCT cannot rebuild
-it without topology changes in the current supported path. Complex Boolean
-results, blends, freeform supports, multiple shells/solids and unsupported
-neighboring surfaces are refused with an explanation; the original solid and
-history remain unchanged. Diagnostics include topology counts, target
-wire/edge counts, adjacent surface types and OCCT validation status.
+Verified cases include signed Box rotations around different straight axes,
+edited GeneralBRep, simple Boolean faces, and the two-height Unite riser at
+±8 degrees around a horizontal boundary edge. The riser test checks exact wedge
+volume and analytical material occupancy, including points immediately beside
+the requested plane. This does not establish support for every edge or angle.
 
-Curved target faces, freeform surfaces, blends/fillets, multiple shells or
-solids, multi-face rotation, topology changes and reference axes that do not
-lie in the target plane are outside this version. Complex Boolean and
-GeneralBRep topology may be rejected conservatively. Computation is synchronous.
+Curved targets, freeform/blend supports, multiple shells/solids, disappearing
+support surfaces, ambiguous target mapping, self-intersections and failed kernel
+reconstruction are refused. The axis must lie in the target plane; angles must
+be finite with magnitude below 179 degrees. All calculations use isolated copies.
 
-Rotate Face uses the existing `CommandSession`, temporary AIS preview and
-chronological `PullChange` history with a `FaceChange` snapshot. It does not
-rotate the part instance and does not create a second undo stack.
+Rotate Face retains the existing CommandSession, separate AIS preview and
+FaceChange snapshot history. The geometry tests and move-face transaction tests
+cover the riser; selection-context covers the existing axis selection workflow.
+Manual Fedora KDE verification of v0.3.5 passed; the user confirmed the tested geometry and live preview workflow.

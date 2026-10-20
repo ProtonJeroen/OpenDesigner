@@ -7,6 +7,7 @@
 class QLineEdit;
 class QDialogButtonBox;
 class QShortcut;
+class QAction;
 class QMenu;
 class QComboBox;
 class QLabel;
@@ -57,6 +58,8 @@ public:
     void rotateSelectedPart();
     void undoPull();
     void redoPull();
+    QAction* undoAction() const { return undoAction_; }
+    QAction* redoAction() const { return redoAction_; }
     void setSnapStep(double stepMm);
     void setMovePartMode(bool enabled);
     void setRotateMode(bool enabled);
@@ -95,6 +98,9 @@ private:
         std::vector<size_t> parts;
         std::vector<SelectedFace> faces;
     };
+    QAction* undoAction_ = nullptr;
+    QAction* redoAction_ = nullptr;
+    void updateHistoryActions();
     SelectionMode selectionMode_ = SelectionMode::Face;
     SelectionContext selectionContext() const;
     QMenu* createSelectionMenu(const QPoint& anchor);
@@ -196,6 +202,8 @@ private:
     bool previewCommand(double value);
     bool startMoveFace(size_t index, const TopoDS_Face& face);
     bool previewMoveFace(double value);
+    bool presentFacePreview(const CadPart& before, bool changed, QString& error);
+    void redrawFacePreview();
     bool startRotateFace(size_t index, const TopoDS_Face& face);
     bool startAlignFace(size_t index, const TopoDS_Face& face);
     bool previewFaceTransform(double value);

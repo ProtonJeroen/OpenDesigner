@@ -88,3 +88,33 @@ OpenDesigner targets Windows, Linux and macOS. This roadmap describes planned wo
 - Both adapters use the existing CommandSession preview and geometry snapshot history; part identity, metadata, browser rows and reference Parts are preserved.
 - Geometry, selection, preview, cancel, confirmation and history coverage: [Rotate Face](ROTATE_FACE.md), [Align Face](ALIGN_FACE.md).
 - Support remains conservative for analytic single-solid topology. Regression coverage includes safe refusal of a narrow Unite transition between overlapping Boxes of different heights, plus direct edits of topology-preserving Box and simple Subtract faces. Fedora KDE manual verification for this refinement is pending.
+
+## v0.3.5 — Advanced B-Rep Reconstruction
+
+- Shared isolated B-Rep normalization, OCCT face history and analytic-support
+  acceptance for Move/Rotate/Align Face; redundant Boolean faces/edges may merge.
+- Two overlapping Boxes of unequal height: signed riser Move and edge-axis Rotate,
+  plus Coplanar/Parallel Align verified against analytical material occupancy and
+  volumes. Existing transaction/identity tests also cover these topology changes.
+- Plane/cylinder/cone support policy remains; no freeform, bridge volumes,
+  unrestricted face disappearance or multi-shell reconstruction.
+- Architecture, exact fixture, tested parameters, OCCT choices and future
+  Extrude/Revolve/Sweep integration: [B-Rep reconstruction](BREP_RECONSTRUCTION.md).
+- Follow-up: support-disappearing topology events, broader curved-neighbor
+  reconstruction, cancellation of kernel work and persistent subshape IDs.
+- Live previews explicitly tessellate the isolated candidate, use blue translucent
+  shaded AIS geometry and refresh the retained viewer scene; invalid input and
+  termination remove obsolete presentations.
+- Empty-space context menus share the Edit/toolbar Undo and Redo actions with
+  accurate availability, while existing selection and camera workflows remain.
+- Manual Fedora KDE tests passed; the user confirmed all tested v0.3.5
+  functionality, including geometry, live previews and context menus (2026-10-20).
+
+## v0.3.6 — further topology improvements (planned)
+
+- Extend controlled topology reconstruction beyond redundant seams, including
+  carefully validated support-disappearance events.
+- Broaden coverage for complex Boolean and curved-neighbor configurations with
+  independent expected-shape checks and safe refusal where reliability is unproven.
+- Keep freeform/blend reconstruction, multi-shell solids and persistent subshape
+  naming outside the v0.3.5 support claim; revisit their scope separately.

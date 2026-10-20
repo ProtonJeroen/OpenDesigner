@@ -72,6 +72,18 @@ struct SelectionContextTest {
         auto& v=*window.findChild<CadViewport*>();
         auto* tree=window.findChild<QTreeWidget*>(); auto* root=tree->topLevelItem(0);
         require(!window.findChild<QComboBox*>("selectionMode"),"obsolete selection dropdown remains");
+        // The background uses the same QAction objects as Edit/toolbar, not a
+        // second history or a modeling command.
+        std::unique_ptr<QMenu> background(v.createSelectionMenu(QPoint(5,5)));
+        require(background && background->actions().size()==2,"missing background history menu");
+        require(background->actions()[0]==v.undoAction() && background->actions()[1]==v.redoAction(),"history actions were duplicated");
+        require(!v.undoAction()->isEnabled() && !v.redoAction()->isEnabled(),"empty history actions enabled");
+        require(v.undoAction()->shortcut()==QKeySequence(Qt::CTRL|Qt::Key_Z)
+            && v.redoAction()->shortcut()==QKeySequence(Qt::CTRL|Qt::Key_Y),"wrong history shortcuts");
+        require(popup(v,QPoint(5,5)) && v.selectionContext().kind==CadViewport::SelectionContext::Kind::None
+            && !v.commandSession_,"background menu selected geometry or started a command");
+        v.rotating_=true; require(!popup(v,QPoint(5,5)),"context menu interrupted camera orbit");v.rotating_=false;
+        v.panning_=true; require(!popup(v,QPoint(5,5)),"context menu interrupted camera pan");v.panning_=false;
         v.addBox(); v.addBox(); v.fitAll();
         const auto p0=project(v,gp_Pnt(50,40,60)),p1=project(v,gp_Pnt(175,40,60));
         const auto idle=[&]() {
@@ -82,13 +94,16 @@ struct SelectionContextTest {
         };
         v.setDirectMoveMode(true); idle(); v.setRotateMode(true); idle();
         click(v,p0); idle(); require(v.selectionContext().kind==CadViewport::SelectionContext::Kind::Faces,"default click not Face");
+        const auto faceOwners=owners(v);
+        require(popup(v,p0) && owners(v)==faceOwners,"selected Face context menu changed selection");
+        require(!popup(v,QPoint(-20,-20)) && owners(v)==faceOwners,"background cleared selected Face");
         click(v,p1,Qt::ControlModifier); idle(); require(v.selectionContext().faces.size()==2,"Ctrl did not add Face");
         click(v,p0,Qt::AltModifier); click(v,p1,Qt::AltModifier|Qt::ControlModifier); idle();
         require(v.selectedPartIndices_==std::vector<size_t>({0,1}),"Alt/Ctrl+Alt Part selection failed");
         const auto selected=owners(v);
         QKeyEvent altRelease(QEvent::KeyRelease,Qt::Key_Alt,Qt::NoModifier); QApplication::sendEvent(&v,&altRelease);
         require(owners(v)==selected && popup(v,p0) && owners(v)==selected,"Alt release/right click changed Part selection");
-        require(!popup(v,QPoint(-20,-20)),"background opened unrelated menu");
+        require(!popup(v,QPoint(-20,-20)) && owners(v)==selected,"background cleared/replaced existing selection");
         std::unique_ptr<QMenu> parts(v.createSelectionMenu(p0)); action(*parts,"context.move_part")->trigger();
         require(v.directMoveMode_ && !v.moveAxes_[0].IsNull() && v.rotationRings_[0].IsNull(),"explicit Move activation failed");
         QKeyEvent emptyConfirm(QEvent::KeyPress,Qt::Key_Return,Qt::NoModifier); QApplication::sendEvent(&v,&emptyConfirm); idle();
@@ -97,7 +112,16 @@ struct SelectionContextTest {
         v.beginCommandSession(CadViewport::CommandSession::Kind::Move,{0,1},gp_Dir(1,0,0)); v.previewCommand(12);
         v.dragDimension_->setText("12"); v.confirmCommandSession(); idle();
         require(v.undoStack_.size()==history+1 && v.selectedPartIndices_==std::vector<size_t>({0,1}),"Move confirm/history/selection failed");
-        v.undoPull(); idle();
+        v.selectParts({});
+        background.reset(v.createSelectionMenu(QPoint(5,5)));
+        require(v.undoAction()->isEnabled() && !v.redoAction()->isEnabled(),"commit history availability incorrect");
+        require(popup(v,QPoint(-20,-20)) && !v.commandSession_,"history background menu missing");
+        background->actions()[0]->trigger(); idle();
+        require(!v.undoAction()->isEnabled() && v.redoAction()->isEnabled() && v.undoStack_.size()==history,"background Undo did not update history/actions");
+        background->actions()[1]->trigger(); idle();
+        require(v.undoAction()->isEnabled() && !v.redoAction()->isEnabled() && v.undoStack_.size()==history+1,"background Redo did not update history/actions");
+        background->actions()[0]->trigger(); idle();
+        v.selectParts({0,1});
         action(*parts,"context.rotate_part")->trigger();
         require(v.rotateMode_ && !v.rotationRings_[0].IsNull() && v.moveAxes_[0].IsNull(),"exclusive Rotate activation failed");
         v.beginCommandSession(CadViewport::CommandSession::Kind::Rotate,{0,1},gp_Dir(0,0,1),v.selectionCenter()); v.previewCommand(25);
