@@ -13,9 +13,20 @@ struct Prepared {
     TopoDS_Face target;
     std::vector<FaceMapping> history;
 };
+// Final support correspondence: an empty modified list means a certified
+// disappearance; several faces may represent disconnected patches of a support.
+using Result = Prepared;
+bool finish(const TopoDS_Shape& source, const TopoDS_Shape& candidate,
+            const TopoDS_Face& target, const gp_Pln& expected, Result& result, QString& error);
+bool rebuildPlanar(const TopoDS_Shape& source, const TopoDS_Face& target,
+                   const gp_Pln& expected, Result& result, QString& error);
+bool equivalent(const TopoDS_Shape& a, const TopoDS_Shape& b);
 bool prepare(const TopoDS_Shape& source, const TopoDS_Face& target,
              Prepared& result, QString& error);
 bool validSolid(const TopoDS_Shape& shape, double& volume);
+// Common final cleanup; callers still enforce their operation's material policy.
+bool normalize(const TopoDS_Shape& candidate, TopoDS_Shape& result, QString& error);
+bool sameAnalyticSupport(const TopoDS_Face& a, const TopoDS_Face& b);
 bool supports(const TopoDS_Shape& source, const TopoDS_Shape& result,
               const TopoDS_Face& target, const gp_Pln& expected, QString& error);
 }

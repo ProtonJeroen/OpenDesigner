@@ -36,6 +36,14 @@ earlier Boolean results and parts containing multiple solids. Complete instance
 transforms are applied before the operation. Preview, interactive confirmation
 and the direct geometry API share one kernel calculation and validation path.
 
+The final solid result is copied and normalized with
+`ShapeUpgrade_UnifySameDomain` before preview, presentation and history capture.
+Adjacent faces on the same surface and redundant edge divisions are merged;
+real height/front steps remain. Validation requires closed valid solids, the
+same solid and shell counts, and Common-confirmed material equivalence with the
+raw Boolean result. Disconnected solids and internal cavity shells remain
+supported. Cleanup failure rejects the operation and keeps the original parts.
+
 ### Result and Keep Tools policy
 
 The result is one new GeneralBRep part in world coordinates with identity
@@ -49,7 +57,8 @@ selected after confirmation. Stable slots are never renumbered:
   name, color, visibility and Structure Browser reference. The Target's old ID
   is retained as an inactive history source, rather than reassigned to new topology.
 
-Undo restores consumed source snapshots and previous part selection. Redo uses
+Undo restores consumed source snapshots. From v0.3.6, successful Undo/Redo clears
+all viewport and Structure Browser selections. Redo uses
 the cached result and the same result ID. Kept Tools are never removed or
 restored by this command. Preview and cancellation create no rows or part slots,
 and do not clear an existing Redo stack.
@@ -86,9 +95,9 @@ modeling undo/redo stack. Pull, transformations and Booleans therefore undo in
 the order in which they were committed.
 
 Undo restores the source B-Reps, transforms, primitive parameters, names, colors,
-visibility and part selection where possible. Face selections are restored as
-whole-part selections; hidden sources remain hidden and are not added to 3D
-selection. Redo reapplies the cached result without recomputing the kernel
+visibility. From v0.3.6, both Undo and Redo finish with no Face, Edge or Part
+selection and no active tools/previews; hidden sources remain hidden. Redo
+reapplies the cached result without recomputing the kernel
 operation. Unrelated parts created later retain their IDs and state.
 
 Part vector positions are stable IDs for the current application session.
@@ -132,7 +141,12 @@ GeneralBRep result reuse, transformed operands, cached Redo, mixed transform and
 Boolean history, hidden source restoration, chained operations, selection from
 browser rows and face owners, explicit Target/Tools sessions, Keep Tools on/off, preview/cancel, result color,
 visibility and duplication, stable browser IDs, invalid inputs and empty/no-op
-results. The three existing Pull/Cone/gizmo tests remain enabled.
+results. The exact `opendesigner-debug4.zip` regression in
+`tests/fixtures/boolean-unite-seams` checks two redundant coplanar edges are
+removed without changing material or real step faces, in Preview, OK and cached
+Undo/Redo. An equal-height variant also merges the top faces. Separate tests
+retain disconnected solids and a closed internal cavity. The three existing
+Pull/Cone/gizmo tests remain enabled.
 
 ## Manual smoke test
 

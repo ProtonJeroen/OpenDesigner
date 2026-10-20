@@ -123,29 +123,42 @@ TopoDS_Shape draft(const TopoDS_Shape& source, const TopoDS_Face& sourceFace,
                 QString validationError;
                 if(!validResult(solid,result,validationError)) { lastFailure=validationError; continue; }
                 TopoDS_Face changedTarget;
-                int targetMatches=0;
                 for(TopExp_Explorer it(result,TopAbs_FACE);it.More();it.Next()) {
                     const auto candidate=TopoDS::Face(it.Current());
                     const BRepAdaptor_Surface candidateSurface(candidate);
                     if(candidateSurface.GetType()!=GeomAbs_Plane) continue;
                     const auto resultPlane=candidateSurface.Plane();
                     if(resultPlane.Axis().Direction().IsParallel(expected.Axis().Direction(),1.e-5)
-                       && resultPlane.Distance(expected.Location())<=1.e-4) { changedTarget=candidate; ++targetMatches; }
+                       && resultPlane.Distance(expected.Location())<=1.e-4) { changedTarget=candidate; }
                 }
                 if(changedTarget.IsNull()) { lastFailure=QStringLiteral("the requested rotated target plane was not present in the result."); continue; }
-                if(modifiedTarget && targetMatches!=1) {
-                    lastFailure=QStringLiteral("the aligned target split into ambiguous patches."); continue;
-                }
                 if(!BRepReconstruction::supports(solid,result,face,expected,validationError)) {
                     lastFailure=validationError; continue;
                 }
-                if(modifiedTarget) *modifiedTarget=changedTarget;
-                return result;
+                BRepReconstruction::Result finished;
+                if(!BRepReconstruction::finish(source,result,sourceFace,expected,finished,validationError)) {
+                    lastFailure=validationError;continue;
+                }
+                if(modifiedTarget && finished.target.IsNull()) {
+                    lastFailure=QStringLiteral("the normalized target is ambiguous.");continue;
+                }
+                if(modifiedTarget) *modifiedTarget=finished.target;
+                return finished.solid;
             } catch(const Standard_Failure&) {
                 continue;
             }
         }
     }
+    BRepReconstruction::Result rebuilt;
+    QString reconstructionError;
+    if(BRepReconstruction::rebuildPlanar(source,sourceFace,expected,rebuilt,reconstructionError)) {
+        if(!modifiedTarget || !rebuilt.target.IsNull()) {
+            if(modifiedTarget) *modifiedTarget=rebuilt.target;
+            error.clear();return rebuilt.solid;
+        }
+        reconstructionError=QStringLiteral("the reconstructed Align target has multiple patches.");
+    }
+    lastFailure+=QStringLiteral("; ")+reconstructionError;
     error=QStringLiteral("Open CASCADE could not rotate this face while constructing a valid closed solid (kernel status %1: %2). Original geometry was kept.").arg(lastStatus).arg(lastFailure);
     qWarning().noquote()<<"Rotate Face rejected:"<<error<<topologyDetails(solid,face);
     return {};

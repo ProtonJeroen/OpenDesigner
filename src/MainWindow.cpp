@@ -16,11 +16,23 @@
 #include <QKeySequence>
 #include <QMessageBox>
 #include <QActionGroup>
+#include <QFileDialog>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.3.5 — Advanced B-Rep Reconstruction (prototype)");
+    setWindowTitle("OpenDesigner 0.3.6 — Advanced Face Topology (prototype)");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
+    connect(viewport_,&CadViewport::geometryOperationFailed,this,[this](const QString& operation,const QString& reason) {
+        auto* dialog=findChild<QMessageBox*>(QStringLiteral("geometryErrorDialog"));
+        if(!dialog) {
+            dialog=new QMessageBox(QMessageBox::Warning,tr("Geometry operation failed"),QString(),QMessageBox::Ok,this);
+            dialog->setObjectName(QStringLiteral("geometryErrorDialog"));
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+        }
+        dialog->setText(tr("%1 could not produce valid closed solid geometry. Original geometry was kept.").arg(operation));
+        dialog->setInformativeText(reason);
+        dialog->open();
+    });
     setCentralWidget(viewport_);
     auto* dock = new QDockWidget(tr("Structure Browser"), this);
     structure_ = new QTreeWidget(dock);
@@ -37,6 +49,21 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     addDockWidget(Qt::LeftDockWidgetArea, dock);
 
     auto* file = menuBar()->addMenu(tr("&File"));
+    auto* debugExport=file->addAction(tr("Export Debug Model..."));
+    debugExport->setObjectName("exportDebugModelAction");
+    connect(debugExport,&QAction::triggered,this,[this] {
+        const auto path=QFileDialog::getSaveFileName(this,tr("Export Debug Model"),
+            QStringLiteral("opendesigner-debug.zip"),tr("Debug model ZIP (*.zip)"));
+        if(path.isEmpty()) return;
+        QString error;
+        QJsonArray browserSelection;
+        for(auto* item:structure_->selectedItems())
+            if(item->data(0,Qt::UserRole).isValid()) browserSelection.append(QString::number(item->data(0,Qt::UserRole).toULongLong()));
+        if(!viewport_->exportDebugModel(path,error,browserSelection))
+            QMessageBox::warning(this,tr("Debug export failed"),error);
+        else statusBar()->showMessage(tr("Debug model exported to %1").arg(path),10000);
+    });
+    file->addSeparator();
     auto* exitAction = file->addAction(tr("E&xit"));
     connect(exitAction, &QAction::triggered, this, &QWidget::close);
     auto* edit = menuBar()->addMenu(tr("&Edit"));
@@ -66,6 +93,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(rotateFaceAction,&QAction::triggered,viewport_,&CadViewport::rotateFace);
     auto* alignFaceAction = model->addAction(tr("Align Face"));
     connect(alignFaceAction,&QAction::triggered,viewport_,&CadViewport::alignFace);
+    auto* deleteFaceAction=model->addAction(tr("Delete Face"));
+    deleteFaceAction->setObjectName(QStringLiteral("deleteFaceAction"));
+    connect(deleteFaceAction,&QAction::triggered,viewport_,&CadViewport::deleteFace);
     auto* pullAction = model->addAction(tr("Primitive Pull / Resize"));
     connect(pullAction, &QAction::triggered, viewport_, &CadViewport::startPrimitivePull);
     auto* movePartAction = model->addAction(tr("Move &Part Along Face..."));
@@ -111,7 +141,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.3.5 — Advanced B-Rep Reconstruction prototype."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.3.6 — Advanced Face Topology prototype."));
     });
     auto* toolbar = addToolBar(tr("Modeling"));
     connect(viewport_,&CadViewport::transformModesChanged,this,[interactiveMove,directMove,interactiveRotate](bool faceNormal,bool move,bool rotate) {
@@ -179,6 +209,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(viewport_, &CadViewport::partSelectionChanged, this, [this, root](const std::vector<size_t>& indices) {
         const QSignalBlocker blocker(structure_);
         structure_->clearSelection();
+        if(indices.empty()) structure_->setCurrentItem(nullptr);
         for (const size_t index : indices) {
             if (index < static_cast<size_t>(root->childCount()))
                 root->child(static_cast<int>(index))->setSelected(true);

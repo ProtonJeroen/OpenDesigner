@@ -1,4 +1,4 @@
-# Rotate Face (v0.3.5)
+# Rotate Face (v0.3.6)
 
 Select one planar Face and choose **Rotate Face** from its context menu or from
 **Modeling**. Choose a straight boundary edge or a projected World X, Y or Z
@@ -15,27 +15,39 @@ cached result. The part slot, name, color, visibility and Structure Browser row
 remain stable. A directly edited primitive becomes GeneralBRep, as it does for
 Move Face. The reference edge is selected again for each new Rotate Face command.
 
-## Supported cases and refusal behavior (v0.3.5)
+## Supported cases and refusal behavior (v0.3.6)
 
-Planar targets on one closed analytic solid use shared
-[B-Rep reconstruction](BREP_RECONSTRUCTION.md). OCCT same-domain unification
-removes redundant Boolean seams before `BRepOffsetAPI_DraftAngle` rebuilds the
-rotated plane and adjacent trims. The requested signed plane, preserved
-analytic supports, solid closure, volume and self-interference are checked.
-No revolve, sweep or bridge geometry is generated. Counts need not remain equal.
+Rotate Face keeps the existing OCCT DraftAngle construction and adds the shared
+[planar material-cell reconstruction path](BREP_RECONSTRUCTION.md) when that
+builder cannot reliably cross a topology event. Final normalization merges safe
+coplanar faces and collinear segments, with Common-confirmed material equivalence.
+The expected signed target plane, valid closed single solid, analytic supports,
+self-interference and intended material distribution remain acceptance conditions.
+No sweep/revolve bridge is created.
 
-Verified cases include signed Box rotations around different straight axes,
-edited GeneralBRep, simple Boolean faces, and the two-height Unite riser at
-±8 degrees around a horizontal boundary edge. The riser test checks exact wedge
-volume and analytical material occupancy, including points immediately beside
-the requested plane. This does not establish support for every edge or angle.
+The Unite staircase riser now reaches **+75° about +Y through (60,0,50)**, beyond
+the v0.3.5 failure where the z=90 cap must disappear. Seven necessary faces remain,
+with obsolete cap edges/vertices removed. Negative rotations preserve the existing
+overhang behavior: -75° retains eight necessary faces rather than clipping the
+result to the original bounding box. Independent material probes and exact
+piecewise-linear volume integration cover ±60°, ±75°, 68.1° and 68.3° around the
+cap-disappearance threshold. Ordinary signed Box rotations remain tested.
 
-Curved targets, freeform/blend supports, multiple shells/solids, disappearing
-support surfaces, ambiguous target mapping, self-intersections and failed kernel
-reconstruction are refused. The axis must lie in the target plane; angles must
-be finite with magnitude below 179 degrees. All calculations use isolated copies.
+The new path requires all-planar supports, one target-plane patch, at most 12
+planes and 32 source cells, and a target normal remaining on its original side
+(approximately below 90°). The numeric command still accepts finite angles below
+179° in magnitude for the existing builder; that is not a promise that all such
+angles can be rebuilt. Curved targets, unsupported surfaces, ambiguous partitions,
+unbounded/degenerate intersections and complete target disappearance are refused.
 
-Rotate Face retains the existing CommandSession, separate AIS preview and
-FaceChange snapshot history. The geometry tests and move-face transaction tests
-cover the riser; selection-context covers the existing axis selection workflow.
-Manual Fedora KDE verification of v0.3.5 passed; the user confirmed the tested geometry and live preview workflow.
+Final target mapping follows the requested plane after unification, rather than
+an obsolete edge or face index. CommandSession still owns the immutable source,
+orange ring, blue full-solid preview, Cancel/OK and one cached history entry.
+The larger-angle riser cases also run through preview/cleanup/Undo/Redo tests.
+Manual Fedora KDE verification of v0.3.6 is pending.
+
+The exact Fedora +30° rotation about +X through (125,80,60) remains
+material-equivalent to the user's accepted rotated B-Rep. A regression then moves
+its oblique target +49 mm and verifies physical neighbor trimming, rather than
+accepting a valid solid with an unintended triangular wing. See the
+[exact fixture](../tests/fixtures/rotate30-move49/README.md).

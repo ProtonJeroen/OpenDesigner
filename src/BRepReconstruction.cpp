@@ -1,5 +1,15 @@
 #include "BRepReconstruction.h"
 #include <BRepAdaptor_Surface.hxx>
+#include <BOPAlgo_Splitter.hxx>
+#include <BRepAlgoAPI_Common.hxx>
+#include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepPrimAPI_MakeHalfSpace.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
+#include <BRepTools.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp.hxx>
@@ -7,6 +17,7 @@
 #include <BOPAlgo_ArgumentAnalyzer.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <BRepTools_History.hxx>
 #include <GProp_GProps.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
@@ -19,11 +30,14 @@
 #include <cmath>
 
 namespace {
+TopTools_ListOfShape singleton(const TopoDS_Shape& shape) {
+    TopTools_ListOfShape list;list.Append(shape);return list;
+}
 int count(const TopoDS_Shape& shape,TopAbs_ShapeEnum type) {
     TopTools_IndexedMapOfShape map; TopExp::MapShapes(shape,type,map); return map.Extent();
 }
 bool sameSupport(const TopoDS_Face& original, const TopoDS_Face& result,
-                 const gp_Pln* expected = nullptr) {
+                 const gp_Pln* expected = nullptr, bool unoriented = false) {
     const BRepAdaptor_Surface a(original), b(result);
     if(a.GetType()!=b.GetType()) return false;
     if(a.GetType()==GeomAbs_Plane) {
@@ -31,7 +45,7 @@ bool sameSupport(const TopoDS_Face& original, const TopoDS_Face& result,
         auto pn=p.Axis().Direction(), qn=q.Axis().Direction();
         if(original.Orientation()==TopAbs_REVERSED) pn.Reverse();
         if(result.Orientation()==TopAbs_REVERSED) qn.Reverse();
-        return pn.IsEqual(qn,1.e-7) && p.Distance(q.Location())<1.e-5;
+        return (unoriented?pn.IsParallel(qn,1.e-7):pn.IsEqual(qn,1.e-7)) && p.Distance(q.Location())<1.e-5;
     }
     if(a.GetType()==GeomAbs_Cylinder) {
         const auto p=a.Cylinder(),q=b.Cylinder();
@@ -63,6 +77,29 @@ bool BRepReconstruction::validSolid(const TopoDS_Shape& shape,double& volume) {
     check.StopOnFirstFaulty()=true; check.Perform();
     return !check.HasErrors()&&!check.HasFaulty();
 }
+bool BRepReconstruction::sameAnalyticSupport(const TopoDS_Face& a,const TopoDS_Face& b) {
+    return sameSupport(a,b);
+}
+bool BRepReconstruction::normalize(const TopoDS_Shape& candidate,TopoDS_Shape& result,QString& error) {
+    result.Nullify();
+    try {
+        double volume=0;
+        if(!validSolid(candidate,volume)) {
+            error=QStringLiteral("Reconstruction did not produce one valid closed solid.");return false;
+        }
+        BRepBuilderAPI_Copy isolated(candidate,true,false);
+        auto cleaned=isolated.Shape();
+        BRepTools::RemoveInternals(cleaned,false);
+        ShapeUpgrade_UnifySameDomain unify(cleaned,true,true,false);
+        unify.SetSafeInputMode(true);unify.Build();
+        if(!validSolid(unify.Shape(),volume)||!equivalent(candidate,unify.Shape())) {
+            error=QStringLiteral("Final unification changed material or invalidated the solid.");return false;
+        }
+        result=unify.Shape();error.clear();return true;
+    } catch(const Standard_Failure&) {
+        error=QStringLiteral("OCCT could not safely unify the reconstructed solid.");return false;
+    }
+}
 bool BRepReconstruction::prepare(const TopoDS_Shape& source,const TopoDS_Face& target,
                                  Prepared& result,QString& error) {
     result={};
@@ -84,7 +121,7 @@ bool BRepReconstruction::prepare(const TopoDS_Shape& source,const TopoDS_Face& t
         GProp_GProps before,after;
         BRepGProp::VolumeProperties(source,before);
         BRepGProp::VolumeProperties(candidate,after);
-        if(before.CentreOfMass().Distance(after.CentreOfMass())>1.e-6 || std::abs(before.Mass()-after.Mass())>1.e-7*std::max(1.0,std::abs(before.Mass()))) {
+        if(before.CentreOfMass().Distance(after.CentreOfMass())>1.e-6 || !equivalent(source,candidate)) {
             error=QStringLiteral("B-Rep normalization changed the volume.");return false;
         }
         for(TopExp_Explorer f(source,TopAbs_FACE);f.More();f.Next()) {
@@ -136,4 +173,314 @@ bool BRepReconstruction::supports(const TopoDS_Shape& source,const TopoDS_Shape&
         }
     }
     return true;
+}
+
+namespace {
+double mass(const TopoDS_Shape& shape) {
+    GProp_GProps properties;BRepGProp::VolumeProperties(shape,properties);return properties.Mass();
+}
+bool samePlane(const gp_Pln& a,const gp_Pln& b) {
+    return a.Axis().Direction().IsParallel(b.Axis().Direction(),1.e-8)
+        && a.Distance(b.Location())<1.e-7;
+}
+double signedDistance(const gp_Pln& plane,const gp_Pnt& point) {
+    return gp_Vec(plane.Location(),point).Dot(gp_Vec(plane.Axis().Direction()));
+}
+// A convex cell is certified by an interior centroid and all its vertices
+// lying on the interior side of every bounding support. Only actual facets
+// constrain it: distant, nonadjacent planes must not clip a legitimate overhang.
+bool cellConstraints(const TopoDS_Shape& cell,const std::vector<gp_Pln>& planes,std::vector<int>& sides) {
+    GProp_GProps properties;BRepGProp::VolumeProperties(cell,properties);
+    if(count(cell,TopAbs_SOLID)!=1 || properties.Mass()<=1.e-9) return false;
+    const auto interior=properties.CentreOfMass();
+    BRepClass3d_SolidClassifier classifier(cell,interior,1.e-7);
+    if(classifier.State()!=TopAbs_IN) return false;
+    sides.assign(planes.size(),0);
+    for(TopExp_Explorer f(cell,TopAbs_FACE);f.More();f.Next()) {
+        const BRepAdaptor_Surface support(TopoDS::Face(f.Current()));
+        if(support.GetType()!=GeomAbs_Plane) return false;
+        size_t index=0;while(index<planes.size()&&!samePlane(planes[index],support.Plane())) ++index;
+        if(index==planes.size()) return false;
+        const double distance=signedDistance(planes[index],interior);
+        if(std::abs(distance)<1.e-6) return false;
+        sides[index]=distance>0?1:-1;
+        for(TopExp_Explorer vertex(cell,TopAbs_VERTEX);vertex.More();vertex.Next())
+            if(sides[index]*signedDistance(planes[index],BRep_Tool::Pnt(TopoDS::Vertex(vertex.Current())))<-1.e-5) return false;
+    }
+    return true;
+}
+// A cell facet can cease to be geometrically necessary after arrangement
+// splitting: e.g. the old tilted top plus a horizontal split already imply
+// y >= 0. Moving that top can invalidate this implication and grow a wedge
+// through the real front face. Retain the selected patch's physical neighbor
+// trims even when they were redundant in an individual source cell.
+// These are local boundary supports, NOT every plane in the solid (which
+// would incorrectly clip legitimate overhangs past unrelated outer bounds).
+bool targetTrims(const TopoDS_Shape& solid,const TopoDS_Face& target,
+                 const std::vector<gp_Pln>& planes,std::vector<int>& trims) {
+    if(count(target,TopAbs_WIRE)!=1) return false;
+    trims.assign(planes.size(),0);
+    TopTools_IndexedDataMapOfShapeListOfShape adjacency;
+    TopExp::MapShapesAndAncestors(solid,TopAbs_EDGE,TopAbs_FACE,adjacency);
+    for(TopExp_Explorer edge(target,TopAbs_EDGE);edge.More();edge.Next()) {
+        if(!adjacency.Contains(edge.Current())) return false;
+        const auto& neighbors=adjacency.FindFromKey(edge.Current());
+        if(neighbors.Extent()!=2) return false;
+        for(TopTools_ListIteratorOfListOfShape n(neighbors);n.More();n.Next()) {
+            if(n.Value().IsSame(target)) continue;
+            const auto support=BRepAdaptor_Surface(TopoDS::Face(n.Value())).Plane();
+            size_t i=0;while(i<planes.size()&&!samePlane(planes[i],support)) ++i;
+            if(i==planes.size()) return false;
+            int side=0;
+            for(TopExp_Explorer vertex(target,TopAbs_VERTEX);vertex.More();vertex.Next()) {
+                const double d=signedDistance(planes[i],BRep_Tool::Pnt(TopoDS::Vertex(vertex.Current())));
+                if(std::abs(d)<1.e-7) continue;
+                const int next=d>0?1:-1;
+                if(side&&side!=next) return false; // Concave trim needs a local decomposition.
+                side=next;
+            }
+            if(!side||(trims[i]&&trims[i]!=side)) return false;
+            trims[i]=side;
+        }
+    }
+    return true;
+}
+bool sharedTarget(const TopoDS_Shape& a,const TopoDS_Shape& b,const gp_Pln& target) {
+    for(TopExp_Explorer f(a,TopAbs_FACE);f.More();f.Next()) {
+        if(!samePlane(BRepAdaptor_Surface(TopoDS::Face(f.Current())).Plane(),target)) continue;
+        for(TopExp_Explorer g(b,TopAbs_FACE);g.More();g.Next()) {
+            if(!samePlane(BRepAdaptor_Surface(TopoDS::Face(g.Current())).Plane(),target)) continue;
+            if(f.Current().IsSame(g.Current())) return true;
+            BRepAlgoAPI_Common common;common.SetArguments(singleton(f.Current()));common.SetTools(singleton(g.Current()));
+            common.SetNonDestructive(true);common.Build();
+            if(!common.IsDone()||common.HasErrors()) throw Standard_Failure("Cannot establish target-cell adjacency.");
+            GProp_GProps area;BRepGProp::SurfaceProperties(common.Shape(),area);
+            if(area.Mass()>1.e-8) return true;
+        }
+    }
+    return false;
+}
+bool finishImpl(const TopoDS_Shape& source,const TopoDS_Shape& candidate,
+        const TopoDS_Face& target,const gp_Pln& expected,BRepReconstruction::Result& result,
+        QString& error,bool certifiedCells) {
+    result={};
+    try {
+        TopoDS_Shape normalized;
+        if(!BRepReconstruction::normalize(candidate,normalized,error)) return false;
+        TopTools_IndexedDataMapOfShapeListOfShape adjacency;
+        TopExp::MapShapesAndAncestors(normalized,TopAbs_EDGE,TopAbs_FACE,adjacency);
+        for(int i=1;i<=adjacency.Extent();++i) {
+            const auto& faces=adjacency.FindFromIndex(i);
+            if(faces.Extent()!=2 || faces.First().IsSame(faces.Last())) continue;
+            const BRepAdaptor_Surface a(TopoDS::Face(faces.First())),b(TopoDS::Face(faces.Last()));
+            if(a.GetType()==GeomAbs_Plane&&b.GetType()==GeomAbs_Plane&&samePlane(a.Plane(),b.Plane())) {
+                error=QStringLiteral("Final normalization left a redundant coplanar dividing edge.");return false;
+            }
+        }
+        if(!certifiedCells && !BRepReconstruction::supports(source,normalized,target,expected,error)) return false;
+        for(TopExp_Explorer f(source,TopAbs_FACE);f.More();f.Next()) {
+            BRepReconstruction::FaceMapping mapping{TopoDS::Face(f.Current()),{}};
+            for(TopExp_Explorer g(normalized,TopAbs_FACE);g.More();g.Next())
+                if(sameSupport(mapping.original,TopoDS::Face(g.Current()),mapping.original.IsSame(target)?&expected:nullptr,certifiedCells&&!mapping.original.IsSame(target)))
+                    mapping.modified.push_back(TopoDS::Face(g.Current()));
+            if(mapping.original.IsSame(target)) {
+                if(mapping.modified.empty()) {
+                    error=QStringLiteral("The requested target plane disappeared; this edit is ambiguous.");return false;
+                }
+                if(mapping.modified.size()==1) result.target=mapping.modified.front();
+            }
+            result.history.push_back(mapping);
+        }
+        // Even the certified-cell route may only create patches on original
+        // supports or the requested target, never seed-box or transition faces.
+        for(TopExp_Explorer f(normalized,TopAbs_FACE);f.More();f.Next()) {
+            bool mapped=false;
+            for(const auto& mapping:result.history) for(const auto& face:mapping.modified)
+                if(face.IsSame(f.Current())) mapped=true;
+            if(!mapped) {
+                error=QStringLiteral("Reconstruction introduced a bounding-box or transition support.");return false;
+            }
+        }
+        result.solid=normalized;error.clear();return true;
+    } catch(const Standard_Failure&) {
+        error=QStringLiteral("OCCT could not safely unify the reconstructed solid.");return false;
+    }
+}
+}
+bool BRepReconstruction::equivalent(const TopoDS_Shape& a,const TopoDS_Shape& b) {
+    if(a.IsNull()||b.IsNull()) return false;
+    BRepBuilderAPI_Copy ac(a,true,false),bc(b,true,false);
+    BRepAlgoAPI_Common common;
+    common.SetArguments(singleton(ac.Shape()));
+    common.SetTools(singleton(bc.Shape()));
+    common.SetNonDestructive(true);common.Build();
+    if(!common.IsDone()||common.HasErrors()) return false;
+    const double av=mass(a),bv=mass(b),cv=mass(common.Shape());
+    const double tolerance=1.e-8*std::max({1.0,std::abs(av),std::abs(bv)});
+    return std::isfinite(cv)&&std::abs(av-bv)<=tolerance
+        &&std::abs(av-cv)<=tolerance&&std::abs(bv-cv)<=tolerance;
+}
+bool BRepReconstruction::finish(const TopoDS_Shape& source,const TopoDS_Shape& candidate,
+        const TopoDS_Face& target,const gp_Pln& expected,Result& result,QString& error) {
+    return finishImpl(source,candidate,target,expected,result,error,false);
+}
+bool BRepReconstruction::rebuildPlanar(const TopoDS_Shape& source,const TopoDS_Face& target,
+        const gp_Pln& expected,Result& result,QString& error) {
+    result={};
+    const auto fail=[&](const QString& reason) {error=QStringLiteral("Planar topology reconstruction refused: ")+reason;return false;};
+    try {
+        Prepared prepared;
+        if(!prepare(source,target,prepared,error)) return false;
+        const auto originalTarget=BRepAdaptor_Surface(target).Plane();
+        if(originalTarget.Axis().Direction().Dot(expected.Axis().Direction())<=1.e-4)
+            return fail(QStringLiteral("target rotation must remain below 90 degrees."));
+        int targetPatches=0;
+        std::vector<gp_Pln> planes;
+        for(TopExp_Explorer f(prepared.solid,TopAbs_FACE);f.More();f.Next()) {
+            const BRepAdaptor_Surface support(TopoDS::Face(f.Current()));
+            if(support.GetType()!=GeomAbs_Plane) return fail(QStringLiteral("cell reconstruction requires planar supports."));
+            if(samePlane(support.Plane(),originalTarget)) ++targetPatches;
+            if(std::none_of(planes.begin(),planes.end(),[&](const auto& plane){return samePlane(plane,support.Plane());}))
+                planes.push_back(support.Plane());
+        }
+        if(targetPatches!=1 || planes.size()>12) return fail(QStringLiteral("requires one target patch and at most 12 distinct planes."));
+        size_t targetIndex=0;
+        while(targetIndex<planes.size()&&!samePlane(planes[targetIndex],originalTarget)) ++targetIndex;
+        if(targetIndex==planes.size()) return fail(QStringLiteral("target support was lost."));
+        std::vector<int> trims;
+        if(!targetTrims(prepared.solid,prepared.target,planes,trims))
+            return fail(QStringLiteral("target boundary requires an unsupported concave or ambiguous trim decomposition."));
+        // Preserve the target surface's parameter normal (not merely its locus).
+        gp_Pln replacement=expected;
+        if(planes[targetIndex].Axis().Direction().Dot(originalTarget.Axis().Direction())<0)
+            replacement=gp_Pln(expected.Location(),expected.Axis().Direction().Reversed());
+        Bnd_Box bounds;BRepBndLib::AddOptimal(prepared.solid,bounds,false,false);
+        double x0,y0,z0,x1,y1,z1;bounds.Get(x0,y0,z0,x1,y1,z1);
+        const double span=std::max({x1-x0,y1-y0,z1-z0,1.0});
+        const double margin=4*span+std::abs(signedDistance(originalTarget,expected.Location()));
+        const auto seed=BRepPrimAPI_MakeBox(gp_Pnt(x0-margin,y0-margin,z0-margin),gp_Pnt(x1+margin,y1+margin,z1+margin)).Shape();
+        BOPAlgo_Splitter split;
+        split.SetNonDestructive(true);split.AddArgument(prepared.solid);
+        for(const auto& plane:planes) split.AddTool(BRepBuilderAPI_MakeFace(plane).Face());
+        split.Perform();
+        if(split.HasErrors()) return fail(QStringLiteral("OCCT could not split the support arrangement."));
+        if(count(split.Shape(),TopAbs_SOLID)>32) return fail(QStringLiteral("more than 32 material cells."));
+        std::vector<TopoDS_Shape> cells;
+        double sourceVolume=0,candidateVolume=0;
+        for(TopExp_Explorer cell(split.Shape(),TopAbs_SOLID);cell.More();cell.Next()) {
+            sourceVolume+=mass(cell.Current());cells.push_back(cell.Current());
+        }
+        // A plane through existing material is an artificial partition, not a
+        // selected boundary. Eliminate these partitions BEFORE substitution.
+        bool progress=true;
+        while(progress) {
+            progress=false;
+            for(size_t i=0;i<cells.size()&&!progress;++i) for(size_t j=i+1;j<cells.size();++j) {
+                if(!sharedTarget(cells[i],cells[j],originalTarget)) continue;
+                BRepAlgoAPI_Fuse fuse;fuse.SetArguments(singleton(cells[i]));fuse.SetTools(singleton(cells[j]));
+                fuse.SetNonDestructive(true);fuse.Build();
+                if(!fuse.IsDone()||fuse.HasErrors()) return fail(QStringLiteral("source cell merging failed."));
+                const double expectedVolume=mass(cells[i])+mass(cells[j]);
+                if(std::abs(mass(fuse.Shape())-expectedVolume)>1.e-8*std::max(1.0,expectedVolume))
+                    return fail(QStringLiteral("source cell union changed material volume."));
+                ShapeUpgrade_UnifySameDomain unify(fuse.Shape(),true,true,false);unify.SetSafeInputMode(true);unify.Build();
+                std::vector<int> constraints;
+                if(!cellConstraints(unify.Shape(),planes,constraints)) continue;
+                if(!equivalent(fuse.Shape(),unify.Shape())) return fail(QStringLiteral("source cell merging changed material."));
+                cells[i]=unify.Shape();cells.erase(cells.begin()+j);progress=true;break;
+            }
+        }
+        for(size_t i=0;i<cells.size();++i) for(size_t j=i+1;j<cells.size();++j)
+            if(sharedTarget(cells[i],cells[j],originalTarget)) return fail(QStringLiteral("nonconvex internal target partition is ambiguous."));
+        TopoDS_Shape united;
+        std::vector<std::vector<int>> materialRules;
+        for(const auto& cell:cells) {
+            std::vector<int> sides;
+            if(!cellConstraints(cell,planes,sides)) return fail(QStringLiteral("source cell is not certified convex."));
+            if(sides[targetIndex]) {
+                for(size_t i=0;i<planes.size();++i) if(trims[i]) {
+                    // The extra constraints must be redundant BEFORE editing:
+                    // no part of a certified convex source cell may be removed.
+                    for(TopExp_Explorer vertex(cell,TopAbs_VERTEX);vertex.More();vertex.Next())
+                        if(trims[i]*signedDistance(planes[i],BRep_Tool::Pnt(TopoDS::Vertex(vertex.Current())))<-1.e-5)
+                            return fail(QStringLiteral("target material cell crosses a physical neighbor trim; decomposition is ambiguous."));
+                    if(sides[i]&&sides[i]!=trims[i])
+                        return fail(QStringLiteral("target material cell has conflicting neighbor trims."));
+                    sides[i]=trims[i];
+                }
+            }
+            materialRules.push_back(sides);
+            TopoDS_Shape rebuilt=seed;
+            for(size_t i=0;i<planes.size();++i) {
+                if(sides[i]==0) continue;
+                const auto& plane=i==targetIndex?replacement:planes[i];
+                const auto point=plane.Location().Translated(gp_Vec(plane.Axis().Direction())*sides[i]*span);
+                const auto halfspace=BRepPrimAPI_MakeHalfSpace(BRepBuilderAPI_MakeFace(plane).Face(),point).Solid();
+                BRepAlgoAPI_Common clip;
+                clip.SetArguments(singleton(rebuilt));clip.SetTools(singleton(halfspace));
+                clip.SetNonDestructive(true);clip.Build();
+                if(!clip.IsDone()||clip.HasErrors()) return fail(QStringLiteral("halfspace intersection failed."));
+                rebuilt=clip.Shape();
+                if(count(rebuilt,TopAbs_SOLID)==0) break;
+            }
+            if(count(rebuilt,TopAbs_SOLID)==0) continue; // A certified empty cell disappears.
+            const double cellVolume=mass(rebuilt);
+            if(cellVolume<=1.e-9) return fail(QStringLiteral("degenerate reconstructed cell."));
+            candidateVolume+=cellVolume;
+            if(united.IsNull()) united=rebuilt;
+            else {
+                BRepAlgoAPI_Fuse fuse;fuse.SetArguments(singleton(united));fuse.SetTools(singleton(rebuilt));
+                fuse.SetNonDestructive(true);fuse.Build();
+                if(!fuse.IsDone()||fuse.HasErrors()) return fail(QStringLiteral("cell union failed."));
+                united=fuse.Shape();
+            }
+        }
+        const double before=mass(prepared.solid);
+        if(std::abs(sourceVolume-before)>1.e-8*std::max(1.0,before)) return fail(QStringLiteral("split cells do not cover original material."));
+        if(united.IsNull()||mass(united)>candidateVolume+1.e-8*std::max(1.0,candidateVolume))
+            return fail(QStringLiteral("cell union lost or overlapped intended material."));
+        if(!finishImpl(source,united,target,expected,result,error,true)) return false;
+        for(TopExp_Explorer edge(result.solid,TopAbs_EDGE);edge.More();edge.Next())
+            if(BRep_Tool::Degenerated(TopoDS::Edge(edge.Current()))) {
+                result={};return fail(QStringLiteral("degenerate planar result edge."));
+            }
+        // Check material independently of the returned B-Rep's topology: the
+        // intended set is the union of the certified cells' signed halfspaces.
+        BRepClass3d_SolidClassifier material(result.solid);
+        const auto matches=[&](const gp_Pnt& point) {
+            bool expectedInside=false,boundary=false;
+            for(const auto& rule:materialRules) {
+                bool inside=true;
+                for(size_t i=0;i<planes.size();++i) if(rule[i]) {
+                    const double distance=rule[i]*signedDistance(i==targetIndex?replacement:planes[i],point);
+                    boundary=boundary||std::abs(distance)<1.e-6;
+                    inside=inside&&distance>0;
+                }
+                expectedInside=expectedInside||inside;
+            }
+            if(boundary) return true;
+            material.Perform(point,1.e-7);
+            return material.State()==(expectedInside?TopAbs_IN:TopAbs_OUT);
+        };
+        Bnd_Box finalBounds;BRepBndLib::AddOptimal(result.solid,finalBounds,false,false);
+        finalBounds.Get(x0,y0,z0,x1,y1,z1);
+        for(int i=0;i<9;++i) for(int j=0;j<9;++j) for(int k=0;k<9;++k) {
+            const gp_Pnt point(x0+(i-0.37)*(x1-x0)/7.3,y0+(j-0.37)*(y1-y0)/7.3,z0+(k-0.37)*(z1-z0)/7.3);
+            if(!matches(point)) {result={};return fail(QStringLiteral("material distribution disagrees with the requested support substitution."));}
+        }
+        for(TopExp_Explorer f(result.solid,TopAbs_FACE);f.More();f.Next()) {
+            GProp_GProps properties;BRepGProp::SurfaceProperties(f.Current(),properties);
+            if(properties.Mass()<1.e-10) {result={};return fail(QStringLiteral("degenerate result face."));}
+            const auto face=TopoDS::Face(f.Current());
+            auto normal=BRepAdaptor_Surface(face).Plane().Axis().Direction();
+            if(face.Orientation()==TopAbs_REVERSED) normal.Reverse();
+            for(double side:{-1.0,1.0})
+                if(!matches(properties.CentreOfMass().Translated(gp_Vec(normal)*side*span*1.e-5))) {
+                    result={};return fail(QStringLiteral("boundary material disagrees with the intended cells."));
+                }
+        }
+        return true;
+    } catch(const Standard_Failure&) {
+        return fail(QStringLiteral("OCCT failed; original geometry retained."));
+    }
 }

@@ -14,7 +14,8 @@
 - STEP, IGES, STL
 - GLB/glTF and FBX import/export
 
-OpenDesigner targets Windows, Linux and macOS. This roadmap describes planned work, not finished features.
+OpenDesigner targets Windows, Linux and macOS. Version sections record implemented
+work and its limits; Next milestones and follow-up items describe planned work.
 
 ## v0.20 — primitive Pull
 - Sphere creation and interactive Pull with absolute diameters are implemented on the sphere feature branch.
@@ -110,11 +111,68 @@ OpenDesigner targets Windows, Linux and macOS. This roadmap describes planned wo
 - Manual Fedora KDE tests passed; the user confirmed all tested v0.3.5
   functionality, including geometry, live previews and context menus (2026-10-20).
 
-## v0.3.6 — further topology improvements (planned)
+## v0.3.6 — Advanced Face Topology
 
-- Extend controlled topology reconstruction beyond redundant seams, including
-  carefully validated support-disappearance events.
-- Broaden coverage for complex Boolean and curved-neighbor configurations with
-  independent expected-shape checks and safe refusal where reliability is unproven.
-- Keep freeform/blend reconstruction, multi-shell solids and persistent subshape
-  naming outside the v0.3.5 support claim; revisit their scope separately.
+- Every accepted face edit now receives final same-domain normalization and
+  connectivity-checked internal cleanup, with material equivalence checked by
+  OCCT Common before and after normalization.
+- Bounded all-planar material-cell reconstruction uses OCCT Splitter, halfspaces,
+  Common and Fuse to support controlled disappearing supports and new patches on
+  existing planes. Artificial target-plane partitions inside material are removed
+  before editing; nonadjacent supports do not clip legitimate overhangs.
+- Verified Unite-riser +75° rotation removes the former blocking high cap;
+  negative rotations preserve existing overhang behavior. Move crosses the original
+  overlap seam, removes a terrace at +60 mm and exposes an underside at +100 mm.
+- Regressions check analytical volumes, material probes, absence of redundant
+  seams, preservation of disconnected coplanar patches, final target mapping,
+  Align after reconstruction and preview/Cancel/OK/Undo/Redo cleanup.
+- Limits remain explicit: one target patch, up to 12 distinct planes and 32 cells
+  for the new path; no unrestricted curved/freeform/multi-shell reconstruction,
+  lost-target editing or persistent subshape naming. Computation is synchronous.
+- File → Export Debug Model captures exact geometry/meshes, metadata, selection
+  and available command parameters. An isolated inspector supports roundtrip
+  checks, stored/fresh mesh comparison, wireframe and world-space material probes.
+  This is diagnostic ZIP capture, not v0.3.7 `.odc` Save/Open.
+- The exact supplied Rotate +30° → oblique Move +49 mm case now retains physical
+  target-neighbor trims that were previously lost as redundant cell constraints.
+  This removes a real 64981.2085 mm³ triangular wing; it is not a mesh-only fix.
+  Exact B-Rep, independent material oracle, mapping and full preview/history
+  regressions are included. Concave/ambiguous target trim decompositions remain
+  refused by the planar fallback. See [B-Rep reconstruction](BREP_RECONSTRUCTION.md).
+
+Remaining work includes broader complex Boolean/curved-neighbor topology events,
+nonconvex cell partitions, persistent subshape IDs and cancellable kernel work.
+
+### v0.3.6 — Delete Face and final integration
+
+- Multi-Face / multi-Part deletion uses OCCT defeaturing, all-or-nothing preview
+  and one cached history entry while retaining Part identity.
+- Independent material certificates cover planar-rim analytic features and
+  bounded convex planar support removal; ambiguous or unsupported closures fail
+  safely. No arbitrary capping fallback is used.
+- Bounded prismatic step reconstruction handles the supplied Unite/Rotate small
+  transition triangle and front strip, including actual neighbor shortening.
+  Exact user B-Reps, independent profile/volume oracles and history tests guard
+  this extension; separate Parts must be united first.
+- Successive deletions infer a unique section axis from the current B-Rep even
+  after an earlier deletion removed the opposite-facing transition. Both orders
+  and the exact exported intermediate are regression-tested with two-step history.
+- Planar sections may also have oblique top/front supports when a unique family
+  of station planes is available. The exact debug5 L-shaped transition is covered
+  by profile/volume oracles, transformed geometry, preview/history and safe-refusal
+  regressions for unbounded, ambiguous or lost-unselected-face cases.
+- Shared geometry error popups cover Delete/Move/Rotate/Align Face, Boolean and
+  Pull. Undo/Redo retains the existing complete selection cleanup.
+- Unite/Subtract/Intersect normalize the final B-Rep before preview/history.
+  Redundant same-surface divisions disappear with Common-confirmed material
+  equivalence; real steps, disconnected solids and cavity shells remain intact.
+- Geometry and session regressions are provided. Scope and manual Fedora KDE
+  checks: [Delete Face](DELETE_FACE.md). General freeform/blend reconstruction
+  remains future work.
+- The user confirmed the supplied successive Delete Face cases, Unite seam
+  cleanup and the inclined L-shaped deletion on 2026-10-20. These are targeted
+  desktop confirmations, not a claim of exhaustive platform validation.
+- v0.3.6 implementation is complete within the documented analytic scope.
+  The full CMake build and all 12 CTests cover geometry, blue preview, transactions,
+  uniform popups, diagnostic roundtrips and cached history. Windows/macOS validation,
+  unrestricted freeform reconstruction and packaged distribution remain future work.

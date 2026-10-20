@@ -1,4 +1,4 @@
-# Selection and explicit modeling commands (v0.3.3–v0.3.5)
+# Selection and explicit modeling commands (v0.3.3–v0.3.6)
 
 Selection is passive. There is no Faces/Parts dropdown.
 
@@ -13,6 +13,26 @@ Releasing Alt does not change the current selection or its type. Structure
 Browser rows select Parts. Selecting a different type starts a fresh typed set.
 Selection alone never activates a modeling function or displays manipulators.
 Middle-button orbit, Shift+middle pan and wheel zoom retain their behavior.
+
+## Selection after Undo/Redo (v0.3.6)
+
+Every successful Undo/Redo deselects all Faces, Edges and Parts, including browser-
+only selections of hidden Parts. The shared history path first cancels active
+sessions and removes previews/manipulators, releases AIS selection/detection/pick
+owners before topology replacement, and clears any selection made by restoration
+adapters afterward. Structure Browser selection and its current item are cleared
+through the existing selection signal. Geometry, properties, stable Part slots
+and cached history snapshots keep their existing semantics.
+
+This applies equally to the toolbar, Edit-menu and Ctrl+Z/Ctrl+Y actions, including
+when an active command's floating parameter editor has keyboard focus. Empty-space
+right click afterward opens only the Undo/Redo context menu. Selection is still
+preserved on ordinary Cancel; history navigation deliberately requires a fresh
+selection. Regression coverage exercises Move Face, Rotate Face and Boolean Undo
+and Redo through all three entry points (with viewport and parameter-editor keyboard focus),
+including pending previews, mixed AIS
+subshape/Part owners, hidden browser selections, highlight cleanup and cached
+geometry restoration.
 
 ## Context menus
 
@@ -39,6 +59,11 @@ for supported primitive/Box faces. Rotate Face asks for a straight target edge
 or projected World X/Y/Z axis. Align Face asks for a separate planar reference
 and offers Coplanar/Parallel. Unsupported Face functions are absent.
 An unsupported Face with no available operations has no empty context menu.
+
+**Delete Face** is available for nonempty Face selections, including multiple
+Parts. It validates reconstruction after explicit activation and reports an
+impossible or unsupported closure through the shared geometry error popup.
+All selected regions must succeed together; see [Delete Face](DELETE_FACE.md).
 
 ## Explicit activation and complete termination
 

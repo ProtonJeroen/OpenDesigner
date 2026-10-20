@@ -91,11 +91,11 @@ bool MoveFaceGeometry::reference(const TopoDS_Shape& solid, const TopoDS_Face& f
         error=QStringLiteral("Open CASCADE could not analyze this face safely."); return false;
     }
 }
-TopoDS_Shape MoveFaceGeometry::move(const TopoDS_Shape& source, const TopoDS_Face& sourceFace,
+static TopoDS_Shape offsetMove(const TopoDS_Shape& source, const TopoDS_Face& sourceFace,
                                    double distance, QString& error) {
     gp_Pnt center; gp_Dir normal;
     if (!std::isfinite(distance)) { error=QStringLiteral("Enter a finite face offset."); return {}; }
-    if (!reference(source,sourceFace,center,normal,error)) return {};
+    if (!MoveFaceGeometry::reference(source,sourceFace,center,normal,error)) return {};
     if (std::abs(distance)<tolerance) return source;
     BRepReconstruction::Prepared prepared;
     if(!BRepReconstruction::prepare(source,sourceFace,prepared,error)) return {};
@@ -153,8 +153,26 @@ TopoDS_Shape MoveFaceGeometry::move(const TopoDS_Shape& source, const TopoDS_Fac
         gp_Pln expected=BRepAdaptor_Surface(face).Plane();
         expected.Translate(gp_Vec(normal)*distance);
         if(!BRepReconstruction::supports(solid,result,face,expected,error)) return {};
-        return result;
+        BRepReconstruction::Result finished;
+        if(!BRepReconstruction::finish(source,result,sourceFace,expected,finished,error)) return {};
+        return finished.solid;
     } catch (const Standard_Failure&) {
         error=QStringLiteral("Open CASCADE could not move this face. Original geometry was kept."); return {};
     }
+}
+
+TopoDS_Shape MoveFaceGeometry::move(const TopoDS_Shape& source,const TopoDS_Face& face,
+                                  double distance,QString& error) {
+    const auto offset=offsetMove(source,face,distance,error);
+    if(!offset.IsNull()) return offset;
+    gp_Pnt center;gp_Dir normal;
+    if(!std::isfinite(distance)||!reference(source,face,center,normal,error)) return {};
+    auto expected=BRepAdaptor_Surface(face).Plane();expected.Translate(gp_Vec(normal)*distance);
+    BRepReconstruction::Result rebuilt;
+    if(!BRepReconstruction::rebuildPlanar(source,face,expected,rebuilt,error)) return {};
+    GProp_GProps before,after;BRepGProp::VolumeProperties(source,before);BRepGProp::VolumeProperties(rebuilt.solid,after);
+    if((after.Mass()-before.Mass())*distance<=0) {
+        error=QStringLiteral("Reconstructed volume did not change in the requested direction.");return {};
+    }
+    return rebuilt.solid;
 }

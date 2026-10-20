@@ -2,6 +2,8 @@
 #include <QWidget>
 #include <QPoint>
 #include <QColor>
+#include <QJsonObject>
+#include <QJsonArray>
 #include <memory>
 #include <optional>
 class QLineEdit;
@@ -29,6 +31,7 @@ class CadViewport final : public QWidget {
     Q_OBJECT
 public:
     explicit CadViewport(QWidget* parent = nullptr);
+    bool exportDebugModel(const QString& path, QString& error, const QJsonArray& browserSelection = {}) const;
     void addBox();
     void addCylinder();
     void addSphere();
@@ -51,6 +54,7 @@ public:
     void moveFace();
     void rotateFace();
     void alignFace();
+    void deleteFace();
     enum class SelectionMode { Face, Part };
     void setSelectionMode(SelectionMode mode);
     SelectionMode selectionMode() const { return selectionMode_; }
@@ -74,6 +78,7 @@ signals:
     void partsChanged();
     void partSelectionChanged(const std::vector<size_t>& indices);
     void statusMessage(const QString& message);
+    void geometryOperationFailed(const QString& operation, const QString& reason);
     void selectionModeChanged(SelectionMode mode);
     void transformModesChanged(bool faceNormalMove, bool move, bool rotate);
 protected:
@@ -91,6 +96,8 @@ private:
     friend struct BooleanOperationsTest;
     friend struct MoveFaceTest;
     friend struct SelectionContextTest;
+    friend struct DebugModelTest;
+    friend struct DeleteFaceTest;
     struct SelectedFace { size_t partIndex; TopoDS_Face face; };
     struct SelectionContext {
         enum class Kind { None, Parts, Faces };
@@ -101,6 +108,7 @@ private:
     QAction* undoAction_ = nullptr;
     QAction* redoAction_ = nullptr;
     void updateHistoryActions();
+    void clearHistorySelection();
     SelectionMode selectionMode_ = SelectionMode::Face;
     SelectionContext selectionContext() const;
     QMenu* createSelectionMenu(const QPoint& anchor);
@@ -146,9 +154,11 @@ private:
         size_t resultIndex;
         CadPart resultState;
         std::vector<size_t> beforeSelection;
+        QJsonObject debugOperation;
     };
     struct FaceChange { CadPart before, after; };
     struct PullChange {
+        // Optional diagnostic data; history remains authoritative for Undo/Redo.
         size_t partIndex;
         std::array<double, 3> beforeMin, beforeMax;
         std::array<double, 3> afterMin, afterMax;
@@ -161,11 +171,12 @@ private:
         std::vector<PullChange> groupedChanges;
         std::shared_ptr<BooleanChange> booleanChange;
         std::shared_ptr<FaceChange> faceChange;
+        QJsonObject debugOperation;
     };
     // Transaction state only: confirmed changes use the existing modeling history.
     struct CommandSession {
         enum class State { Selection, Parameters, Preview, Confirmed, Cancelled };
-        enum class Kind { Move, Rotate, MoveFace, RotateFace, AlignFace, Boolean, Pull };
+        enum class Kind { Move, Rotate, MoveFace, RotateFace, AlignFace, Boolean, Pull, DeleteFace };
         State state = State::Selection;
         Kind kind = Kind::Move;
         std::vector<PullChange> changes;
@@ -186,6 +197,9 @@ private:
         std::shared_ptr<CadPart> faceBefore;
         TopoDS_Shape candidate;
         Handle(AIS_Shape) preview;
+        std::vector<Handle(AIS_Shape)> facePreviews;
+        std::vector<SelectedFace> deletedFaces;
+        QString geometryError;
         bool valid = true;
         BooleanOperation operation = BooleanOperation::Unite;
         std::optional<size_t> target;
@@ -193,6 +207,7 @@ private:
         bool keepTools = false, chooseTarget = false;
         std::shared_ptr<BooleanChange> booleanChange;
     };
+    QJsonObject debugCommand(const CommandSession& session) const;
     std::optional<CommandSession> commandSession_;
     QWidget* commandPanel_ = nullptr;
     QDialogButtonBox* commandButtons_ = nullptr;
@@ -203,6 +218,8 @@ private:
     bool startMoveFace(size_t index, const TopoDS_Face& face);
     bool previewMoveFace(double value);
     bool presentFacePreview(const CadPart& before, bool changed, QString& error);
+    Handle(AIS_Shape) createFacePreview(const CadPart& before, const TopoDS_Shape& candidate, QString& error);
+    void reportGeometryFailure(const QString& operation, const QString& reason, bool popup);
     void redrawFacePreview();
     bool startRotateFace(size_t index, const TopoDS_Face& face);
     bool startAlignFace(size_t index, const TopoDS_Face& face);

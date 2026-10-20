@@ -17,7 +17,14 @@ canonical B-Rep and its local primitive dimensions.
 Changing a transform tool, selecting something else or starting another
 modeling operation cancels the pending transform first. Clicking empty space
 therefore discards a preview rather than silently applying it. Undo/Redo also
-cancel a pending preview before operating on the existing history. Camera
+cancel a pending preview before operating on the existing history. Every successful
+Undo or Redo clears all Face/Edge/Part owners, internal Part selection, hover/pick
+caches, selection highlights and Structure Browser selection/current item. Cleanup
+runs before replacing topology and again after restoration, since restore adapters
+can otherwise select the restored operands/result. Toolbar, Edit and Ctrl+Z/Ctrl+Y
+use the same actions and policy, also from an active floating parameter editor.
+No selection or manipulator is restored by history;
+select geometry again explicitly to start the next operation. Camera
 orbit, pan, zoom and snapping preferences do not confirm a session.
 
 From v0.3.3, [General Move Face](MOVE_FACE.md) also uses this lifecycle with a
@@ -27,6 +34,14 @@ keep a source-face snapshot, render a separate candidate, and append one
 `FaceChange` through the same chronological history on confirmation.
 
 ## Current architecture
+
+[Delete Face](DELETE_FACE.md) extends this lifecycle with a parameter-free
+`DeleteFace` kind. Immutable source/result snapshots and separate blue candidate
+presentations are held per Part. Confirmation requires a valid changed candidate,
+not a nonzero distance field; grouped snapshots still form one ordinary history
+entry. Cancel, tool switches, window close and history navigation remove every
+candidate presentation. Geometry failure signals share a MainWindow popup;
+live numeric preview errors stay in the status bar until explicit confirmation.
 
 `CadViewport` owns part slots (`CadPart`), OCCT presentations, picking, parameter
 editors and the existing modeling history (`PullChange`, with grouped changes
