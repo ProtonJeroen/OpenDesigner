@@ -1,4 +1,5 @@
 #include "CadViewport.h"
+#include "BRepReconstruction.h"
 #include <QJsonArray>
 #include <QVBoxLayout>
 #include <QCheckBox>
@@ -11,13 +12,16 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRep_Tool.hxx>
 #include <BRepGProp.hxx>
 #include <BRep_Builder.hxx>
 #include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
 #include <Standard_Failure.hxx>
+#include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS_Compound.hxx>
@@ -31,6 +35,8 @@ namespace {
 bool validSolid(const TopoDS_Shape& shape, double& volume) {
     if (shape.IsNull() || !TopExp_Explorer(shape,TopAbs_SOLID).More()
         || !BRepCheck_Analyzer(shape).IsValid()) return false;
+    for(TopExp_Explorer shell(shape,TopAbs_SHELL);shell.More();shell.Next())
+        if(!BRep_Tool::IsClosed(shell.Current())) return false;
     GProp_GProps properties;
     BRepGProp::VolumeProperties(shape,properties);
     volume = properties.Mass();
@@ -62,6 +68,27 @@ TopoDS_Shape solidResult(const TopoDS_Shape& shape, int& count) {
         builder.Add(compound,solids.Current());
     }
     return count == 1 ? first : TopoDS_Shape(compound);
+}
+TopoDS_Shape normalizeBooleanResult(const TopoDS_Shape& shape) {
+    // Merge redundant face/edge divisions before presentation and history capture.
+    // Face reconstruction's stricter single-shell validator cannot be used here:
+    // Boolean Parts may contain disconnected solids and solids with cavities.
+    BRepBuilderAPI_Copy copy(shape,Standard_True,Standard_False);
+    ShapeUpgrade_UnifySameDomain unify(copy.Shape(),Standard_True,Standard_True,Standard_False);
+    unify.SetSafeInputMode(Standard_True);
+    unify.Build();
+    const auto count=[](const TopoDS_Shape& s,TopAbs_ShapeEnum type) {
+        int n=0; for(TopExp_Explorer it(s,type);it.More();it.Next()) ++n;
+        return n;
+    };
+    const auto result=unify.Shape();
+    double volume=0;
+    if (!validSolid(result,volume)
+        || count(shape,TopAbs_SOLID)!=count(result,TopAbs_SOLID)
+        || count(shape,TopAbs_SHELL)!=count(result,TopAbs_SHELL)
+        || !BRepReconstruction::equivalent(shape,result))
+        throw std::runtime_error("Final Boolean unification changed material or invalidated the solid geometry.");
+    return result;
 }
 }
 
@@ -245,8 +272,10 @@ bool CadViewport::calculateBoolean(BooleanOperation operation, const std::vector
     if(!previewOnly) cancelCommandSession();
     const QString name = operation == BooleanOperation::Unite ? tr("Unite")
         : operation == BooleanOperation::Subtract ? tr("Subtract") : tr("Intersect");
+    bool geometryPhase=false;
     const auto fail = [&](const QString& reason) {
-        emit statusMessage(tr("%1 failed: %2 Original parts were kept.").arg(name,reason));
+        if(geometryPhase) reportGeometryFailure(name,reason,true);
+        else emit statusMessage(tr("%1 failed: %2 Original parts were kept.").arg(name,reason));
         return false;
     };
     if (draggingFace_ || draggingRotation_) return fail(tr("Finish the active drag first."));
@@ -273,6 +302,7 @@ bool CadViewport::calculateBoolean(BooleanOperation operation, const std::vector
         restoreBooleanChange(*pending,false);
     };
     try {
+        geometryPhase=true;
         std::vector<TopoDS_Shape> world;
         std::vector<double> volumes;
         for (const auto index : operands) {
@@ -301,6 +331,7 @@ bool CadViewport::calculateBoolean(BooleanOperation operation, const std::vector
         if (operation == BooleanOperation::Subtract
             && std::abs(volumes.front()-volume) <= std::max(1.0e-9,volumes.front()*1.0e-12))
             return fail(tr("The tools remove no volume from the target."));
+        shape = normalizeBooleanResult(shape);
         Bnd_Box bounds;
         BRepBndLib::Add(shape,bounds);
         if (bounds.IsVoid()) return fail(tr("The result has no bounds."));

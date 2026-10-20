@@ -36,6 +36,14 @@ earlier Boolean results and parts containing multiple solids. Complete instance
 transforms are applied before the operation. Preview, interactive confirmation
 and the direct geometry API share one kernel calculation and validation path.
 
+The final solid result is copied and normalized with
+`ShapeUpgrade_UnifySameDomain` before preview, presentation and history capture.
+Adjacent faces on the same surface and redundant edge divisions are merged;
+real height/front steps remain. Validation requires closed valid solids, the
+same solid and shell counts, and Common-confirmed material equivalence with the
+raw Boolean result. Disconnected solids and internal cavity shells remain
+supported. Cleanup failure rejects the operation and keeps the original parts.
+
 ### Result and Keep Tools policy
 
 The result is one new GeneralBRep part in world coordinates with identity
@@ -133,7 +141,12 @@ GeneralBRep result reuse, transformed operands, cached Redo, mixed transform and
 Boolean history, hidden source restoration, chained operations, selection from
 browser rows and face owners, explicit Target/Tools sessions, Keep Tools on/off, preview/cancel, result color,
 visibility and duplication, stable browser IDs, invalid inputs and empty/no-op
-results. The three existing Pull/Cone/gizmo tests remain enabled.
+results. The exact `opendesigner-debug4.zip` regression in
+`tests/fixtures/boolean-unite-seams` checks two redundant coplanar edges are
+removed without changing material or real step faces, in Preview, OK and cached
+Undo/Redo. An equal-height variant also merges the top faces. Separate tests
+retain disconnected solids and a closed internal cavity. The three existing
+Pull/Cone/gizmo tests remain enabled.
 
 ## Manual smoke test
 

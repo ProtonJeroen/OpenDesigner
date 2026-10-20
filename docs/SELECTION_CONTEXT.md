@@ -60,6 +60,11 @@ or projected World X/Y/Z axis. Align Face asks for a separate planar reference
 and offers Coplanar/Parallel. Unsupported Face functions are absent.
 An unsupported Face with no available operations has no empty context menu.
 
+**Delete Face** is available for nonempty Face selections, including multiple
+Parts. It validates reconstruction after explicit activation and reports an
+impossible or unsupported closure through the shared geometry error popup.
+All selected regions must succeed together; see [Delete Face](DELETE_FACE.md).
+
 ## Explicit activation and complete termination
 
 Choose a context action or Modeling menu command to activate its manipulators.

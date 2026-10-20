@@ -18,7 +18,7 @@ int faceIndex(const TopoDS_Shape& shape,const TopoDS_Face& face) {
 }
 }
 QJsonObject CadViewport::debugCommand(const CommandSession& session) const {
-    static const char* names[]={"Move Part","Rotate Part","Move Face","Rotate Face","Align Face","Boolean","Primitive Pull"};
+    static const char* names[]={"Move Part","Rotate Part","Move Face","Rotate Face","Align Face","Boolean","Primitive Pull","Delete Face"};
     QJsonArray parts;for(auto index:session.selection) parts.append(QString::number(index));
     QJsonObject operation{{"name",names[static_cast<int>(session.kind)]},{"partIds",parts},
         {"value",session.value},{"valueUnit",session.kind==CommandSession::Kind::Rotate||session.kind==CommandSession::Kind::RotateFace?"degrees":"mm"},
@@ -50,6 +50,17 @@ QJsonObject CadViewport::debugCommand(const CommandSession& session) const {
         operation["valueUnit"]="command parameter; see reference plane and mode";
     }
     if(session.kind==CommandSession::Kind::MoveFace) operation["changed"]=std::abs(session.value)>1.e-7;
+    if(session.kind==CommandSession::Kind::DeleteFace) {
+        QJsonArray faces,editedParts;
+        for(const auto& change:session.changes) {
+            editedParts.append(QString::number(change.partIndex));
+            for(const auto& selected:session.deletedFaces) if(selected.partIndex==change.partIndex)
+                faces.append(QJsonObject{{"partId",QString::number(change.partIndex)},
+                    {"faceIndexBefore",faceIndex(change.faceChange->before.shape,selected.face)}});
+        }
+        operation["partIds"]=editedParts;operation["deletedFacesBefore"]=faces;
+        operation.remove("value");operation.remove("valueUnit");
+    }
     return operation;
 }
 bool CadViewport::exportDebugModel(const QString& path,QString& error,const QJsonArray& browserSelection) const {
@@ -85,7 +96,10 @@ bool CadViewport::exportDebugModel(const QString& path,QString& error,const QJso
         snapshot.context["lastAppliedOperation"]=last.debugOperation.isEmpty()
             ?QJsonObject{{"available",false},{"reason","This history entry predates diagnostic parameter recording or uses a legacy command."}}
             :last.debugOperation;
-        if(last.faceChange) addPart(last.faceChange->before,QString::number(last.partIndex),"last-operation-before");
+        if(last.groupedChanges.empty()) {
+            if(last.faceChange) addPart(last.faceChange->before,QString::number(last.partIndex),"last-operation-before");
+        } else for(const auto& change:last.groupedChanges)
+            if(change.faceChange) addPart(change.faceChange->before,QString::number(change.partIndex),"last-operation-before");
     } else snapshot.context["lastAppliedOperation"]=QJsonObject{{"available",false},{"reason","No applied undoable operation."}};
     if(!view_.IsNull()) {
         const auto camera=view_->Camera();
@@ -94,6 +108,16 @@ bool CadViewport::exportDebugModel(const QString& path,QString& error,const QJso
     }
     if(commandSession_) {
         snapshot.context["activeCommand"]=debugCommand(*commandSession_);
+        if(commandSession_->kind==CommandSession::Kind::DeleteFace)
+            for(size_t i=0;i<commandSession_->changes.size();++i) {
+                const auto& change=commandSession_->changes[i];
+                addPart(change.faceChange->before,QString::number(change.partIndex),"active-command-before");
+                if(commandSession_->valid) {
+                    auto candidate=change.faceChange->after;
+                    candidate.presentation=commandSession_->facePreviews.at(i);
+                    addPart(candidate,QString::number(change.partIndex),"active-preview");
+                }
+            }
         if(commandSession_->faceBefore) addPart(*commandSession_->faceBefore,
             commandSession_->selection.empty()?QString():QString::number(commandSession_->selection.front()),"active-command-before");
         if(!commandSession_->candidate.IsNull()&&commandSession_->faceBefore) {

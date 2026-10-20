@@ -22,6 +22,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle("OpenDesigner 0.3.6 — Advanced Face Topology (prototype)");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
+    connect(viewport_,&CadViewport::geometryOperationFailed,this,[this](const QString& operation,const QString& reason) {
+        auto* dialog=findChild<QMessageBox*>(QStringLiteral("geometryErrorDialog"));
+        if(!dialog) {
+            dialog=new QMessageBox(QMessageBox::Warning,tr("Geometry operation failed"),QString(),QMessageBox::Ok,this);
+            dialog->setObjectName(QStringLiteral("geometryErrorDialog"));
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+        }
+        dialog->setText(tr("%1 could not produce valid closed solid geometry. Original geometry was kept.").arg(operation));
+        dialog->setInformativeText(reason);
+        dialog->open();
+    });
     setCentralWidget(viewport_);
     auto* dock = new QDockWidget(tr("Structure Browser"), this);
     structure_ = new QTreeWidget(dock);
@@ -82,6 +93,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(rotateFaceAction,&QAction::triggered,viewport_,&CadViewport::rotateFace);
     auto* alignFaceAction = model->addAction(tr("Align Face"));
     connect(alignFaceAction,&QAction::triggered,viewport_,&CadViewport::alignFace);
+    auto* deleteFaceAction=model->addAction(tr("Delete Face"));
+    deleteFaceAction->setObjectName(QStringLiteral("deleteFaceAction"));
+    connect(deleteFaceAction,&QAction::triggered,viewport_,&CadViewport::deleteFace);
     auto* pullAction = model->addAction(tr("Primitive Pull / Resize"));
     connect(pullAction, &QAction::triggered, viewport_, &CadViewport::startPrimitivePull);
     auto* movePartAction = model->addAction(tr("Move &Part Along Face..."));

@@ -77,6 +77,29 @@ bool BRepReconstruction::validSolid(const TopoDS_Shape& shape,double& volume) {
     check.StopOnFirstFaulty()=true; check.Perform();
     return !check.HasErrors()&&!check.HasFaulty();
 }
+bool BRepReconstruction::sameAnalyticSupport(const TopoDS_Face& a,const TopoDS_Face& b) {
+    return sameSupport(a,b);
+}
+bool BRepReconstruction::normalize(const TopoDS_Shape& candidate,TopoDS_Shape& result,QString& error) {
+    result.Nullify();
+    try {
+        double volume=0;
+        if(!validSolid(candidate,volume)) {
+            error=QStringLiteral("Reconstruction did not produce one valid closed solid.");return false;
+        }
+        BRepBuilderAPI_Copy isolated(candidate,true,false);
+        auto cleaned=isolated.Shape();
+        BRepTools::RemoveInternals(cleaned,false);
+        ShapeUpgrade_UnifySameDomain unify(cleaned,true,true,false);
+        unify.SetSafeInputMode(true);unify.Build();
+        if(!validSolid(unify.Shape(),volume)||!equivalent(candidate,unify.Shape())) {
+            error=QStringLiteral("Final unification changed material or invalidated the solid.");return false;
+        }
+        result=unify.Shape();error.clear();return true;
+    } catch(const Standard_Failure&) {
+        error=QStringLiteral("OCCT could not safely unify the reconstructed solid.");return false;
+    }
+}
 bool BRepReconstruction::prepare(const TopoDS_Shape& source,const TopoDS_Face& target,
                                  Prepared& result,QString& error) {
     result={};
@@ -242,20 +265,8 @@ bool finishImpl(const TopoDS_Shape& source,const TopoDS_Shape& candidate,
         QString& error,bool certifiedCells) {
     result={};
     try {
-        double volume=0;
-        if(!BRepReconstruction::validSolid(candidate,volume)) {
-            error=QStringLiteral("Reconstruction did not produce one valid closed solid.");return false;
-        }
-        BRepBuilderAPI_Copy isolated(candidate,true,false);
-        auto cleaned=isolated.Shape();
-        BRepTools::RemoveInternals(cleaned,false); // Retain OCCT connectivity checks.
-        ShapeUpgrade_UnifySameDomain unify(cleaned,true,true,false);
-        unify.SetSafeInputMode(true);unify.Build();
-        const auto normalized=unify.Shape();
-        if(!BRepReconstruction::validSolid(normalized,volume)
-           || !BRepReconstruction::equivalent(candidate,normalized)) {
-            error=QStringLiteral("Final unification changed material or invalidated the solid.");return false;
-        }
+        TopoDS_Shape normalized;
+        if(!BRepReconstruction::normalize(candidate,normalized,error)) return false;
         TopTools_IndexedDataMapOfShapeListOfShape adjacency;
         TopExp::MapShapesAndAncestors(normalized,TopAbs_EDGE,TopAbs_FACE,adjacency);
         for(int i=1;i<=adjacency.Extent();++i) {

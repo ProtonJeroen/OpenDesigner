@@ -1,5 +1,7 @@
 #include "CadViewport.h"
 #include "MainWindow.h"
+#include "BRepReconstruction.h"
+#include "DebugModel.h"
 #include <QApplication>
 #include <QAction>
 #include <QCheckBox>
@@ -14,6 +16,8 @@
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepTools.hxx>
+#include <BRep_Builder.hxx>
 #include <GProp_GProps.hxx>
 #include <TopExp_Explorer.hxx>
 #include <StdSelect_BRepOwner.hxx>
@@ -102,6 +106,63 @@ struct BooleanOperationsTest {
             require(v.boxes_[2].shape.IsSame(shape),"redo recomputed a different B-Rep");
             require(f.row(2)->data(0,Qt::UserRole).toULongLong()==2,"browser slot changed");
         }
+    }
+    static void uniteSeams() {
+        // Exact operands and old result from the user's opendesigner-debug4.zip.
+        const auto fixture=[](const char* file) {
+            TopoDS_Shape shape; BRep_Builder builder;
+            const auto path=std::string(OPENDESIGNER_FIXTURE_DIR)+"/boolean-unite-seams/"+file;
+            require(BRepTools::Read(shape,path.c_str(),builder),"cannot read Unite seam fixture");
+            return shape;
+        };
+        Fixture f; auto& v=*f.viewport; v.addBox(); v.addBox();
+        const auto left=fixture("left.brep"),right=fixture("right.brep"),old=fixture("before-cleanup.brep");
+        v.applyBoxBounds(0,{0,14,0},{125,80,46}); v.applyBoxBounds(1,{125,0,0},{225,80,60});
+        v.boxes_[0].shape=left; v.boxes_[1].shape=right;
+        for(size_t i=0;i<2;++i) {
+            v.boxes_[i].geometryKind=CadViewport::CadPart::GeometryKind::GeneralBRep;
+            v.boxes_[i].presentation->SetShape(v.boxes_[i].shape);
+        }
+        require(DebugModel::diagnostics(old)["coplanarDividingEdges"].toInt()==2,"fixture lost reported redundant seams");
+        v.selectParts({0,1}); v.uniteSelectedParts();
+        require(v.previewBooleanSession(),"reported Unite preview failed");
+        const auto candidate=v.commandSession_->booleanChange->resultState.shape;
+        const auto checkClean=[&](const TopoDS_Shape& shape,int faces) {
+            const auto d=DebugModel::diagnostics(shape);
+            require(d["solidValid"].toBool() && d["solids"].toInt()==1,"cleanup damaged Unite solid");
+            require(d["coplanarDividingEdges"].toInt()==0,"Unite retained a coplanar dividing edge");
+            require(d["faces"].toInt()==faces,"Unite removed real step faces or retained seam faces");
+        };
+        checkClean(candidate,9);
+        require(BRepReconstruction::equivalent(candidate,old),"Unite cleanup changed the reported material");
+        require(v.commandSession_->preview->Shape().IsSame(candidate),"preview did not display cleaned geometry");
+        require(active(v)==2 && v.undoStack_.empty(),"cleanup preview changed document/history");
+        v.confirmCommandSession(); checkResult(v,2,859500); checkClean(v.boxes_[2].shape,9);
+        const auto cleaned=v.boxes_[2].shape;
+        v.undoPull();
+        require(v.boxes_[0].shape.IsSame(left) && v.boxes_[1].shape.IsSame(right),"Unite cleanup mutated sources");
+        v.redoPull();
+        require(v.boxes_[2].shape.IsSame(cleaned),"Unite Redo did not restore cached cleanup");
+        checkClean(v.boxes_[2].shape,9);
+        require(v.selectedPartIndices_.empty() && v.context_->NbSelected()==0 && f.tree->selectedItems().empty(),"seam cleanup Redo left selection");
+
+        // At equal heights the top also merges, but the front offset remains.
+        v.undoPull();
+        v.boxes_[0].geometryKind=CadViewport::CadPart::GeometryKind::Box;
+        v.applyBoxBounds(0,{0,14,0},{125,80,60});
+        require(v.applyBoolean(Op::Unite,{0,1}),"equal-height Unite failed");
+        checkResult(v,3,975000); checkClean(v.boxes_[3].shape,8);
+    }
+    static void cavityResult() {
+        Fixture f; auto& v=*f.viewport; v.addBox(); v.addBox();
+        v.applyBoxBounds(0,{0,0,0},{100,100,100}); v.applyBoxBounds(1,{10,10,10},{90,90,90});
+        require(v.applyBoolean(Op::Subtract,{0,1},0),"Boolean cleanup rejected a closed cavity");
+        checkResult(v,2,488000);
+        const auto d=DebugModel::diagnostics(v.boxes_[2].shape);
+        require(d["solidValid"].toBool() && d["solids"].toInt()==1 && d["shells"].toInt()==2,"Boolean cleanup lost the cavity shell");
+        const auto result=v.boxes_[2].shape;
+        v.undoPull(); v.redoPull();
+        require(v.boxes_[2].shape.IsSame(result),"cavity Redo did not restore cached result");
     }
     static void selectionAndDialog() {
         Fixture f; auto& v=*f.viewport; overlap(f);
@@ -234,6 +295,7 @@ struct BooleanOperationsTest {
         t.SetTranslation(gp_Vec(0,0,0)); v.applyPartState(1,v.boxes_[1].min,v.boxes_[1].max,t);
         require(v.applyBoolean(Op::Unite,{0,1}),"disconnected union rejected");
         checkResult(v,2,960000);
+        require(DebugModel::diagnostics(v.boxes_[2].shape)["solids"].toInt()==2,"cleanup lost a disconnected solid");
         v.addBox();
         require(v.applyBoolean(Op::Unite,{2,3}),"GeneralBRep result could not be reused");
         checkResult(v,4,1440000);
@@ -353,7 +415,7 @@ struct BooleanOperationsTest {
         }
     }
     static void run() {
-        booleanSessions(); basicOperations(); selectionAndDialog(); transformedOperands(); allPrimitives();
+        uniteSeams(); cavityResult(); booleanSessions(); basicOperations(); selectionAndDialog(); transformedOperands(); allPrimitives();
         failuresAndHistory(); generalBRepOperands(); hiddenAndMixedUndo(); sessionBrowserAndBoolean();
     }
 };

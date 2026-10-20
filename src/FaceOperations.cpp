@@ -222,6 +222,7 @@ bool CadViewport::previewFaceTransform(double value) {
                             && commandSession_->kind!=CommandSession::Kind::AlignFace)) return false;
     auto& session=*commandSession_;
     session.value=value;
+    session.geometryError.clear();
     if(session.kind==CommandSession::Kind::RotateFace && faceAxisPicking_) {
         emit statusMessage(tr("Choose a valid rotation axis before previewing.")); return false;
     }
@@ -264,7 +265,7 @@ bool CadViewport::previewFaceTransform(double value) {
     } else if(valid) session.candidate=before.shape;
     valid=presentFacePreview(before,session.changed,error);
     session.state=valid?CommandSession::State::Preview:CommandSession::State::Parameters;
-    if(!valid) emit statusMessage(tr("Face operation refused: %1 Original geometry is unchanged.").arg(error));
+    if(!valid) reportGeometryFailure(session.kind==CommandSession::Kind::RotateFace?tr("Rotate Face"):tr("Align Face"),error,false);
     redrawFacePreview();
     return valid;
 }

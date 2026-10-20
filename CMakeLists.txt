@@ -47,6 +47,10 @@ set(OPENDESIGNER_LIBRARIES
     TKMath
     TKernel
 )
+add_library(OpenDesignerDeleteFaceGeometry STATIC src/DeleteFaceGeometry.cpp src/DeleteFaceGeometry.h
+    src/PlanarFaceDeletion.cpp src/PlanarFaceDeletion.h)
+target_include_directories(OpenDesignerDeleteFaceGeometry PUBLIC src ${OpenCASCADE_INCLUDE_DIR})
+target_link_libraries(OpenDesignerDeleteFaceGeometry PUBLIC ${OPENDESIGNER_LIBRARIES})
 add_library(OpenDesignerDebug STATIC src/DebugModel.cpp src/DebugModel.h)
 target_include_directories(OpenDesignerDebug PUBLIC src ${OpenCASCADE_INCLUDE_DIR})
 target_link_libraries(OpenDesignerDebug PUBLIC ${OPENDESIGNER_LIBRARIES} LibArchive::LibArchive)
@@ -83,6 +87,7 @@ if(OPENDESIGNER_BUILD_TESTS)
         src/SelectionContext.cpp
     )
     target_include_directories(OpenDesignerBooleanTests PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
+    target_compile_definitions(OpenDesignerBooleanTests PRIVATE OPENDESIGNER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     target_link_libraries(OpenDesignerBooleanTests PRIVATE ${OPENDESIGNER_LIBRARIES})
     add_test(NAME boolean-operations COMMAND OpenDesignerBooleanTests)
     set_tests_properties(primitive-pull cone-pull gizmo-center rotation-pivot command-sessions PROPERTIES TIMEOUT 60)
@@ -113,6 +118,16 @@ if(OPENDESIGNER_BUILD_TESTS)
 endif()
 
 if(OPENDESIGNER_BUILD_TESTS)
+    add_executable(OpenDesignerDeleteFaceTests
+        tests/DeleteFaceTest.cpp src/MainWindow.cpp src/CadViewport.cpp src/BooleanOperations.cpp
+        src/BRepReconstruction.cpp src/MoveFaceGeometry.cpp src/MoveFace.cpp
+        src/FaceOperations.cpp src/FaceTransformGeometry.cpp src/SelectionContext.cpp)
+    target_include_directories(OpenDesignerDeleteFaceTests PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
+    target_compile_definitions(OpenDesignerDeleteFaceTests PRIVATE OPENDESIGNER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+    target_link_libraries(OpenDesignerDeleteFaceTests PRIVATE ${OPENDESIGNER_LIBRARIES})
+    add_test(NAME delete-face-geometry COMMAND OpenDesignerDeleteFaceTests --geometry)
+    add_test(NAME delete-face-session COMMAND OpenDesignerDeleteFaceTests)
+    set_tests_properties(delete-face-geometry delete-face-session PROPERTIES TIMEOUT 120)
     add_executable(OpenDesignerDebugModelTests tests/DebugModelTest.cpp
         src/MainWindow.cpp src/CadViewport.cpp src/BooleanOperations.cpp
         src/BRepReconstruction.cpp src/MoveFaceGeometry.cpp src/MoveFace.cpp
@@ -125,10 +140,10 @@ if(OPENDESIGNER_BUILD_TESTS)
 endif()
 
 # Keep document snapshot capture linked wherever the viewport is exercised.
-foreach(viewport_target OpenDesigner OpenDesignerPullTests OpenDesignerBooleanTests OpenDesignerMoveFaceTests OpenDesignerSelectionContextTests OpenDesignerDebugModelTests)
+foreach(viewport_target OpenDesigner OpenDesignerPullTests OpenDesignerBooleanTests OpenDesignerMoveFaceTests OpenDesignerSelectionContextTests OpenDesignerDebugModelTests OpenDesignerDeleteFaceTests)
     if(TARGET ${viewport_target})
-        target_sources(${viewport_target} PRIVATE src/DebugExport.cpp)
-        target_link_libraries(${viewport_target} PRIVATE OpenDesignerDebug)
+        target_sources(${viewport_target} PRIVATE src/DebugExport.cpp src/DeleteFace.cpp src/ModelingErrors.cpp)
+        target_link_libraries(${viewport_target} PRIVATE OpenDesignerDeleteFaceGeometry OpenDesignerDebug)
     endif()
 endforeach()
 install(TARGETS OpenDesignerDebugModel RUNTIME DESTINATION bin)

@@ -210,6 +210,16 @@ claimed.
 
 ## Remaining limits and future solids
 
+[Delete Face](DELETE_FACE.md) now has a separate geometry-only adapter using
+OCCT defeaturing and independent material certificates. It shares final
+normalization and solid validation, but deliberately does not relax the retained
+target-plane contract of Move/Rotate/Align or reuse support substitution to remove
+a target. Only certified analytic features and bounded convex planar support
+removal, plus bounded prismatic step trimming, are accepted. The latter retains
+fixed axial material partitions while extending actual neighboring cross-section
+supports; it may shorten unselected patches but must retain each on its original
+support. See the exact Unite/Rotate transition fixture in the Delete Face document.
+
 This is not unrestricted freeform topology editing. Curved targets, blend/spline/
 torus supports, cavities/multiple shells, disconnected results, lost targets,
 ambiguous Align targets, concave/holed or conflicting target-neighbor trim

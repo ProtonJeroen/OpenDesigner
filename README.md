@@ -3,7 +3,8 @@
 OpenDesigner is an open-source cross-platform 3D direct-modeling application inspired by classic CoCreate SolidDesigner.
 
 **Status:** v0.3.6 Advanced Face Topology prototype; not a packaged release.
-Manual Fedora KDE validation for v0.3.6 is pending. The preceding v0.3.5 was manually validated by the user.
+The supplied Delete Face and Unite seam cases were manually confirmed by the user
+on 2026-10-20. Automated regression coverage and remaining scope limits are documented below.
 
 ## Prototype features
 - Qt 6 desktop window with dockable Structure Browser
@@ -14,8 +15,12 @@ Manual Fedora KDE validation for v0.3.6 is pending. The preceding v0.3.5 was man
 - General Move Face for supported planar faces, with validated B-Rep preview and Undo/Redo
 - Rotate Face about a straight target edge or projected world axis
 - Align Face as Coplanar or Parallel to a selected planar reference face
+- Delete Face for certified analytic holes, bosses, convex planar chamfers and
+  bounded planar transitions (including successive and inclined L-shaped steps),
+  with multi-face/multi-Part preview, atomic confirmation and cached Undo/Redo
 - Passive Face/Alt-Part selection and capability-aware viewport context menus
 - Unite, explicit-target Subtract and Intersect with validated results and Undo/Redo
+- Material-preserving Boolean seam cleanup and uniform geometry failure popups
 - Structure Browser with names, color, visibility and stable Boolean result selection
 - Orbit, pan and zoom
 
@@ -52,6 +57,9 @@ Planar face rotation and alignment behavior, validation and limitations:
 
 Selection shortcuts, explicit context actions and eligibility: [Selection and context menus](docs/SELECTION_CONTEXT.md).
 
+Face removal, conservative reconstruction limits and shared geometry error
+popups: [Delete Face](docs/DELETE_FACE.md).
+
 The v0.3.6 interaction workflow retains passive selection: click Faces, Alt+click Parts,
 Ctrl to add/remove. Choose a context or Modeling action to show its manipulators.
 OK/Enter and Cancel/Esc completely close the function and remove all temporary UI;
@@ -82,5 +90,6 @@ that remains planned for v0.3.7. Building requires libarchive development header
 The exact supplied **Rotate Face +30° → Move Face +49 mm** case now retains
 physical neighboring trim planes during cell reconstruction, removing the real
 triangular protrusion. Regression tests use the exported B-Reps and an independent
-material oracle; the Fedora KDE retest is pending. See the
+material oracle. That earlier reconstruction fixture retains its automated coverage;
+the subsequent Delete Face and Unite reports have been confirmed manually. See the
 [diagnosis](docs/BREP_RECONSTRUCTION.md).

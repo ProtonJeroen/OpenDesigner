@@ -192,6 +192,7 @@ void CadViewport::showCommandControls(const QPoint& position) {
     commandPanel_->raise();
 }
 bool CadViewport::previewCommand(double value) {
+    if(commandSession_ && commandSession_->kind==CommandSession::Kind::DeleteFace) return commandSession_->valid;
     if (!commandSession_ || !std::isfinite(value)) return false;
     if (commandSession_->kind==CommandSession::Kind::MoveFace) return previewMoveFace(value);
     if (commandSession_->kind==CommandSession::Kind::RotateFace || commandSession_->kind==CommandSession::Kind::AlignFace)
@@ -219,6 +220,7 @@ bool CadViewport::previewCommand(double value) {
     return true;
 }
 bool CadViewport::updateCommandParameter(bool reportError) {
+    if(commandSession_) commandSession_->geometryError.clear();
     bool ok = false;
     double value = QLocale().toDouble(dimensionNumber(dragDimension_->text()), &ok);
     if (!ok || !std::isfinite(value) || !dragDimension_->hasAcceptableInput()) {
@@ -239,11 +241,19 @@ bool CadViewport::updateCommandParameter(bool reportError) {
     return previewCommand(value);
 }
 void CadViewport::confirmCommandSession() {
+    if(commandSession_ && commandSession_->kind==CommandSession::Kind::DeleteFace) {
+        if(commandSession_->valid && commandSession_->changed) closeCommandSession(true);
+        return;
+    }
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Boolean) {
         if(previewBooleanSession()) closeCommandSession(true);
         return;
     }
-    if (commandSession_ && updateCommandParameter()) closeCommandSession(true);
+    if (commandSession_) {
+        if(updateCommandParameter()) closeCommandSession(true);
+        else if(!commandSession_->geometryError.isEmpty())
+            reportGeometryFailure(commandPanel_->windowTitle().remove(tr(" Preview")),commandSession_->geometryError,true);
+    }
 }
 void CadViewport::cancelCommandSession() {
     moveFacePicking_=false;
@@ -267,15 +277,17 @@ void CadViewport::closeCommandSession(bool confirm) {
         if(confirm && session.booleanChange) commitBooleanChange(session.booleanChange);
         resetModelingTools(); view_->Redraw(); setFocus(); return;
     }
+    const bool deleteCommand=session.kind==CommandSession::Kind::DeleteFace;
     const bool pullCommand=session.kind==CommandSession::Kind::Pull;
     const bool faceCommand=session.kind==CommandSession::Kind::MoveFace || session.kind==CommandSession::Kind::RotateFace
-        || session.kind==CommandSession::Kind::AlignFace || pullCommand;
+        || session.kind==CommandSession::Kind::AlignFace || pullCommand || deleteCommand;
     if (!session.preview.IsNull()) context_->Remove(session.preview,Standard_False);
+    for(const auto& preview:session.facePreviews) context_->Remove(preview,Standard_False);
     if (!moveFaceArrow_.IsNull()) { context_->Remove(moveFaceArrow_,Standard_False); moveFaceArrow_.Nullify(); }
     for (const auto& change : session.changes) {
         auto& part = boxes_[change.partIndex];
         if (confirm && faceCommand && change.faceChange
-            && (session.kind==CommandSession::Kind::AlignFace ? session.changed : std::abs(session.value)>1.e-7))
+            && ((session.kind==CommandSession::Kind::AlignFace || deleteCommand) ? session.changed : std::abs(session.value)>1.e-7))
             applyFaceState(change.partIndex,change.faceChange->after);
         else if(pullCommand && change.faceChange) applyFaceState(change.partIndex,change.faceChange->before);
         else if (confirm) part.orientation = change.afterOrientation;
@@ -287,7 +299,7 @@ void CadViewport::closeCommandSession(bool confirm) {
         part.presentation->SetLocalTransformation(part.orientation);
         context_->Redisplay(part.presentation,Standard_False);
     }
-    const bool changedFace=session.kind==CommandSession::Kind::AlignFace ? session.changed : std::abs(session.value)>1.e-7;
+    const bool changedFace=(session.kind==CommandSession::Kind::AlignFace || deleteCommand) ? session.changed : std::abs(session.value)>1.e-7;
     if (confirm && (faceCommand ? changedFace : std::abs(session.value)>1.e-10) && !session.changes.empty()) {
         PullChange operation = session.changes.front();
         if (session.changes.size()>1) operation.groupedChanges = session.changes;
@@ -736,7 +748,7 @@ void CadViewport::pullSelectedFace() {
             if (item.sides[axis * 2]) item.min[axis] -= distance;
             if (item.sides[axis * 2 + 1]) item.max[axis] += distance;
             if (item.max[axis] - item.min[axis] <= 0.001) {
-                emit statusMessage(tr("Pull would collapse or invert a selected box. No changes applied."));
+                reportGeometryFailure(tr("Pull / Resize"),tr("Pull would collapse or invert a selected box."),true);
                 return;
             }
         }

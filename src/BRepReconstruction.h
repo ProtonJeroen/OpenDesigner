@@ -24,6 +24,9 @@ bool equivalent(const TopoDS_Shape& a, const TopoDS_Shape& b);
 bool prepare(const TopoDS_Shape& source, const TopoDS_Face& target,
              Prepared& result, QString& error);
 bool validSolid(const TopoDS_Shape& shape, double& volume);
+// Common final cleanup; callers still enforce their operation's material policy.
+bool normalize(const TopoDS_Shape& candidate, TopoDS_Shape& result, QString& error);
+bool sameAnalyticSupport(const TopoDS_Face& a, const TopoDS_Face& b);
 bool supports(const TopoDS_Shape& source, const TopoDS_Shape& result,
               const TopoDS_Face& target, const gp_Pln& expected, QString& error);
 }

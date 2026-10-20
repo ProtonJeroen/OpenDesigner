@@ -70,6 +70,35 @@ void CadViewport::redrawFacePreview() {
     view_->Invalidate();
     view_->Redraw();
 }
+Handle(AIS_Shape) CadViewport::createFacePreview(const CadPart& before,const TopoDS_Shape& candidate,QString& error) {
+    Handle(AIS_Shape) preview;
+    try {
+        // Reconstructed B-Reps are copied without display meshes. Complete
+        // the shaded representation before erasing the original object.
+        BRepMesh_IncrementalMesh mesh(candidate,0.1,false,0.35,false);
+        bool meshed=mesh.IsDone();
+        for(TopExp_Explorer f(candidate,TopAbs_FACE);f.More()&&meshed;f.Next()) {
+            TopLoc_Location location;
+            const auto triangulation=BRep_Tool::Triangulation(TopoDS::Face(f.Current()),location);
+            meshed=!triangulation.IsNull() && triangulation->NbTriangles()>0;
+        }
+        if(!meshed) throw Standard_Failure("The reconstructed solid could not be tessellated for preview.");
+        preview=new AIS_Shape(candidate);
+        preview->SetLocalTransformation(before.orientation);
+        preview->Attributes()->SetAutoTriangulation(true);
+        preview->SetColor(Quantity_Color(0.15,0.65,1.0,Quantity_TOC_RGB));
+        preview->SetTransparency(0.25);
+        preview->SetDisplayMode(AIS_Shaded);
+        // Select mode -1: previews never participate in operand picking.
+        context_->Display(preview,AIS_Shaded,-1,Standard_False);
+        context_->Redisplay(preview,Standard_False);
+        return preview;
+    } catch(const Standard_Failure& failure) {
+        error=tr("Cannot display the reconstructed preview: %1").arg(QString::fromUtf8(failure.GetMessageString()));
+        if(!preview.IsNull()) context_->Remove(preview,Standard_False);
+        return {};
+    }
+}
 bool CadViewport::presentFacePreview(const CadPart& before,bool changed,QString& error) {
     auto& session=*commandSession_;
     if(!session.preview.IsNull()) {
@@ -77,33 +106,9 @@ bool CadViewport::presentFacePreview(const CadPart& before,bool changed,QString&
         session.preview.Nullify();
     }
     if(session.valid && changed) {
-        try {
-            // Reconstructed B-Reps are copied without display meshes. Complete
-            // the shaded representation before erasing the original object.
-            BRepMesh_IncrementalMesh mesh(session.candidate,0.1,false,0.35,false);
-            bool meshed=mesh.IsDone();
-            for(TopExp_Explorer f(session.candidate,TopAbs_FACE);f.More()&&meshed;f.Next()) {
-                TopLoc_Location location;
-                const auto triangulation=BRep_Tool::Triangulation(TopoDS::Face(f.Current()),location);
-                meshed=!triangulation.IsNull() && triangulation->NbTriangles()>0;
-            }
-            if(!meshed) throw Standard_Failure("The reconstructed solid could not be tessellated for preview.");
-            session.preview=new AIS_Shape(session.candidate);
-            session.preview->SetLocalTransformation(before.orientation);
-            session.preview->Attributes()->SetAutoTriangulation(true);
-            session.preview->SetColor(Quantity_Color(0.15,0.65,1.0,Quantity_TOC_RGB));
-            session.preview->SetTransparency(0.25);
-            session.preview->SetDisplayMode(AIS_Shaded);
-            // Select mode -1: previews never participate in operand picking.
-            context_->Display(session.preview,AIS_Shaded,-1,Standard_False);
-            context_->Redisplay(session.preview,Standard_False);
-            context_->Erase(before.presentation,Standard_False);
-        } catch(const Standard_Failure& failure) {
-            error=tr("Cannot display the reconstructed preview: %1").arg(QString::fromUtf8(failure.GetMessageString()));
-            if(!session.preview.IsNull()) context_->Remove(session.preview,Standard_False);
-            session.preview.Nullify();
-            session.valid=false;
-        }
+        session.preview=createFacePreview(before,session.candidate,error);
+        session.valid=!session.preview.IsNull();
+        if(session.valid) context_->Erase(before.presentation,Standard_False);
     }
     if(!session.valid || !changed) {
         context_->Display(before.presentation,Standard_False);
@@ -119,6 +124,7 @@ bool CadViewport::presentFacePreview(const CadPart& before,bool changed,QString&
 bool CadViewport::previewMoveFace(double value) {
     auto& session=*commandSession_;
     session.value=value;
+    session.geometryError.clear();
     const auto& before=*session.faceBefore;
     QString error;
     const double localDistance=value/std::abs(before.orientation.ScaleFactor());
@@ -146,7 +152,7 @@ bool CadViewport::previewMoveFace(double value) {
     }
     presentFacePreview(before,std::abs(value)>=1.e-7,error);
     session.state=session.valid ? CommandSession::State::Preview : CommandSession::State::Parameters;
-    if (!session.valid) emit statusMessage(error);
+    if (!session.valid) reportGeometryFailure(tr("Move Face"),error,false);
     redrawFacePreview();
     return session.valid;
 }

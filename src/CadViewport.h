@@ -54,6 +54,7 @@ public:
     void moveFace();
     void rotateFace();
     void alignFace();
+    void deleteFace();
     enum class SelectionMode { Face, Part };
     void setSelectionMode(SelectionMode mode);
     SelectionMode selectionMode() const { return selectionMode_; }
@@ -77,6 +78,7 @@ signals:
     void partsChanged();
     void partSelectionChanged(const std::vector<size_t>& indices);
     void statusMessage(const QString& message);
+    void geometryOperationFailed(const QString& operation, const QString& reason);
     void selectionModeChanged(SelectionMode mode);
     void transformModesChanged(bool faceNormalMove, bool move, bool rotate);
 protected:
@@ -95,6 +97,7 @@ private:
     friend struct MoveFaceTest;
     friend struct SelectionContextTest;
     friend struct DebugModelTest;
+    friend struct DeleteFaceTest;
     struct SelectedFace { size_t partIndex; TopoDS_Face face; };
     struct SelectionContext {
         enum class Kind { None, Parts, Faces };
@@ -173,7 +176,7 @@ private:
     // Transaction state only: confirmed changes use the existing modeling history.
     struct CommandSession {
         enum class State { Selection, Parameters, Preview, Confirmed, Cancelled };
-        enum class Kind { Move, Rotate, MoveFace, RotateFace, AlignFace, Boolean, Pull };
+        enum class Kind { Move, Rotate, MoveFace, RotateFace, AlignFace, Boolean, Pull, DeleteFace };
         State state = State::Selection;
         Kind kind = Kind::Move;
         std::vector<PullChange> changes;
@@ -194,6 +197,9 @@ private:
         std::shared_ptr<CadPart> faceBefore;
         TopoDS_Shape candidate;
         Handle(AIS_Shape) preview;
+        std::vector<Handle(AIS_Shape)> facePreviews;
+        std::vector<SelectedFace> deletedFaces;
+        QString geometryError;
         bool valid = true;
         BooleanOperation operation = BooleanOperation::Unite;
         std::optional<size_t> target;
@@ -212,6 +218,8 @@ private:
     bool startMoveFace(size_t index, const TopoDS_Face& face);
     bool previewMoveFace(double value);
     bool presentFacePreview(const CadPart& before, bool changed, QString& error);
+    Handle(AIS_Shape) createFacePreview(const CadPart& before, const TopoDS_Shape& candidate, QString& error);
+    void reportGeometryFailure(const QString& operation, const QString& reason, bool popup);
     void redrawFacePreview();
     bool startRotateFace(size_t index, const TopoDS_Face& face);
     bool startAlignFace(size_t index, const TopoDS_Face& face);

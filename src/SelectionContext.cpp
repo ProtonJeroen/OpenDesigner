@@ -1,7 +1,10 @@
 #include "CadViewport.h"
 #include "MoveFaceGeometry.h"
+#include "BRepReconstruction.h"
 #include <QMenu>
 #include <QLineEdit>
+#include <QDialogButtonBox>
+#include <QPushButton>
 #include <QAction>
 #include <QColorDialog>
 #include <QComboBox>
@@ -140,6 +143,11 @@ void CadViewport::populatePartMenu(QMenu& menu,const SelectionContext& selection
     });
 }
 void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection,const QPoint& anchor) {
+    if(!selection.faces.empty()) {
+        auto* remove=menu.addAction(tr("Delete Face"));
+        remove->setObjectName(QStringLiteral("context.delete_face"));
+        connect(remove,&QAction::triggered,this,&CadViewport::deleteFace);
+    }
     auto* move=menu.addAction(tr("Move Face"));move->setObjectName(QStringLiteral("context.move_face"));
     QString error=tr("Select exactly one supported planar face.");gp_Pnt center;gp_Dir direction;
     const bool supported=selection.faces.size()==1 && MoveFaceGeometry::reference(
@@ -244,6 +252,7 @@ void CadViewport::beginPullSession() {
 }
 bool CadViewport::previewPrimitivePull(double value) {
     auto& session=*commandSession_;
+    session.geometryError.clear();
     bool valid=false;
     try {
     if(primitivePullDragging_) valid=applyPrimitivePull(value);
@@ -253,14 +262,27 @@ bool CadViewport::previewPrimitivePull(double value) {
         if(dragMax_) max[dragAxis_]+=value; else min[dragAxis_]-=value;
         if(max[dragAxis_]-min[dragAxis_]>0.001) { applyBoxBounds(dragIndex_,min,max); valid=true; }
     }
+    if(valid) for(const auto& change:session.changes) {
+        double volume=0;
+        if(!BRepReconstruction::validSolid(boxes_[change.partIndex].shape,volume)) {
+            valid=false;session.geometryError=tr("Pull could not produce a valid closed solid.");break;
+        }
+    }
     } catch(const Standard_Failure&) {
+        session.geometryError=tr("Open CASCADE could not reconstruct the Pull solid safely.");
+        valid=false;
         for(const auto& change:session.changes) applyFaceState(change.partIndex,change.faceChange->after);
     } catch(const std::exception&) {
+        session.geometryError=tr("Pull could not reconstruct the solid safely.");
+        valid=false;
         for(const auto& change:session.changes) applyFaceState(change.partIndex,change.faceChange->after);
     }
     session.valid=valid;
+    commandButtons_->button(QDialogButtonBox::Ok)->setEnabled(valid);
     if(!valid) {
-        emit statusMessage(tr("Invalid Pull dimension. Enter a valid value or Cancel/Esc to restore the original."));
+        for(const auto& change:session.changes) applyFaceState(change.partIndex,change.faceChange->after);
+        if(session.geometryError.isEmpty()) session.geometryError=tr("The requested Pull dimension cannot produce a closed solid with positive dimensions.");
+        reportGeometryFailure(tr("Pull / Resize"),session.geometryError,false);
         return false;
     }
     session.value=value; session.state=CommandSession::State::Preview;

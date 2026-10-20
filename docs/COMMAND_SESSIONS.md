@@ -35,6 +35,14 @@ keep a source-face snapshot, render a separate candidate, and append one
 
 ## Current architecture
 
+[Delete Face](DELETE_FACE.md) extends this lifecycle with a parameter-free
+`DeleteFace` kind. Immutable source/result snapshots and separate blue candidate
+presentations are held per Part. Confirmation requires a valid changed candidate,
+not a nonzero distance field; grouped snapshots still form one ordinary history
+entry. Cancel, tool switches, window close and history navigation remove every
+candidate presentation. Geometry failure signals share a MainWindow popup;
+live numeric preview errors stay in the status bar until explicit confirmation.
+
 `CadViewport` owns part slots (`CadPart`), OCCT presentations, picking, parameter
 editors and the existing modeling history (`PullChange`, with grouped changes
 and optional `BooleanChange`). `MainWindow` owns menus and the Structure Browser;
