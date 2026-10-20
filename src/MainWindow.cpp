@@ -18,7 +18,7 @@
 #include <QActionGroup>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.3.3 — General Move Face (prototype)");
+    setWindowTitle("OpenDesigner 0.3.4 — Rotate Face & Align Face (prototype)");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     setCentralWidget(viewport_);
@@ -64,6 +64,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(duplicateAction, &QAction::triggered, viewport_, &CadViewport::duplicateSelectedParts);
     auto* moveFaceAction = model->addAction(tr("Move Face"));
     connect(moveFaceAction,&QAction::triggered,viewport_,&CadViewport::moveFace);
+    auto* rotateFaceAction = model->addAction(tr("Rotate Face"));
+    connect(rotateFaceAction,&QAction::triggered,viewport_,&CadViewport::rotateFace);
+    auto* alignFaceAction = model->addAction(tr("Align Face"));
+    connect(alignFaceAction,&QAction::triggered,viewport_,&CadViewport::alignFace);
     auto* pullAction = model->addAction(tr("Primitive Pull / Resize"));
     connect(pullAction, &QAction::triggered, viewport_, &CadViewport::startPrimitivePull);
     auto* movePartAction = model->addAction(tr("Move &Part Along Face..."));
@@ -109,7 +113,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.3.3 — General Move Face prototype."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.3.4 — Rotate Face and Align Face prototype."));
     });
     auto* toolbar = addToolBar(tr("Modeling"));
     connect(viewport_,&CadViewport::transformModesChanged,this,[interactiveMove,directMove,interactiveRotate](bool faceNormal,bool move,bool rotate) {
@@ -120,6 +124,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     toolbar->addAction(duplicateAction);
     toolbar->addAction(pullAction);
     toolbar->addAction(moveFaceAction);
+    toolbar->addAction(rotateFaceAction);
+    toolbar->addAction(alignFaceAction);
     toolbar->addAction(movePartAction);
     toolbar->addAction(rotatePartAction);
     toolbar->addAction(interactiveMove);

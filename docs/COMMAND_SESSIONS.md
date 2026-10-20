@@ -1,4 +1,4 @@
-# Command sessions and preview (v0.3.2–v0.3.3)
+# Command sessions and preview (v0.3.2–v0.3.4)
 
 Interactive Move Part (axis gizmo and orange face-normal arrow) and Rotate Part
 now have a temporary preview. Select geometry and explicitly choose its Modeling/context action to show a gizmo.
@@ -22,6 +22,9 @@ orbit, pan, zoom and snapping preferences do not confirm a session.
 
 From v0.3.3, [General Move Face](MOVE_FACE.md) also uses this lifecycle with a
 geometry candidate and a separate AIS preview.
+v0.3.4 adds [Rotate Face](ROTATE_FACE.md) and [Align Face](ALIGN_FACE.md): both
+keep a source-face snapshot, render a separate candidate, and append one
+`FaceChange` through the same chronological history on confirmation.
 
 ## Current architecture
 
@@ -39,12 +42,12 @@ The small nested `CommandSession` is a transaction record. Its lifecycle is:
 2. **Parameters**: freeze the direction, rotation pivot and each original transform.
 3. **Preview**: calculate candidate transforms from the original state, never
    cumulatively from the previous preview. Only the AIS presentation transforms
-   and gizmo display are changed for Move/Rotate. Move Face shows a separate
+   and gizmo display are changed for Move/Rotate. Face edits show a separate
    candidate presentation and hides the original. Canonical shapes, bounds, primitive parameters,
    part transforms, browser selection and both history stacks remain unchanged.
    Move Face retains the original face owners for Cancel while its source
    presentation is hidden.
-4. **Confirmed**: write candidate transforms (or Move Face geometry) and append one ordinary
+4. **Confirmed**: write candidate transforms or face geometry and append one ordinary
    `PullChange` (grouped for multiple parts, or carrying `FaceChange` geometry
    snapshots) to the existing history. Only a
    nonzero confirmed command clears Redo.
@@ -58,8 +61,12 @@ Closing this tool window also cancels the session. Each Move/Rotate drag starts
 a session; refine its preview with the numeric field before confirming. Move
 Face starts a session at face selection and allows repeated arrow drags.
 Invalid numeric input or invalid candidate geometry cannot confirm a command.
-The adapters include rigid Move/Rotate and planar Move Face. Future geometry
-commands can extend the candidate state using
+The adapters include rigid Move/Rotate, planar Move Face, edge/axis-driven
+Rotate Face and planar-reference Align Face. Face rotation uses OCCT
+`BRepOffsetAPI_DraftAngle`; Coplanar alignment composes that operation with
+the existing `MoveFaceGeometry` offset. Both share its conservative validity,
+volume, self-interference and topology-count policy. Future geometry commands
+can extend the candidate state using
 `PullChange`'s existing shape/parameter snapshots and validate candidate B-Reps
 before confirmation. Session keyboard handling is scoped to the viewport and
 its parameter tool window, including when embedded in MainWindow.
@@ -128,7 +135,11 @@ preview and cancellation, and verifies that a Boolean tool switch discards the
 pending transform before operand evaluation.
 The v0.3.1 `rotation-pivot` suite now compares the gizmo's preview transform before
 confirmation and the committed result with the actual Rotate dialog. Existing
-Pull, gizmo and Boolean/browser suites remain enabled.
+Pull, gizmo and Boolean/browser suites remain enabled. The `face-transform-geometry`
+suite covers signed rotations, multiple axes, suitable GeneralBRep/Boolean
+results and Coplanar/Parallel references. `selection-context` covers explicit
+tool activation, preview cancellation, one-step history and reference-Part
+preservation.
 
 The user reports that v0.3.2 was manually tested and approved on Fedora KDE.
 

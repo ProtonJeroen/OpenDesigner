@@ -10,6 +10,7 @@
 #include <QTimer>
 #include <QTreeWidget>
 #include <QLineEdit>
+#include <QLabel>
 #include <QKeyEvent>
 #include <StdSelect_BRepOwner.hxx>
 #include <BRepAdaptor_Surface.hxx>
@@ -75,7 +76,8 @@ struct SelectionContextTest {
         const auto p0=project(v,gp_Pnt(50,40,60)),p1=project(v,gp_Pnt(175,40,60));
         const auto idle=[&]() {
             require(!v.commandSession_ && !v.moveFacePicking_ && !v.pullMode_ && !v.movePartMode_ && !v.directMoveMode_ && !v.rotateMode_,"command remained active");
-            require(!v.arrowVisible_ && v.moveFaceArrow_.IsNull() && v.moveAxes_[0].IsNull() && v.rotationRings_[0].IsNull(),"orphan manipulators remain");
+            require(!v.arrowVisible_ && v.moveFaceArrow_.IsNull() && v.faceRotationManipulator_.IsNull()
+                    && v.moveAxes_[0].IsNull() && v.rotationRings_[0].IsNull(),"orphan manipulators remain");
             require(!v.commandPanel_->isVisible() && !v.dragDimension_->isVisible(),"orphan command UI remains");
         };
         v.setDirectMoveMode(true); idle(); v.setRotateMode(true); idle();
@@ -147,6 +149,71 @@ struct SelectionContextTest {
         v.addSphere(); const size_t sphere=v.boxes_.size()-1; TopExp_Explorer sf(v.boxes_[sphere].shape,TopAbs_FACE); chooseFace(v,sphere,TopoDS::Face(sf.Current()));
         std::unique_ptr<QMenu> sphereMenu(v.createSelectionMenu(p0));
         require(!sphereMenu->findChild<QAction*>("context.move_face") && sphereMenu->findChild<QAction*>("context.resize"),"unsupported actions were displayed");
+
+        chooseFace(v,0,topFace(v.boxes_[0].shape));
+        std::unique_ptr<QMenu> faceMenu(v.createSelectionMenu(p0));
+        require(faceMenu && faceMenu->findChild<QAction*>("context.rotate_face")
+                && faceMenu->findChild<QAction*>("context.align_face"),"supported Rotate/Align Face actions missing");
+        const auto rotationHistory=v.undoStack_.size();
+        const auto targetName=v.boxes_[0].name;
+        const auto targetColor=v.boxes_[0].color;
+        action(*faceMenu,"context.rotate_face")->trigger();
+        require(v.commandSession_ && v.commandSession_->kind==CadViewport::CommandSession::Kind::RotateFace
+                && v.faceAxisPicking_ && v.faceRotationManipulator_.IsNull(),"Rotate Face axis selection phase did not start cleanly");
+        v.chooseFaceRotationAxis(1);
+        require(v.commandSession_->valid && !v.faceRotationManipulator_.IsNull(),"world reference axis did not create the orange manipulator");
+        const auto originalFaceShape=v.boxes_[0].shape;
+        require(v.previewCommand(15.0) && v.boxes_[0].shape.IsSame(originalFaceShape),"Rotate Face preview changed canonical geometry");
+        v.cancelCommandSession(); idle();
+        require(v.undoStack_.size()==rotationHistory && v.boxes_[0].shape.IsSame(originalFaceShape),"Rotate Face Cancel changed geometry or history");
+        require(v.selectionContext().kind==CadViewport::SelectionContext::Kind::Faces,
+                "Rotate Face Cancel did not restore passive Face selection mode");
+
+        chooseFace(v,0,topFace(v.boxes_[0].shape));
+        faceMenu.reset(v.createSelectionMenu(p0));
+        action(*faceMenu,"context.rotate_face")->trigger(); v.chooseFaceRotationAxis(1);
+        v.dragDimension_->setText("-15"); v.confirmCommandSession(); idle();
+        require(v.undoStack_.size()==rotationHistory+1,"Rotate Face did not create one Undo step");
+        v.undoPull(); idle(); require(v.undoStack_.size()==rotationHistory,"Rotate Face Undo failed");
+        v.redoPull(); idle(); require(v.undoStack_.size()==rotationHistory+1,"Rotate Face Redo failed");
+        require(v.boxes_[0].name==targetName && v.boxes_[0].color==targetColor,"Rotate Face changed target identity metadata");
+        v.undoPull(); idle();
+
+        chooseFace(v,0,topFace(v.boxes_[0].shape));
+        faceMenu.reset(v.createSelectionMenu(p0));
+        action(*faceMenu,"context.align_face")->trigger();
+        require(v.alignFacePickingReference_ && v.commandSession_->kind==CadViewport::CommandSession::Kind::AlignFace,
+                "Align Face did not start its separate reference-selection phase");
+        require(v.faceAlignTargetLabel_->text().startsWith("Target:")
+                && v.faceAlignReferenceLabel_->text().startsWith("Reference:"),"Align Face did not display separate operand roles");
+        gp_Trsf elevated; elevated.SetTranslation(gp_Vec(0,0,100));
+        v.boxes_[1].orientation=elevated; v.boxes_[1].presentation->SetLocalTransformation(elevated);
+        v.context_->Redisplay(v.boxes_[1].presentation,Standard_False);
+        const auto referenceShape=v.boxes_[1].shape;
+        const auto referenceOrientation=v.boxes_[1].orientation;
+        require(v.pickAlignReference(project(v,gp_Pnt(175,40,160))),"reference selection phase did not consume the pick");
+        require(v.commandSession_->hasReference && v.commandSession_->valid,"Align Face did not produce a reference preview");
+        require(v.faceAlignReferenceLabel_->text().contains(v.boxes_[1].name),"Align Face reference label was not updated");
+        const auto originalAlignShape=v.boxes_[0].shape;
+        require(v.boxes_[0].shape.IsSame(originalAlignShape),"Align Face preview changed canonical geometry");
+        v.cancelCommandSession(); idle();
+        require(v.boxes_[0].shape.IsSame(originalAlignShape),"Align Face Cancel changed target geometry");
+
+        chooseFace(v,0,topFace(v.boxes_[0].shape));
+        faceMenu.reset(v.createSelectionMenu(p0));
+        action(*faceMenu,"context.align_face")->trigger();
+        require(v.pickAlignReference(project(v,gp_Pnt(175,40,160))),"second reference selection was not consumed");
+        require(v.commandSession_->hasReference && v.commandSession_->valid,"second Align Face preview failed");
+        const auto alignHistory=v.undoStack_.size();
+        v.confirmCommandSession(); idle();
+        require(v.undoStack_.size()==alignHistory+1,"Align Face did not create one Undo step");
+        bool referenceTransformUnchanged=true;
+        for(int row=1;row<=3;++row) for(int column=1;column<=4;++column)
+            if(std::abs(v.boxes_[1].orientation.Value(row,column)-referenceOrientation.Value(row,column))>1.e-8)
+                referenceTransformUnchanged=false;
+        require(v.boxes_[1].shape.IsSame(referenceShape) && referenceTransformUnchanged,
+                "Align modified the reference Part");
+        v.undoPull(); idle(); v.redoPull(); idle(); v.undoPull(); idle();
     }
 
 };

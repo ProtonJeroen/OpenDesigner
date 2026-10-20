@@ -28,10 +28,10 @@ owners with a whole-part selection; Cancel restores the original face owners.
 
 ## Supported geometry
 
-This first implementation accepts exactly one planar face on one valid, closed
-solid with one shell and no extra loose faces, edges or vertices. Every face in the solid must have exactly one wire, and
-all supporting surfaces must be **planes, cylinders or cones** (maximum 64 faces).
-The selected face may have planar, cylindrical or conical neighbours.
+This implementation accepts one planar face on one valid, closed single solid
+with one shell, no loose subshapes and at most 64 faces. Neighbouring supports
+may be **planes, cylinders or cones**. Multi-wire neighbours are not rejected
+up front; OCCT must still produce a topology-preserving result.
 
 Verified cases include:
 
@@ -40,44 +40,54 @@ Verified cases include:
 - The top and bottom caps of a truncated Cone, with its conical side fixed.
   Extending a cap changes its radius according to that fixed cone surface;
   this differs deliberately from primitive height Pull.
-- Concave planar Boolean solids, such as an L-shaped extrusion, and simple
-  repository Boolean Subtract results.
+- A simple planar face of a Boolean Subtract result, when OCCT keeps its
+  existing face/edge/vertex connectivity.
 - GeneralBRep shapes with a shape location and parts with existing instance
   rotation/translation. The world-space distance is converted to local units,
   including the instance's uniform scale.
 
 Acceptance is conditional on OCCT successfully rebuilding the intersection
 curves and on all validation checks. A supported surface type does not promise
-that every possible distance is valid. Large inward moves, crossing the opposite
-cap, moving past a cone apex, removing a face or splitting/merging topology are
-refused. Face, edge and vertex counts must remain unchanged.
+that every distance is valid. Large inward moves, crossing the opposite cap,
+moving past a cone apex, creating multiple solids, changing face/edge/vertex
+counts, changing a neighboring analytic support, or producing an
+invalid/self-intersecting result are refused. A valid solid alone is not enough:
+OCCT must preserve the existing face connectivity and each neighboring support
+surface while changing only its trim boundaries and the selected plane.
 
 Curved selected faces, spheres, tori, blends, fillets, B-spline/freeform surfaces,
-multi-wire faces (including through-hole caps), multiple shells/cavities, open
-shells and multi-solid parts are outside this version's scope. The conservative
-surface/wire policy applies to the entire solid, even when an unsupported face
-is distant from the selection. Simultaneous movement of several faces or parts
-is not provided. Arbitrary reference directions and face rotation remain future
-work. Calculations run synchronously for these bounded small solids.
+multiple shells/cavities, open shells and multi-solid parts are outside this
+version's scope. The analytic surface policy applies to the entire solid, even
+when an unsupported face is distant from the selection. No extruded volume,
+bridge face or generic topology reconstruction is used. The narrow vertical
+riser in the documented Unite staircase is currently refused because OCCT's
+offset result splits adjacent edges and adds vertices; that topology change is
+not yet reconstructed reliably. Simultaneous movement of several faces or parts
+is not provided.
+Planar face rotation and alignment are documented in
+[Rotate Face](ROTATE_FACE.md) and [Align Face](ALIGN_FACE.md). Calculations run
+synchronously for these bounded small solids.
 
 ## Geometry and transaction architecture
 
 `MoveFaceGeometry` is independent of viewport picking and document mutation.
 It uses OCCT `BRepOffset_MakeOffset` with zero offset for unselected faces,
-`SetOffsetOnFace` for the selected plane and intersection joins. Adjacent support
-surfaces stay fixed; their boundaries are rebuilt by OCCT. This is not a part
-translation, prism added to the old face or a Box-bounds reconstruction.
+`SetOffsetOnFace` for the selected plane and intersection mode enabled so OCCT
+recomputes neighboring trim curves. There is no prism or Boolean-volume
+fallback. If OCCT cannot rebuild the intersections without changing the
+existing topology, the edit is refused.
 The API is documented in the [OCCT reference](https://occt3d.com/dev/doc/refman/html/class_b_rep_offset___make_offset.html).
 
 Offset construction operates on a deep copy of topology and geometry. Input
 and result checks include BRep validity, self-interference analysis on isolated
-copies, a single solid/shell and positive finite volume. A closed shell returned
+copies, one solid/shell and positive finite volume. A closed shell returned
 by OCCT can be promoted to a solid and oriented; open shells are never sewn or
 healed into acceptance. Each nonzero result must change volume in the requested
-direction, preserve topology counts, and retain every unselected analytic
-support surface. The selected support plane must move by exactly the requested
-normal displacement. Exceptions or failed checks return a refusal, not a
-partially updated document.
+direction, keep the same face/edge/vertex counts and wire connectivity, preserve
+all unselected analytic supports, and place the selected support at the requested
+displacement. Exceptions or failed checks return a refusal, not a partial edit.
+Refusal diagnostics log solid/shell/face/edge/vertex counts, target wire/edge
+counts, adjacent analytic surface types and OCCT validity/error information.
 
 The existing `CommandSession` gains a MoveFace adapter and a separate temporary
 AIS presentation. The original presentation is hidden while a valid candidate
@@ -113,8 +123,9 @@ For manual Fedora KDE verification:
    original conical side surface, unlike Primitive Pull.
 3. Rotate and move the part first; repeat on a Boolean result. Confirm stable
    names/colors/rows, and use one Undo/Redo for the edit.
-4. Try a curved face, a through-hole cap and an excessive inward distance.
-   Confirm refusal, then enter a valid value or cancel.
+4. Try a curved face, the narrow riser on a Boolean Unite of different-height
+   Boxes, and an excessive inward distance. Confirm each unsupported case is
+   refused without changing the source; then enter a valid value or cancel.
 5. Compare Cancel/Esc and a tool switch before/after dragging. Check selection,
    visibility and original geometry, then exercise Move/Rotate/Pull/Booleans.
 

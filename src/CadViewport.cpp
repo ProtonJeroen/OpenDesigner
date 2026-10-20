@@ -46,6 +46,7 @@
 #include <QDialog>
 #include <QFormLayout>
 #include <QComboBox>
+#include <QLabel>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <BRepAdaptor_Surface.hxx>
@@ -97,11 +98,32 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     commandPanel_->setAttribute(Qt::WA_ShowWithoutActivating);
     commandPanel_->installEventFilter(this);
     auto* commandLayout = new QVBoxLayout(commandPanel_);
+    faceAxisSelector_=new QComboBox(commandPanel_);
+    faceAxisSelector_->setObjectName(QStringLiteral("rotateFaceAxisSelector"));
+    faceAxisSelector_->addItems({tr("Choose a straight edge…"),tr("World X axis"),tr("World Y axis"),tr("World Z axis")});
+    faceAxisSelector_->hide(); commandLayout->addWidget(faceAxisSelector_);
+    faceAlignSelector_=new QComboBox(commandPanel_);
+    faceAlignSelector_->setObjectName(QStringLiteral("alignFaceModeSelector"));
+    faceAlignSelector_->addItems({tr("Coplanar"),tr("Parallel")});
+    faceAlignSelector_->hide(); commandLayout->addWidget(faceAlignSelector_);
+    faceAlignTargetLabel_=new QLabel(commandPanel_);
+    faceAlignTargetLabel_->setObjectName(QStringLiteral("alignFaceTarget"));
+    faceAlignTargetLabel_->hide(); commandLayout->addWidget(faceAlignTargetLabel_);
+    faceAlignReferenceLabel_=new QLabel(commandPanel_);
+    faceAlignReferenceLabel_->setObjectName(QStringLiteral("alignFaceReference"));
+    faceAlignReferenceLabel_->hide(); commandLayout->addWidget(faceAlignReferenceLabel_);
     commandButtons_ = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, commandPanel_);
     commandLayout->addWidget(commandButtons_);
     commandButtons_->hide();
     connect(commandButtons_, &QDialogButtonBox::accepted, this, &CadViewport::confirmCommandSession);
     connect(commandButtons_, &QDialogButtonBox::rejected, this, &CadViewport::cancelCommandSession);
+    connect(faceAxisSelector_,qOverload<int>(&QComboBox::currentIndexChanged),this,&CadViewport::chooseFaceRotationAxis);
+    connect(faceAlignSelector_,qOverload<int>(&QComboBox::currentIndexChanged),this,[this](int index) {
+        if(commandSession_ && commandSession_->kind==CommandSession::Kind::AlignFace && commandSession_->hasReference) {
+            commandSession_->coplanar=index==0;
+            previewFaceTransform(0.0);
+        }
+    });
     connect(dragDimension_, &QLineEdit::textEdited, this, [this]() {
         if (commandSession_) updateCommandParameter(false);
     });
@@ -126,12 +148,26 @@ void CadViewport::beginCommandSession(CommandSession::Kind kind,
     session.direction = direction;
     session.pivot = pivot;
     session.state = CommandSession::State::Parameters;
-    commandPanel_->setWindowTitle(kind == CommandSession::Kind::Move ? tr("Move Part Preview") : tr("Rotate Part Preview"));
+    const QString title = kind==CommandSession::Kind::Move ? tr("Move Part Preview")
+        : kind==CommandSession::Kind::Rotate ? tr("Rotate Part Preview")
+        : kind==CommandSession::Kind::MoveFace ? tr("Move Face Preview")
+        : kind==CommandSession::Kind::RotateFace ? tr("Rotate Face Preview")
+        : kind==CommandSession::Kind::AlignFace ? tr("Align Face Preview") : tr("Modeling Preview");
+    commandPanel_->setWindowTitle(title);
     dragDimension_->setParent(commandPanel_);
     static_cast<QVBoxLayout*>(commandPanel_->layout())->insertWidget(0,dragDimension_);
-    dragDimension_->setToolTip(kind == CommandSession::Kind::Rotate ? tr("Angle in degrees") : tr("Distance in mm"));
+    dragDimension_->setToolTip(kind==CommandSession::Kind::Rotate || kind==CommandSession::Kind::RotateFace
+        ? tr("Angle in degrees") : tr("Distance in mm"));
     dragDimension_->setText(QLocale().toString(0.0,'f',2));
     commandButtons_->button(QDialogButtonBox::Ok)->setEnabled(true);
+    faceAxisSelector_->setVisible(kind==CommandSession::Kind::RotateFace);
+    faceAlignSelector_->setVisible(kind==CommandSession::Kind::AlignFace);
+    faceAlignTargetLabel_->setVisible(kind==CommandSession::Kind::AlignFace);
+    faceAlignReferenceLabel_->setVisible(kind==CommandSession::Kind::AlignFace);
+    if(kind==CommandSession::Kind::AlignFace && !indices.empty()) {
+        faceAlignTargetLabel_->setText(tr("Target: %1").arg(boxes_[indices.front()].name));
+        faceAlignReferenceLabel_->setText(tr("Reference: select a planar face"));
+    }
     showCommandControls(dragStart_);
 }
 void CadViewport::showCommandControls(const QPoint& position) {
@@ -146,6 +182,8 @@ void CadViewport::showCommandControls(const QPoint& position) {
 bool CadViewport::previewCommand(double value) {
     if (!commandSession_ || !std::isfinite(value)) return false;
     if (commandSession_->kind==CommandSession::Kind::MoveFace) return previewMoveFace(value);
+    if (commandSession_->kind==CommandSession::Kind::RotateFace || commandSession_->kind==CommandSession::Kind::AlignFace)
+        return previewFaceTransform(value);
     if (commandSession_->kind==CommandSession::Kind::Pull) return previewPrimitivePull(value);
     auto& session = *commandSession_;
     session.value = value;
@@ -209,12 +247,15 @@ void CadViewport::closeCommandSession(bool confirm) {
         resetModelingTools(); view_->Redraw(); setFocus(); return;
     }
     const bool pullCommand=session.kind==CommandSession::Kind::Pull;
-    const bool faceCommand=session.kind==CommandSession::Kind::MoveFace || pullCommand;
+    const bool faceCommand=session.kind==CommandSession::Kind::MoveFace || session.kind==CommandSession::Kind::RotateFace
+        || session.kind==CommandSession::Kind::AlignFace || pullCommand;
     if (!session.preview.IsNull()) context_->Remove(session.preview,Standard_False);
     if (!moveFaceArrow_.IsNull()) { context_->Remove(moveFaceArrow_,Standard_False); moveFaceArrow_.Nullify(); }
     for (const auto& change : session.changes) {
         auto& part = boxes_[change.partIndex];
-        if (confirm && faceCommand && std::abs(session.value)>1.e-7 && change.faceChange) applyFaceState(change.partIndex,change.faceChange->after);
+        if (confirm && faceCommand && change.faceChange
+            && (session.kind==CommandSession::Kind::AlignFace ? session.changed : std::abs(session.value)>1.e-7))
+            applyFaceState(change.partIndex,change.faceChange->after);
         else if(pullCommand && change.faceChange) applyFaceState(change.partIndex,change.faceChange->before);
         else if (confirm) part.orientation = change.afterOrientation;
         if (faceCommand && part.visible) {
@@ -225,7 +266,8 @@ void CadViewport::closeCommandSession(bool confirm) {
         part.presentation->SetLocalTransformation(part.orientation);
         context_->Redisplay(part.presentation,Standard_False);
     }
-    if (confirm && std::abs(session.value)>(faceCommand?1.e-7:1.e-10) && !session.changes.empty()) {
+    const bool changedFace=session.kind==CommandSession::Kind::AlignFace ? session.changed : std::abs(session.value)>1.e-7;
+    if (confirm && (faceCommand ? changedFace : std::abs(session.value)>1.e-10) && !session.changes.empty()) {
         PullChange operation = session.changes.front();
         if (session.changes.size()>1) operation.groupedChanges = session.changes;
         undoStack_.push_back(operation);
@@ -233,7 +275,7 @@ void CadViewport::closeCommandSession(bool confirm) {
     }
     selectedPartIndices_ = session.selection;
     context_->ClearSelected(Standard_False);
-    if (faceCommand && confirm && std::abs(session.value)>=1.e-7) {
+    if (faceCommand && confirm && changedFace) {
         selectedPartIndices_.clear();
         for(const auto& change:session.changes) selectedPartIndices_.push_back(change.partIndex);
         refreshPartSelection();
@@ -243,6 +285,7 @@ void CadViewport::closeCommandSession(bool confirm) {
     draggingFace_ = draggingRotation_ = dimensionEditing_ = false;
     groupRotationDragging_ = false;
     dragDimension_->hide(); commandButtons_->hide(); commandPanel_->hide();
+    faceAxisSelector_->hide(); faceAlignSelector_->hide();
     commandPanel_->layout()->removeWidget(dragDimension_);
     dragDimension_->setParent(this);
     resetModelingTools();
@@ -1771,6 +1814,10 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             }
             return;
         }
+        if(faceAxisPicking_) { pickFaceRotationAxis(e->pos()); return; }
+        if(alignFacePickingReference_) { pickAlignReference(e->pos()); return; }
+        if(commandSession_ && commandSession_->kind==CommandSession::Kind::RotateFace
+           && beginFaceRotationDrag(e->pos())) return;
         if (commandSession_ && commandSession_->kind==CommandSession::Kind::MoveFace && beginMoveFaceDrag(e->pos())) return;
         if (moveFacePicking_) {
             for (const auto& part : boxes_) if (part.active && part.visible) {
@@ -2063,7 +2110,19 @@ void CadViewport::setSnapStep(double stepMm) {
 void CadViewport::mouseMoveEvent(QMouseEvent* e) {
     if (view_.IsNull()) return;
     QPoint p = e->pos();
-    if (draggingRotation_) {
+    if(draggingFaceRotation_) {
+        const double angle=faceRotationCursorAngle(p);
+        double delta=angle-faceRotationPreviousAngle_;
+        while(delta>std::acos(-1.0)) delta-=2.0*std::acos(-1.0);
+        while(delta<-std::acos(-1.0)) delta+=2.0*std::acos(-1.0);
+        faceRotationPreviousAngle_=angle;
+        faceRotationAccumulatedAngle_+=delta;
+        double degrees=faceRotationAccumulatedAngle_*180.0/std::acos(-1.0);
+        if(rotationSnap_>0.0 && !(e->modifiers()&Qt::ShiftModifier)) degrees=std::round(degrees/rotationSnap_)*rotationSnap_;
+        previewCommand(degrees);
+        dragDimension_->setText(QLocale().toString(degrees,'f',2));
+        showCommandControls(p);
+    } else if (draggingRotation_) {
         const double angle = rotationCursorAngle(p, rotationAxis_, rotationBefore_);
         double delta = angle - rotationPreviousAngle_;
         constexpr double pi = 3.14159265358979323846;
@@ -2106,7 +2165,7 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     if (e->button() == Qt::MiddleButton) { rotating_ = false; panning_ = false; }
     if(e->button()==Qt::LeftButton && commandSession_ && commandSession_->kind==CommandSession::Kind::Boolean) return;
     if (e->button()==Qt::LeftButton && commandSession_) {
-        draggingFace_ = draggingRotation_ = false;
+        draggingFace_ = draggingRotation_ = draggingFaceRotation_ = false;
         groupRotationDragging_ = false;
         showCommandControls(e->pos());
         dragDimension_->setText(commandSession_->kind==CommandSession::Kind::Pull && primitivePullDragging_ ? primitivePullDimensionText() : QLocale().toString(commandSession_->value,'f',2));

@@ -35,6 +35,9 @@ double volume(const TopoDS_Shape& shape) {
     GProp_GProps props; BRepGProp::VolumeProperties(shape,props); return props.Mass();
 }
 std::string brep(const TopoDS_Shape& shape) { std::ostringstream out; BRepTools::Write(shape,out); return out.str(); }
+int countType(const TopoDS_Shape& shape,TopAbs_ShapeEnum type) {
+    int count=0; for(TopExp_Explorer it(shape,type);it.More();it.Next()) ++count; return count;
+}
 TopoDS_Face cap(const TopoDS_Shape& shape,bool top) {
     TopoDS_Face result; double best=top?-1.e30:1.e30;
     for (TopExp_Explorer f(shape,TopAbs_FACE);f.More();f.Next()) {
@@ -56,6 +59,13 @@ struct MoveFaceTest {
             QString error; const auto moved=MoveFaceGeometry::move(shape,cap(shape,top),d,error);
             if (moved.IsNull()) throw std::runtime_error("primitive cap: "+error.toStdString());
             require(BRepCheck_Analyzer(moved).IsValid(),"invalid cap result");
+            if(i==0) require(countType(moved,TopAbs_FACE)==countType(shape,TopAbs_FACE)
+                             &&countType(moved,TopAbs_EDGE)==countType(shape,TopAbs_EDGE)
+                             &&countType(moved,TopAbs_VERTEX)==countType(shape,TopAbs_VERTEX),
+                             "Move Face added or removed Box topology");
+            if(i==0 && top) near(BRepAdaptor_Surface(cap(moved,true)).Plane().Location().Z(),
+                                 BRepAdaptor_Surface(cap(shape,true)).Plane().Location().Z()+d,
+                                 "Move Face did not translate the existing Box top support exactly");
             double expected=0;
             if (i==0) expected=100*80*(60+d);
             if (i==1) expected=pi*40*40*(80+d);
@@ -89,9 +99,16 @@ struct MoveFaceTest {
         require(MoveFaceGeometry::move(open,open,10,error).IsNull(),"open face accepted as solid");
         const auto halfSphere=BRepAlgoAPI_Cut(sphere,BRepPrimAPI_MakeBox(gp_Pnt(-40,-40,-40),80,80,40).Shape()).Shape();
         require(MoveFaceGeometry::move(halfSphere,cap(halfSphere,false),5,error).IsNull(),"planar face with spherical neighbour accepted");
-        // Single-wire policy rejects through holes; arbitrary blends/freeform stay out of scope.
+        // OCCT may handle a planar through-hole cap natively; if it cannot, the
+        // operation must refuse without mutating the source.
         const auto hole=BRepAlgoAPI_Cut(shapes[0],BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(50,40,-10),gp_Dir(0,0,1)),10,80).Shape()).Shape();
-        require(MoveFaceGeometry::move(hole,cap(hole,true),10,error).IsNull(),"multi-wire cap accepted");
+        const auto holeBefore=brep(hole);
+        const auto movedHole=MoveFaceGeometry::move(hole,cap(hole,true),10,error);
+        if(!movedHole.IsNull()) {
+            require(BRepCheck_Analyzer(movedHole).IsValid(),"through-hole cap result is invalid");
+            near(volume(movedHole),volume(hole)+10*(8000-std::acos(-1.0)*100),"through-hole cap volume is wrong");
+        }
+        require(brep(hole)==holeBefore,"through-hole operation mutated source");
         // A shape location is part of the B-Rep, independent of the instance transform.
         gp_Trsf translation; translation.SetTranslation(gp_Vec(31,7,19));
         const auto located=shapes[0].Moved(TopLoc_Location(translation));
