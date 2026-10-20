@@ -226,6 +226,7 @@ void CadViewport::commitBooleanChange(const std::shared_ptr<BooleanChange>& comm
     restoreBooleanChange(*command,true);
     PullChange entry{}; entry.booleanChange=command;
     undoStack_.push_back(entry); redoStack_.clear();
+    updateHistoryActions();
     int solids=0;
     for(TopExp_Explorer solid(command->resultState.shape,TopAbs_SOLID);solid.More();solid.Next()) ++solids;
     emit statusMessage(tr("Boolean confirmed: %1 solid(s) in %2.").arg(solids).arg(command->resultState.name));

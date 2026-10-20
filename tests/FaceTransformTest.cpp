@@ -7,6 +7,8 @@
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
+#include "BRepReconstruction.h"
 #include <BRepGProp.hxx>
 #include <BRepTools.hxx>
 #include <GProp_GProps.hxx>
@@ -76,6 +78,26 @@ gp_Ax1 yAxis(const TopoDS_Face& face) {
 }
 double volume(const TopoDS_Shape& shape) { GProp_GProps p;BRepGProp::VolumeProperties(shape,p);return p.Mass(); }
 std::string shapeStamp(const TopoDS_Shape& shape) { std::ostringstream out;BRepTools::Write(shape,out);return out.str(); }
+// Independent material oracle for the two-height Unite, including probes on
+// both sides of the requested riser. This catches a valid but wrong solid.
+void staircase(const TopoDS_Shape& shape,double baseX,double slope,double pivotZ) {
+    require(BRepCheck_Analyzer(shape).IsValid(),"staircase B-Rep invalid");
+    BRepClass3d_SolidClassifier classifier(shape);
+    auto probe=[&](double x,double y,double z) {
+        const bool expected=x>0&&x<160&&y>0&&y<80&&z>0&&z<90
+            &&(z<50||x>baseX+slope*(z-pivotZ));
+        classifier.Perform(gp_Pnt(x,y,z),1.e-7);
+        require(classifier.State()==(expected?TopAbs_IN:TopAbs_OUT),
+                "reconstructed material disagrees with the analytical staircase");
+    };
+    for(double x=-3;x<165;x+=7.3)
+        for(double y=-3;y<85;y+=21.1)
+            for(double z=-3;z<95;z+=6.7) probe(x,y,z);
+    for(double z=51;z<90;z+=3.1) {
+        const double boundary=baseX+slope*(z-pivotZ);
+        probe(boundary-0.05,40,z); probe(boundary+0.05,40,z);
+    }
+}
 void geometry() {
     const auto box=BRepPrimAPI_MakeBox(100,80,60).Shape();
     const auto face=topFace(box);
@@ -150,27 +172,78 @@ void geometry() {
     const auto boolean=fuse.Shape();
     const auto riser=transitionFace(boolean);
     require(!riser.IsNull(),"Boolean Unite transition face was not found");
+    BRepReconstruction::Prepared prepared;
+    require(BRepReconstruction::prepare(boolean,riser,prepared,error),error.toStdString().c_str());
+    require(count(prepared.solid,TopAbs_FACE)<count(boolean,TopAbs_FACE),
+            "fixture did not exercise controlled coplanar face merging");
+    for(const auto& mapping:prepared.history)
+        require(!mapping.modified.empty(),"normalization lost original face history");
+    staircase(prepared.solid,60,0,0);
+    require(FaceTransformGeometry::rotate(boolean,riser,yAxis(riser),0,error).IsSame(boolean),
+            "zero rotation changed Boolean topology");
+    require(MoveFaceGeometry::move(boolean,riser,0,error).IsSame(boolean),
+            "zero move changed Boolean topology");
+    auto expectedRiser=BRepAdaptor_Surface(prepared.target).Plane();
+    expectedRiser.Translate(gp_Vec(-5,0,0));
+    require(!BRepReconstruction::supports(prepared.solid,prepared.solid,prepared.target,expectedRiser,error),
+            "support validation accepted an unchanged solid for a requested move");
+    const auto wrongSolid=BRepPrimAPI_MakeBox(160,80,90).Shape();
+    require(!BRepReconstruction::supports(prepared.solid,wrongSolid,prepared.target,expectedRiser,error),
+            "support validation accepted a valid but unintended volume");
     const double uniteVolume=volume(boolean);
     const auto uniteBefore=shapeStamp(boolean);
     gp_Pnt riserCenter; gp_Dir riserNormal;
     require(MoveFaceGeometry::reference(boolean,riser,riserCenter,riserNormal,error),error.toStdString().c_str());
-    for(const double distance : {5.0,-5.0}) {
+    for(const double distance : {5.0,-5.0,25.0,-25.0}) {
         const auto moved=MoveFaceGeometry::move(boolean,riser,distance,error);
-        require(moved.IsNull(),"Boolean Unite riser with changed edge/vertex topology was incorrectly reconstructed");
-        require(std::abs(volume(boolean)-uniteVolume)<1.e-8,"refused Boolean Move Face modified its source");
-        require(shapeStamp(boolean)==uniteBefore,"refused Boolean Move Face changed source B-Rep data");
+        require(!moved.IsNull(),error.toStdString().c_str());
+        staircase(moved,60-distance,0,0);
+        require(count(moved,TopAbs_FACE)<count(boolean,TopAbs_FACE),"Move did not retain controlled topology merging");
+        near(volume(moved),uniteVolume+80*40*distance,"Unite Move did not extend/trim both terraces correctly");
+        require(std::abs(volume(boolean)-uniteVolume)<1.e-8,"Boolean Move Face modified its source");
+        require(shapeStamp(boolean)==uniteBefore,"Boolean Move Face changed source B-Rep data");
     }
     for(const double angle : {8.0,-8.0}) {
         const auto rotated=FaceTransformGeometry::rotate(boolean,riser,yAxis(riser),angle,error);
-        require(rotated.IsNull(),"Boolean Unite riser with changed topology was incorrectly rotated");
-        require(std::abs(volume(boolean)-uniteVolume)<1.e-8,"refused Boolean Rotate Face modified its source");
-        require(shapeStamp(boolean)==uniteBefore,"refused Boolean Rotate Face changed source B-Rep data");
+        require(!rotated.IsNull(),error.toStdString().c_str());
+        require(BRepCheck_Analyzer(rotated).IsValid(),"Unite Rotate invalid");
+        const auto pivot=yAxis(riser);
+        const double slope=std::tan(angle*std::acos(-1.0)/180.0)*pivot.Direction().Y();
+        near(volume(rotated),uniteVolume-80*40*(70-pivot.Location().Z())*slope,
+             "Unite Rotate wedge volume disagrees with the requested plane");
+        staircase(rotated,60,slope,pivot.Location().Z());
+        require(std::abs(volume(boolean)-uniteVolume)<1.e-8,"Boolean Rotate Face modified its source");
+        require(shapeStamp(boolean)==uniteBefore,"Boolean Rotate Face changed source B-Rep data");
     }
     const auto alignedRiser=FaceTransformGeometry::align(boolean,riser,
         gp_Pln(gp_Pnt(55,0,0),gp_Dir(1,0,0)),true,error);
-    require(alignedRiser.IsNull(),"Align Face accepted a transition requiring unsupported topology changes");
-    require(std::abs(volume(boolean)-uniteVolume)<1.e-8,"refused Boolean Align Face modified its source");
-    require(shapeStamp(boolean)==uniteBefore,"refused Boolean Align Face changed source B-Rep data");
+    require(!alignedRiser.IsNull(),error.toStdString().c_str());
+    near(volume(alignedRiser),uniteVolume+80*40*5,"Unite Align did not trim to x=55");
+    staircase(alignedRiser,55,0,0);
+    for(const double x : {55.0,65.0}) {
+        const auto aligned=FaceTransformGeometry::align(boolean,riser,
+            gp_Pln(gp_Pnt(x,0,0),gp_Dir(1,0,0)),true,error);
+        require(!aligned.IsNull(),error.toStdString().c_str());
+        staircase(aligned,x,0,0);
+        near(volume(aligned),uniteVolume+(60-x)*3200,"signed riser Align volume incorrect");
+    }
+    const auto parallelRiser=FaceTransformGeometry::align(boolean,riser,
+        gp_Pln(gp_Pnt(55,0,0),gp_Dir(1,0,0)),false,error);
+    require(!parallelRiser.IsNull(),error.toStdString().c_str());
+    staircase(parallelRiser,60,0,0);
+    for(double slope : {0.1,-0.1}) for(bool coplanarMode : {false,true}) {
+        const auto reference=gp_Pln(gp_Pnt(55,0,70),gp_Dir(1,0,-slope));
+        const auto aligned=FaceTransformGeometry::align(boolean,riser,reference,coplanarMode,error);
+        require(!aligned.IsNull(),error.toStdString().c_str());
+        staircase(aligned,coplanarMode?55:60,slope,70);
+        near(volume(aligned),uniteVolume+(coplanarMode?16000:0),"tilted Align riser volume incorrect");
+    }
+    // Collapse the low terrace or cross the far wall: no partial source mutation.
+    for(const double distance : {100.0,-120.0})
+        require(MoveFaceGeometry::move(boolean,riser,distance,error).IsNull(),
+                "riser collapse/crossing was accepted");
+    require(std::abs(volume(boolean)-uniteVolume)<1.e-8,"Boolean Align Face modified its source");
+    require(shapeStamp(boolean)==uniteBefore,"Boolean Align Face changed source B-Rep data");
 
     // The shared face tooling also accepts a simple planar face on a Boolean cut.
     const auto cutter=BRepPrimAPI_MakeBox(gp_Pnt(30,20,20),30,40,40).Shape();

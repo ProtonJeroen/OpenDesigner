@@ -95,10 +95,13 @@ bool CadViewport::supportsResize(const SelectionContext& selection) const {
 }
 QMenu* CadViewport::createSelectionMenu(const QPoint& anchor) {
     const auto selection=selectionContext();
-    if(selection.kind==SelectionContext::Kind::None) return nullptr;
     auto* menu=new QMenu(this);
     menu->setObjectName(QStringLiteral("viewportContextMenu"));
-    if(selection.kind==SelectionContext::Kind::Parts) populatePartMenu(*menu,selection);
+    if(selection.kind==SelectionContext::Kind::None) {
+        updateHistoryActions();
+        menu->addAction(undoAction_); menu->addAction(redoAction_);
+    }
+    else if(selection.kind==SelectionContext::Kind::Parts) populatePartMenu(*menu,selection);
     else populateFaceMenu(*menu,selection,anchor);
     if(menu->isEmpty()) { delete menu; return nullptr; }
     return menu;
@@ -158,7 +161,7 @@ void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection
 }
 void CadViewport::contextMenuEvent(QContextMenuEvent* event) {
     event->accept();
-    if(context_.IsNull() || commandSession_ || moveFacePicking_ || draggingFace_ || draggingRotation_ || rotating_ || panning_) return;
+    if(context_.IsNull() || commandSession_ || moveFacePicking_ || draggingFace_ || draggingRotation_ || draggingFaceRotation_ || rotating_ || panning_) return;
     auto selection=selectionContext();
     if(selection.kind==SelectionContext::Kind::None && event->reason()==QContextMenuEvent::Mouse) {
         for(const auto& part:boxes_) if(part.active && part.visible) {
@@ -171,8 +174,7 @@ void CadViewport::contextMenuEvent(QContextMenuEvent* event) {
             selection=selectionContext(); emit partSelectionChanged(selection.parts);
         }
     }
-    if(selection.kind==SelectionContext::Kind::None) return;
-    if(event->reason()==QContextMenuEvent::Mouse) {
+    if(selection.kind!=SelectionContext::Kind::None && event->reason()==QContextMenuEvent::Mouse) {
         context_->MoveTo(event->pos().x(),event->pos().y(),view_,Standard_True);
         if(!context_->HasDetected()) return;
         const auto object=context_->DetectedInteractive();

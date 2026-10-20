@@ -2,8 +2,8 @@
 
 OpenDesigner is an open-source cross-platform 3D direct-modeling application inspired by classic CoCreate SolidDesigner.
 
-**Status:** v0.3.4 Rotate Face & Align Face prototype; not a packaged release.
-Manual Fedora KDE validation for v0.3.4 is pending.
+**Status:** v0.3.5 Advanced B-Rep Reconstruction prototype; not a packaged release.
+Manual Fedora KDE validation for v0.3.5 passed; the user confirmed all tested functionality, including live previews and context menus.
 
 ## Prototype features
 - Qt 6 desktop window with dockable Structure Browser
@@ -52,9 +52,13 @@ Planar face rotation and alignment behavior, validation and limitations:
 
 Selection shortcuts, explicit context actions and eligibility: [Selection and context menus](docs/SELECTION_CONTEXT.md).
 
-The v0.3.4 interaction workflow retains passive selection: click Faces, Alt+click Parts,
+The v0.3.5 interaction workflow retains passive selection: click Faces, Alt+click Parts,
 Ctrl to add/remove. Choose a context or Modeling action to show its manipulators.
 OK/Enter and Cancel/Esc completely close the function and remove all temporary UI;
 selection remains available for another explicit command. There is no selection
 mode dropdown or combined Move/Rotate gizmo. Boolean Target/Tools and Keep Tools
 retain their explicit preview workflow.
+
+Shared analytic face reconstruction, verified Boolean Unite riser behavior,
+controlled topology changes and remaining limits:
+[B-Rep reconstruction](docs/BREP_RECONSTRUCTION.md).

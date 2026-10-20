@@ -1,4 +1,4 @@
-# Selection and explicit modeling commands (v0.3.3–v0.3.4)
+# Selection and explicit modeling commands (v0.3.3–v0.3.5)
 
 Selection is passive. There is no Faces/Parts dropdown.
 
@@ -20,6 +20,16 @@ Ordinary right click on selected geometry opens the menu for its existing type;
 Alt is unnecessary. It does not convert Part owners to Faces or clear selection.
 With no selection, right click can select a Face and open its menu. Background
 and unrelated-object right clicks do not replace an existing selection.
+
+With **no selection**, right-clicking empty viewport space opens only **Undo
+(Ctrl+Z)** and **Redo (Ctrl+Y)**. These are the exact same QAction objects used
+by Edit and the toolbar, connected to the existing modeling history. Availability
+updates after every committed edit, Undo and Redo; empty stacks disable the
+corresponding action. Opening/dismissing the menu starts no modeling command.
+An existing selection is retained on background right-click (no background menu
+replaces its Face/Part menu). Active sessions and camera orbit/pan suppress the
+context menu. Middle-button camera behavior is unchanged.
+
 
 Part menus provide Move Part, Rotate Part, Duplicate, supported Boolean
 operations, Hide and Color. Hidden Parts can still be shown through the Structure
@@ -79,4 +89,12 @@ arrows appear. Start each context function explicitly, test OK/Enter and
 Cancel/Esc, then click more geometry and verify the old function stays inactive.
 Repeat with groups, transformed primitives and Boolean results. Test Boolean
 Tools through the browser, repeated previews, Keep Tools, navigation, Undo/Redo
-and keyboard focus in the floating editor. Manual retest is pending.
+and keyboard focus in the floating editor. The user confirmed the Fedora KDE
+manual tests passed for v0.3.5 (2026-10-20).
+
+The selection-context suite also tests an actual background popup without any
+geometry/selection, exactly two shared history actions, shortcuts, empty and
+nonempty stack availability, execution of Undo/Redo, camera suppression and
+selection preservation. Existing Face/Part action and picking tests remain.
+The user confirmed all tested v0.3.5 functionality on Fedora KDE, including the
+Unite riser, visible previews and context-menu refinements.

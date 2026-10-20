@@ -1,12 +1,12 @@
 #include "FaceTransformGeometry.h"
 
 #include "MoveFaceGeometry.h"
+#include "BRepReconstruction.h"
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp.hxx>
 #include <BRepOffsetAPI_DraftAngle.hxx>
-#include <BOPAlgo_ArgumentAnalyzer.hxx>
 #include <GProp_GProps.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
@@ -16,9 +16,7 @@
 #include <QDebug>
 #include <QStringList>
 #include <gp_Vec.hxx>
-#include <algorithm>
 #include <cmath>
-#include <vector>
 
 namespace {
 constexpr double tolerance = 1.e-7;
@@ -58,36 +56,9 @@ QString topologyDetails(const TopoDS_Shape& solid,const TopoDS_Face& target) {
 bool validResult(const TopoDS_Shape& original, const TopoDS_Shape& result,
                  QString& error) {
     Q_UNUSED(original);
-    if (result.IsNull() || count(result,TopAbs_SOLID)!=1 || count(result,TopAbs_SHELL)!=1
-        || !BRepCheck_Analyzer(result).IsValid()) {
-        error=QStringLiteral("the result is not one valid closed solid (solids=%1, shells=%2, faces=%3, edges=%4, vertices=%5).")
-            .arg(count(result,TopAbs_SOLID)).arg(count(result,TopAbs_SHELL)).arg(count(result,TopAbs_FACE))
-            .arg(count(result,TopAbs_EDGE)).arg(count(result,TopAbs_VERTEX));
-        return false;
-    }
-    TopExp_Explorer solid(result,TopAbs_SOLID);
-    for(const auto type : {TopAbs_FACE,TopAbs_EDGE,TopAbs_VERTEX}) {
-        if(count(result,type)!=count(solid.Current(),type)) {
-            error=QStringLiteral("the result contains topology outside its solid.");
-            return false;
-        }
-    }
-    // DraftAngle may legitimately split/merge faces on Boolean results. BRepCheck
-    // and self-interference validation below are the safety boundary.
-    GProp_GProps volume;
-    BRepGProp::VolumeProperties(result,volume);
-    if (!std::isfinite(volume.Mass()) || volume.Mass()<=1.e-12) {
-        error=QStringLiteral("the result has no positive finite volume.");
-        return false;
-    }
-    BRepBuilderAPI_Copy isolated(result,true,false);
-    BOPAlgo_ArgumentAnalyzer selfCheck;
-    selfCheck.SetShape1(isolated.Shape());
-    selfCheck.SelfInterMode()=true;
-    selfCheck.StopOnFirstFaulty()=true;
-    selfCheck.Perform();
-    if (selfCheck.HasErrors() || selfCheck.HasFaulty()) {
-        error=QStringLiteral("the result is self-intersecting or invalid.");
+    double volume=0;
+    if(!BRepReconstruction::validSolid(result,volume)) {
+        error=QStringLiteral("the reconstructed result is not one valid, closed, non-self-intersecting solid.");
         return false;
     }
     return true;
@@ -101,76 +72,29 @@ bool validTarget(const TopoDS_Shape& solid, const TopoDS_Face& face,
     }
     return true;
 }
-bool sameSupport(const TopoDS_Face& original,const TopoDS_Face& result,
-                 bool selected,const gp_Pln& expectedTarget) {
-    const BRepAdaptor_Surface a(original),b(result);
-    if(a.GetType()!=b.GetType()) return false;
-    if(a.GetType()==GeomAbs_Plane) {
-        const gp_Pln plane=selected?expectedTarget:a.Plane();
-        return plane.Axis().Direction().IsParallel(b.Plane().Axis().Direction(),1.e-7)
-            && plane.Distance(b.Plane().Location())<1.e-5;
-    }
-    if(a.GetType()==GeomAbs_Cylinder) {
-        const auto x=a.Cylinder(),y=b.Cylinder();
-        return x.Axis().IsCoaxial(y.Axis(),1.e-7,1.e-5)&&std::abs(x.Radius()-y.Radius())<1.e-5;
-    }
-    if(a.GetType()==GeomAbs_Cone) {
-        const auto x=a.Cone(),y=b.Cone();
-        return x.Axis().Direction().IsParallel(y.Axis().Direction(),1.e-7)
-            &&x.Apex().Distance(y.Apex())<1.e-5
-            &&std::abs(std::abs(x.SemiAngle())-std::abs(y.SemiAngle()))<1.e-7;
-    }
-    return false;
-}
-bool preservesTopologyAndSupports(const TopoDS_Shape& original,const TopoDS_Shape& result,
-                                  const TopoDS_Face& target,const gp_Pln& expected,QString& error) {
-    for(const auto type : {TopAbs_FACE,TopAbs_EDGE,TopAbs_VERTEX}) {
-        if(count(original,type)!=count(result,type)) {
-            error=QStringLiteral("the operation changes face/edge/vertex topology (%1 -> %2).")
-                .arg(count(original,type)).arg(count(result,type));
-            return false;
-        }
-    }
-    std::vector<TopoDS_Face> remaining;
-    for(TopExp_Explorer f(result,TopAbs_FACE);f.More();f.Next()) remaining.push_back(TopoDS::Face(f.Current()));
-    for(TopExp_Explorer f(original,TopAbs_FACE);f.More();f.Next()) {
-        const auto source=TopoDS::Face(f.Current());
-        const bool selected=source.IsSame(target);
-        const auto match=std::find_if(remaining.begin(),remaining.end(),[&](const auto& candidate) {
-            int sourceWires=0,candidateWires=0,sourceEdges=0,candidateEdges=0;
-            for(TopExp_Explorer w(source,TopAbs_WIRE);w.More();w.Next()) ++sourceWires;
-            for(TopExp_Explorer w(candidate,TopAbs_WIRE);w.More();w.Next()) ++candidateWires;
-            for(TopExp_Explorer e(source,TopAbs_EDGE);e.More();e.Next()) ++sourceEdges;
-            for(TopExp_Explorer e(candidate,TopAbs_EDGE);e.More();e.Next()) ++candidateEdges;
-            return sourceWires==candidateWires&&sourceEdges==candidateEdges
-                &&sameSupport(source,candidate,selected,expected);
-        });
-        if(match==remaining.end()) {
-            error=QStringLiteral("OCCT changed an adjacent support surface or face connectivity.");
-            return false;
-        }
-        remaining.erase(match);
-    }
-    return true;
-}
 
-TopoDS_Shape draft(const TopoDS_Shape& solid, const TopoDS_Face& face,
+TopoDS_Shape draft(const TopoDS_Shape& source, const TopoDS_Face& sourceFace,
                    const gp_Ax1& axis, double angleDegrees, QString& error,
                    TopoDS_Face* modifiedTarget = nullptr) {
     gp_Pnt center;
     gp_Dir normal;
-    if (!validTarget(solid,face,center,normal,error)) return {};
+    if (!validTarget(source,sourceFace,center,normal,error)) return {};
     if (!std::isfinite(angleDegrees) || std::abs(angleDegrees)>=179.0) {
         error=QStringLiteral("enter a finite angle with magnitude below 179 degrees.");
         return {};
     }
-    const gp_Pln facePlane=BRepAdaptor_Surface(face).Plane();
+    const gp_Pln facePlane=BRepAdaptor_Surface(sourceFace).Plane();
     if (std::abs(facePlane.Distance(axis.Location()))>1.e-5
         || std::abs(axis.Direction().Dot(normal))>1.e-6) {
         error=QStringLiteral("the rotation axis must be a straight line in the selected planar face.");
         return {};
     }
-    if (std::abs(angleDegrees)<1.e-10) return solid;
+    if (std::abs(angleDegrees)<1.e-10) return source;
+    BRepReconstruction::Prepared prepared;
+    if(!BRepReconstruction::prepare(source,sourceFace,prepared,error)) return {};
+    const auto& solid=prepared.solid;
+    const auto& face=prepared.target;
+
 
     // DraftAngle's Direction/Flag pair specifies which side of its neutral
     // plane is material. Try both valid side conventions and retain only the
@@ -199,16 +123,20 @@ TopoDS_Shape draft(const TopoDS_Shape& solid, const TopoDS_Face& face,
                 QString validationError;
                 if(!validResult(solid,result,validationError)) { lastFailure=validationError; continue; }
                 TopoDS_Face changedTarget;
+                int targetMatches=0;
                 for(TopExp_Explorer it(result,TopAbs_FACE);it.More();it.Next()) {
                     const auto candidate=TopoDS::Face(it.Current());
                     const BRepAdaptor_Surface candidateSurface(candidate);
                     if(candidateSurface.GetType()!=GeomAbs_Plane) continue;
                     const auto resultPlane=candidateSurface.Plane();
                     if(resultPlane.Axis().Direction().IsParallel(expected.Axis().Direction(),1.e-5)
-                       && resultPlane.Distance(expected.Location())<=1.e-4) { changedTarget=candidate; break; }
+                       && resultPlane.Distance(expected.Location())<=1.e-4) { changedTarget=candidate; ++targetMatches; }
                 }
                 if(changedTarget.IsNull()) { lastFailure=QStringLiteral("the requested rotated target plane was not present in the result."); continue; }
-                if(!preservesTopologyAndSupports(solid,result,face,expected,validationError)) {
+                if(modifiedTarget && targetMatches!=1) {
+                    lastFailure=QStringLiteral("the aligned target split into ambiguous patches."); continue;
+                }
+                if(!BRepReconstruction::supports(solid,result,face,expected,validationError)) {
                     lastFailure=validationError; continue;
                 }
                 if(modifiedTarget) *modifiedTarget=changedTarget;

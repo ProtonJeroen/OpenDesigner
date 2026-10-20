@@ -222,7 +222,7 @@ bool CadViewport::previewFaceTransform(double value) {
                             && commandSession_->kind!=CommandSession::Kind::AlignFace)) return false;
     auto& session=*commandSession_;
     session.value=value;
-    if(session.kind==CommandSession::Kind::RotateFace && !session.valid) {
+    if(session.kind==CommandSession::Kind::RotateFace && faceAxisPicking_) {
         emit statusMessage(tr("Choose a valid rotation axis before previewing.")); return false;
     }
     if(session.kind==CommandSession::Kind::AlignFace && !session.hasReference) {
@@ -234,7 +234,7 @@ bool CadViewport::previewFaceTransform(double value) {
     if(session.kind==CommandSession::Kind::RotateFace)
         candidate=FaceTransformGeometry::rotate(before.shape,session.face,session.faceAxis,value,error);
     else candidate=FaceTransformGeometry::align(before.shape,session.face,session.referencePlane,session.coplanar,error);
-    const bool valid=!candidate.IsNull();
+    bool valid=!candidate.IsNull();
     if(session.kind==CommandSession::Kind::RotateFace) session.changed=valid && std::abs(value)>1.e-8;
     else {
         BRepAdaptor_Surface targetSurface(session.face);
@@ -245,7 +245,6 @@ bool CadViewport::previewFaceTransform(double value) {
         const double gap=session.referencePlane.Distance(targetPlane.Location());
         session.changed=valid && (angle>1.e-7 || (session.coplanar && gap>1.e-6));
     }
-    if(!session.preview.IsNull()) { context_->Remove(session.preview,Standard_False); session.preview.Nullify(); }
     auto& change=session.changes.front();
     change.faceChange.reset();
     session.candidate=candidate;
@@ -262,21 +261,11 @@ bool CadViewport::previewFaceTransform(double value) {
         after.baseMin=after.min; after.baseMax=after.max;
         change.afterMin=after.min; change.afterMax=after.max;
         change.faceChange=std::make_shared<FaceChange>(FaceChange{before,after});
-        session.preview=new AIS_Shape(candidate);
-        session.preview->SetLocalTransformation(before.orientation);
-        session.preview->SetColor(Quantity_Color(before.color.redF(),before.color.greenF(),before.color.blueF(),Quantity_TOC_RGB));
-        session.preview->SetTransparency(0.25);
-        context_->Erase(before.presentation,Standard_False);
-        context_->Display(session.preview,Standard_False);
-        context_->SetDisplayMode(session.preview,AIS_Shaded,Standard_False);
-        context_->Deactivate(session.preview);
-    } else {
-        context_->Display(before.presentation,Standard_False);
-        if(valid) session.candidate=before.shape;
-    }
+    } else if(valid) session.candidate=before.shape;
+    valid=presentFacePreview(before,session.changed,error);
     session.state=valid?CommandSession::State::Preview:CommandSession::State::Parameters;
     if(!valid) emit statusMessage(tr("Face operation refused: %1 Original geometry is unchanged.").arg(error));
-    view_->Redraw();
+    redrawFacePreview();
     return valid;
 }
 

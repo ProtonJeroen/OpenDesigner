@@ -7,6 +7,7 @@
 #include <QLineEdit>
 #include <QDoubleValidator>
 #include <QShortcut>
+#include <QAction>
 #include <QVBoxLayout>
 #include <QApplication>
 #include <QKeyEvent>
@@ -82,6 +83,16 @@ public:
 }
 
 CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
+    undoAction_=new QAction(tr("Undo"),this);
+    undoAction_->setObjectName(QStringLiteral("context.undo"));
+    undoAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Z));
+    redoAction_=new QAction(tr("Redo"),this);
+    redoAction_->setObjectName(QStringLiteral("context.redo"));
+    redoAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Y));
+    addAction(undoAction_); addAction(redoAction_);
+    connect(undoAction_,&QAction::triggered,this,&CadViewport::undoPull);
+    connect(redoAction_,&QAction::triggered,this,&CadViewport::redoPull);
+    updateHistoryActions();
     setAttribute(Qt::WA_NativeWindow);
     setAttribute(Qt::WA_PaintOnScreen);
     setAttribute(Qt::WA_NoSystemBackground);
@@ -210,7 +221,16 @@ bool CadViewport::updateCommandParameter(bool reportError) {
     bool ok = false;
     double value = QLocale().toDouble(dimensionNumber(dragDimension_->text()), &ok);
     if (!ok || !std::isfinite(value) || !dragDimension_->hasAcceptableInput()) {
-        if (reportError) emit statusMessage(tr("Enter a valid finite angle or distance before confirming."));
+        const bool faceCommand=commandSession_ && (commandSession_->kind==CommandSession::Kind::MoveFace
+            || commandSession_->kind==CommandSession::Kind::RotateFace || commandSession_->kind==CommandSession::Kind::AlignFace);
+        if(faceCommand) {
+            commandSession_->valid=false;
+            commandSession_->state=CommandSession::State::Parameters;
+            QString error;
+            presentFacePreview(*commandSession_->faceBefore,false,error);
+            redrawFacePreview();
+        }
+        if (reportError || faceCommand) emit statusMessage(tr("Enter a valid finite angle or distance before confirming."));
         return false;
     }
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Pull && primitivePullDragging_)
@@ -272,6 +292,7 @@ void CadViewport::closeCommandSession(bool confirm) {
         if (session.changes.size()>1) operation.groupedChanges = session.changes;
         undoStack_.push_back(operation);
         redoStack_.clear();
+        updateHistoryActions();
     }
     selectedPartIndices_ = session.selection;
     context_->ClearSelected(Standard_False);
@@ -289,7 +310,8 @@ void CadViewport::closeCommandSession(bool confirm) {
     commandPanel_->layout()->removeWidget(dragDimension_);
     dragDimension_->setParent(this);
     resetModelingTools();
-    view_->Redraw();
+    if(faceCommand) redrawFacePreview();
+    else view_->Redraw();
     setFocus();
     emit statusMessage(confirm ? tr("Transformation confirmed.") : tr("Transformation cancelled."));
 }
@@ -714,6 +736,7 @@ void CadViewport::pullSelectedFace() {
     if (changes.size() > 1) operation.groupedChanges = changes;
     undoStack_.push_back(operation);
     redoStack_.clear();
+    updateHistoryActions();
     hideFaceArrow();
     batchingPartUpdates_ = true;
     for (const auto& change : changes)
@@ -765,6 +788,7 @@ void CadViewport::rotateSelectedPart() {
     if (changes.size() > 1) operation.groupedChanges = changes;
     undoStack_.push_back(operation);
     redoStack_.clear();
+    updateHistoryActions();
     hideFaceArrow();
     context_->ClearSelected(Standard_False); // Face owners may refer to rebuilt geometry.
     batchingPartUpdates_ = true;
@@ -834,6 +858,7 @@ void CadViewport::movePartAlongSelectedFace() {
     afterMax[axis] += delta;
     undoStack_.push_back({index, beforeMin, beforeMax, afterMin, afterMax, boxes_[index].orientation, boxes_[index].orientation});
     redoStack_.clear();
+    updateHistoryActions();
     applyBoxBounds(index, afterMin, afterMax);
     emit statusMessage(tr("Part translated %1 mm; dimensions unchanged.").arg(distance));
 }
@@ -918,6 +943,10 @@ void CadViewport::applyBoxBounds(size_t index, const std::array<double, 3>& min,
         view_->Redraw();
     }
 }
+void CadViewport::updateHistoryActions() {
+    undoAction_->setEnabled(!undoStack_.empty());
+    redoAction_->setEnabled(!redoStack_.empty());
+}
 void CadViewport::undoPull() {
     cancelCommandSession();
     if (undoStack_.empty()) {
@@ -936,6 +965,7 @@ void CadViewport::undoPull() {
         refreshPartSelection();
     } else restorePullChange(change, false);
     redoStack_.push_back(change);
+    updateHistoryActions();
     emit statusMessage(tr("Modeling operation undone."));
 }
 void CadViewport::redoPull() {
@@ -956,6 +986,7 @@ void CadViewport::redoPull() {
         refreshPartSelection();
     } else restorePullChange(change, true);
     undoStack_.push_back(change);
+    updateHistoryActions();
     emit statusMessage(tr("Modeling operation redone."));
 }
 void CadViewport::fitAll() {
