@@ -2,11 +2,15 @@
 
 OpenDesigner is an open-source cross-platform 3D direct-modeling application inspired by classic CoCreate SolidDesigner.
 
-**Status:** v0.3.7 Native Save/Open prototype; not a packaged release.
+**Status:** v0.4.0 construction geometry prototype in development; not a packaged release.
 The supplied Delete Face and Unite seam cases were manually confirmed by the user
 on 2026-10-20. Native Save/Open and the cone/hole Pull fixes were tested and
 confirmed by the user on Fedora KDE on 2026-10-21. Automated regression coverage
 and remaining scope limits are documented below.
+
+Construction geometry adds independent Workplanes, Axes and Points with shared
+command sessions, Undo/Redo and native storage. Its new Fedora KDE workflow
+validation is pending; see [construction geometry](docs/CONSTRUCTION_GEOMETRY.md).
 
 ## Prototype features
 - Qt 6 desktop window with dockable Structure Browser
@@ -24,6 +28,8 @@ and remaining scope limits are documented below.
 - Unite, explicit-target Subtract and Intersect with validated results and Undo/Redo
 - Material-preserving Boolean seam cleanup and uniform geometry failure popups
 - Structure Browser with names, color, visibility and stable Boolean result selection
+- Independent Workplanes, Axes and Points with analytic creation methods, typed
+  selection, properties, Move/Rotate previews and shared Undo/Redo
 - Orbit, pan and zoom
 - Native `.odc` documents with File → New/Open/Save/Save As, exact B-Rep
   round-trips, Part metadata, placements and saved camera state
@@ -64,7 +70,7 @@ Selection shortcuts, explicit context actions and eligibility: [Selection and co
 Face removal, conservative reconstruction limits and shared geometry error
 popups: [Delete Face](docs/DELETE_FACE.md).
 
-Native document storage, `.odc` schema v1, transaction-safe Save/Open and
+Native document storage, `.odc` schemas v1/v2, transaction-safe Save/Open and
 round-trip tests: [Native documents](docs/NATIVE_DOCUMENTS.md).
 
 The v0.3.6 interaction workflow retains passive selection: click Faces, Alt+click Parts,

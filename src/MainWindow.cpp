@@ -22,7 +22,7 @@
 #include <QFileInfo>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.3.7");
+    setWindowTitle("OpenDesigner 0.4.0");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     connect(viewport_,&CadViewport::geometryOperationFailed,this,[this](const QString& operation,const QString& reason) {
@@ -47,6 +47,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     structure_->setEditTriggers(QAbstractItemView::EditKeyPressed | QAbstractItemView::DoubleClicked);
     structure_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     root_ = new QTreeWidgetItem(structure_, QStringList{tr("Assembly 1")});
+    constructionRoot_=new QTreeWidgetItem(structure_,QStringList{tr("Construction Geometry")});
+    constructionRoot_->setExpanded(true);
     auto* root = root_;
     root->setExpanded(true);
     dock->setWidget(structure_);
@@ -89,6 +91,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     edit->addAction(undoAction);
     edit->addAction(redoAction);
     auto* model = menuBar()->addMenu(tr("&Modeling"));
+    auto* constructionMenu=model->addMenu(tr("Construction Geometry"));
+    for(const auto kind:{Construction::Kind::Workplane,Construction::Kind::Axis,Construction::Kind::Point}) {
+        auto* group=constructionMenu->addMenu(Construction::kindName(kind));
+        for(const auto& definition:Construction::definitions()) if(definition.kind==kind) {
+            auto* action=group->addAction(definition.name);
+            action->setObjectName(QString("construction.method.%1").arg(int(definition.method)));
+            connect(action,&QAction::triggered,viewport_,[this,method=definition.method]{viewport_->startConstruction(method);});
+        }
+    }
     auto* boxAction = model->addAction(tr("Create &Box"));
     connect(boxAction, &QAction::triggered, viewport_, &CadViewport::addBox);
     auto* cylinderAction = model->addAction(tr("Create &Cylinder"));
@@ -158,7 +169,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.3.7 — Native OpenDesigner documents."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.4.0 — Native OpenDesigner documents."));
     });
     auto* toolbar = addToolBar(tr("Modeling"));
     connect(viewport_,&CadViewport::transformModesChanged,this,[interactiveMove,directMove,interactiveRotate](bool faceNormal,bool move,bool rotate) {
@@ -193,8 +204,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(viewport_, &CadViewport::partsChanged, this, [this] {
         if (!documentTransition_) markDocumentDirty();
     });
+    connect(viewport_, &CadViewport::constructionsChanged,this,[this] {
+        rebuildConstructionBrowser();if(!documentTransition_) markDocumentDirty();
+    });
+    connect(viewport_, &CadViewport::constructionSelectionChanged,this,[this](const QStringList& ids) {
+        const QSignalBlocker blocker(structure_);
+        for(int i=0;i<constructionRoot_->childCount();++i) {
+            auto* item=constructionRoot_->child(i);item->setSelected(ids.contains(item->data(0,Qt::UserRole).toString()));
+        }
+        if(ids.empty() && structure_->currentItem() && structure_->currentItem()->parent()==constructionRoot_) structure_->setCurrentItem(nullptr);
+    });
     connect(viewport_, &CadViewport::documentReplaced, this, [this] {
-        rebuildStructureBrowser();
+        rebuildStructureBrowser();rebuildConstructionBrowser();
     });
     // Rows retain their stable slot IDs. Boolean-consumed parts and undone
     // results are hidden rather than renumbering other browser references.
@@ -213,10 +234,22 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
     });
     connect(structure_, &QTreeWidget::itemChanged, this, [this,root](QTreeWidgetItem* item,int column) {
+        if(column==0 && item->parent()==constructionRoot_) {
+            const auto id=item->data(0,Qt::UserRole).toString();
+            for(const auto& object:viewport_->constructionObjects()) if(object.id==id) {
+                auto updated=object;updated.name=item->text(0);if(!viewport_->updateConstruction(updated)) rebuildConstructionBrowser();break;
+            }
+            return;
+        }
         if (column == 0 && item->parent() == root)
             viewport_->renamePart(item->data(0,Qt::UserRole).toULongLong(),item->text(0));
     });
     connect(structure_, &QTreeWidget::itemSelectionChanged, this, [this, root]() {
+        QStringList constructionIds;
+        for(auto* item:structure_->selectedItems()) if(item->parent()==constructionRoot_) constructionIds.push_back(item->data(0,Qt::UserRole).toString());
+        if(!constructionIds.empty()) {
+            viewport_->selectConstructions(constructionIds);return;
+        }
         std::vector<size_t> visibleIndices;
         for (auto* item : structure_->selectedItems()) {
             if (item->parent() != root) continue;
@@ -253,6 +286,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     };
     connect(structure_, &QTreeWidget::itemClicked, this,
             [this, root, setVisibility](QTreeWidgetItem* item, int column) {
+        if(item->parent()==constructionRoot_ && column==1) {
+            const auto id=item->data(0,Qt::UserRole).toString();
+            for(const auto& object:viewport_->constructionObjects()) if(object.id==id) {auto updated=object;updated.visible=!updated.visible;viewport_->updateConstruction(updated);break;}
+            return;
+        }
         if (item->parent() != root || column != 1) return;
         const size_t index = static_cast<size_t>(item->data(0, Qt::UserRole).toULongLong());
         const bool visible = !viewport_->isPartVisible(index);
@@ -261,7 +299,21 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(structure_, &QWidget::customContextMenuRequested, this,
             [this, root, setVisibility](const QPoint& pos) {
         auto* item = structure_->itemAt(pos);
-        if (!item || item->parent() != root) return;
+        if(!item) return;
+        if(item->parent()==constructionRoot_) {
+            QStringList ids;
+            if(item->isSelected()) for(auto* selected:structure_->selectedItems()) if(selected->parent()==constructionRoot_) ids.push_back(selected->data(0,Qt::UserRole).toString());
+            if(ids.empty()) ids.push_back(item->data(0,Qt::UserRole).toString());
+            viewport_->selectConstructions(ids);QMenu menu(structure_);
+            auto* rename=menu.addAction(tr("Rename (F2)"));
+            connect(rename,&QAction::triggered,this,[this,id=ids.front()] {
+                for(int i=0;i<constructionRoot_->childCount();++i) if(constructionRoot_->child(i)->data(0,Qt::UserRole).toString()==id) {
+                    structure_->setCurrentItem(constructionRoot_->child(i),0);structure_->editItem(constructionRoot_->child(i),0);break;
+                }
+            });
+            viewport_->populateConstructionMenu(menu);menu.exec(structure_->viewport()->mapToGlobal(pos));return;
+        }
+        if (item->parent() != root) return;
         QList<QTreeWidgetItem*> targets;
         if (item->isSelected()) {
             for (auto* selected : structure_->selectedItems())
@@ -278,7 +330,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         auto* hide = menu.addAction(targets.size() > 1 ? tr("Hide Selected Parts") : tr("Hide"));
         auto* show = menu.addAction(targets.size() > 1 ? tr("Show Selected Parts") : tr("Show"));
         menu.addSeparator();
-        auto* fit = menu.addAction(tr("Fit Selection"));
+        auto* fit = menu.addAction(tr("Fit Selected"));
         auto* chosen = menu.exec(structure_->viewport()->mapToGlobal(pos));
         if (chosen == select) {
             structure_->clearSelection();
@@ -320,7 +372,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 void MainWindow::updateWindowTitle() {
     const QString name = documentPath_.isEmpty()
         ? tr("Untitled") : QFileInfo(documentPath_).fileName();
-    setWindowTitle(tr("OpenDesigner 0.3.7 — %1%2").arg(name, documentDirty_ ? QStringLiteral(" *") : QString()));
+    setWindowTitle(tr("OpenDesigner 0.4.0 — %1%2").arg(name, documentDirty_ ? QStringLiteral(" *") : QString()));
 }
 
 void MainWindow::markDocumentDirty() {
@@ -421,6 +473,21 @@ void MainWindow::rebuildStructureBrowser() {
         item->setForeground(0, visible ? QBrush() : QBrush(QColor(Qt::gray)));
     }
     root_->setExpanded(true);
+}
+
+void MainWindow::rebuildConstructionBrowser() {
+    if(!constructionRoot_) return;
+    const QSignalBlocker blocker(structure_);
+    const auto children=constructionRoot_->takeChildren();qDeleteAll(children);
+    for(const auto& object:viewport_->constructionObjects()) {
+        auto* item=new QTreeWidgetItem(constructionRoot_,QStringList{object.name});
+        item->setData(0,Qt::UserRole,object.id);item->setFlags(item->flags()|Qt::ItemIsEditable);
+        item->setToolTip(0,Construction::kindName(object.kind)+(object.selectable?QString():tr(" — selection locked")));
+        item->setText(1,object.visible?QStringLiteral("👁"):QStringLiteral("—"));
+        item->setForeground(0,object.visible?QBrush():QBrush(QColor(Qt::gray)));
+        item->setSelected(viewport_->constructionSelection().contains(object.id));
+    }
+    constructionRoot_->setExpanded(true);
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {

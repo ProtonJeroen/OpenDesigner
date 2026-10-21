@@ -14,6 +14,40 @@
 - STEP, IGES, STL
 - GLB/glTF and FBX import/export
 
+## v0.4.0 — Workplanes, Axes & Points
+
+- [x] Context-menu Fit All without selection and Fit Selected for Faces, Parts and
+  construction objects; background access preserves the existing selection.
+
+- [x] Independent WP/AX/PT numbering, camera-facing viewport name labels,
+  selection-centered Workplane displays and two-point Axis overrun; saved display
+  offsets keep analytic reference origins unchanged.
+
+
+- [x] Independent construction objects with stable UUIDs, names, visibility and
+  selection locks; references are evaluated once with no persistent dependencies.
+- [x] Workplane, Axis and Point creation methods, explicit operand roles, analytic
+  B-Rep recognition and safe refusal of ambiguous/degenerate definitions.
+- [x] Midplane Workplane accepts two planar Faces, Workplanes or a mixed pair:
+  halfway between parallel planes or an explicitly chosen angle bisector for
+  wedge-like geometry. Normal reversal is independent of bisector choice.
+- [x] Workplane/Axis Move and Rotate with orange manipulators, numeric input,
+  temporary blue preview and the existing OK/Enter and Cancel/Esc lifecycle.
+- [x] Typed browser and viewport selection, context actions and one chronological
+  Undo/Redo history shared with existing solid operations.
+- [x] Single-file `.odc` schema v2 stores construction values and reads v0.3.7 v1
+  documents. Save retains sessions/history; New/Open rebuild both object groups.
+- [x] Geometry, metadata/migration and command/document regressions accompany the
+  implementation. Fedora KDE manual verification completed by the user.
+- [x] Workplane coordinate frames prepare for a future Sketch Editor; no sketches,
+  associative constraints or feature history are introduced.
+- Methods, definitions, storage and limits: [Construction geometry](CONSTRUCTION_GEOMETRY.md).
+
+The v0.4.0 scope is complete. The documented limits remain intentional follow-up
+work: nested assemblies, associative or persistent parametric dependencies,
+non-planar Workplanes, persistent subshape references, arbitrary surface fitting
+and the future Sketch Editor are not part of this release.
+
 ## v0.3.7 — Native documents
 
 - File → New/Open/Save/Save As and Ctrl+N/Ctrl+O/Ctrl+S use the native `.odc`

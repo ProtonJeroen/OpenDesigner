@@ -1,4 +1,4 @@
-# Selection and explicit modeling commands (v0.3.3–v0.3.6)
+# Selection and explicit modeling commands (v0.3.3–v0.4.0)
 
 Selection is passive. There is no Faces/Parts dropdown.
 
@@ -26,7 +26,7 @@ and cached history snapshots keep their existing semantics.
 
 This applies equally to the toolbar, Edit-menu and Ctrl+Z/Ctrl+Y actions, including
 when an active command's floating parameter editor has keyboard focus. Empty-space
-right click afterward opens only the Undo/Redo context menu. Selection is still
+right click afterward opens Undo/Redo and Fit All. Selection is still
 preserved on ordinary Cancel; history navigation deliberately requires a fresh
 selection. Regression coverage exercises Move Face, Rotate Face and Boolean Undo
 and Redo through all three entry points (with viewport and parameter-editor keyboard focus),
@@ -39,15 +39,21 @@ geometry restoration.
 Ordinary right click on selected geometry opens the menu for its existing type;
 Alt is unnecessary. It does not convert Part owners to Faces or clear selection.
 With no selection, right click can select a Face and open its menu. Background
-and unrelated-object right clicks do not replace an existing selection.
+and unrelated-object right clicks open the existing selection menu without
+replacing or clearing that selection.
 
-With **no selection**, right-clicking empty viewport space opens only **Undo
-(Ctrl+Z)** and **Redo (Ctrl+Y)**. These are the exact same QAction objects used
+With **no selection**, right-clicking empty viewport space offers **Undo
+(Ctrl+Z)**, **Redo (Ctrl+Y)** and **Fit All**. The history actions are the exact
+same QAction objects used
 by Edit and the toolbar, connected to the existing modeling history. Availability
 updates after every committed edit, Undo and Redo; empty stacks disable the
 corresponding action. Opening/dismissing the menu starts no modeling command.
-An existing selection is retained on background right-click (no background menu
-replaces its Face/Part menu). Active sessions and camera orbit/pan suppress the
+With a selection, **Fit Selected** is available in the Face, Part and construction
+menus, including when right-clicking empty space. Parts use their placed bounds;
+Faces use only the selected located Faces; construction objects use their finite
+display bounds. These actions change only the camera and retain selection,
+Undo/Redo and the document dirty state. Fit All uses the existing View command.
+Active sessions and camera orbit/pan suppress the
 context menu. Middle-button camera behavior is unchanged.
 
 
@@ -62,7 +68,7 @@ must validate as one closed solid before it can be committed. Rotate Face asks
 for a straight target edge
 or projected World X/Y/Z axis. Align Face asks for a separate planar reference
 and offers Coplanar/Parallel. Unsupported Face functions are absent.
-An unsupported Face with no available operations has no empty context menu.
+Fit Selected remains available even when a Face has no supported modeling operations.
 
 **Delete Face** is available for nonempty Face selections, including multiple
 Parts. It validates reconstruction after explicit activation and reports an
@@ -122,8 +128,28 @@ and keyboard focus in the floating editor. The user confirmed the Fedora KDE
 manual tests passed for v0.3.5 (2026-10-20).
 
 The selection-context suite also tests an actual background popup without any
-geometry/selection, exactly two shared history actions, shortcuts, empty and
+geometry/selection, the two shared history actions plus Fit All, shortcuts, empty and
 nonempty stack availability, execution of Undo/Redo, camera suppression and
-selection preservation. Existing Face/Part action and picking tests remain.
+selection preservation. Zoom regressions check Fit Selected for placed Parts,
+Faces, multiple Parts and construction Points, plus background access and
+unchanged selection/history/dirty state. Existing Face/Part picking tests remain.
 The user confirmed all tested v0.3.5 functionality on Fedora KDE, including the
 Unite riser, visible previews and context-menu refinements.
+
+## v0.4.0 construction selection
+
+Construction objects form an additional typed set, mapped by UUID to their AIS
+presentations and browser rows. Ordinary click/Ctrl selects these objects; Alt
+Part picking passes through them. Workplanes are picked on boundary/axis edges
+rather than the complete transparent face. Hidden/locked objects stay available
+for browser management but cannot supply geometry operands. A construction
+command explicitly arms Point/Vertex, Plane/Face, Axis, straight Edge, circular
+Edge or general Edge roles. Captured references are temporary analytic values;
+results retain no source dependencies. Undo/Redo/New/Open clear all typed sets.
+See [Construction geometry](CONSTRUCTION_GEOMETRY.md) for workflow and tests.
+
+Context zoom validation (2026-10-21): OpenDesigner and the selection/session
+test executable built successfully. `selection-context`, `native-document-sessions`
+and `construction-sessions` all passed (31.45 seconds), including placed Part/Face
+framing, multi-Part and construction Point framing, background menu access and
+selection/history/dirty-state preservation. `git diff --check` passed.

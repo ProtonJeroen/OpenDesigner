@@ -1,4 +1,4 @@
-# Command sessions and preview (v0.3.2–v0.3.5)
+# Command sessions and preview (v0.3.2–v0.4.0)
 
 Interactive Move Part (axis gizmo and orange face-normal arrow) and Rotate Part
 now have a temporary preview. Select geometry and explicitly choose its Modeling/context action to show a gizmo.
@@ -214,3 +214,15 @@ triangulation of every face, original visibility, display mode, transparency,
 replacement, invalid-input recovery and AIS object counts after Cancel/OK for
 all three commands. Existing real drag, numeric, Enter/Esc and selection tests
 remain enabled. Kernel shape/volume validation is unchanged.
+
+## v0.4.0 construction adapter
+
+`CommandSession::Kind::Construction` keeps typed reference values and a separate
+analytic candidate/presentation. The nonmodal ConstructionPanel edits roles and
+parameters, while viewport picking is routed to an explicitly armed operand.
+Move/Rotate arrows/rings update the candidate from the original frame. Release
+keeps the session open; OK creates one ConstructionChange in the existing
+chronological stacks, Cancel creates none. Property and deletion edits use the
+same history. History navigation clears construction/browser selection as well
+as Parts and subshapes. Save excludes pending candidates and retains the session.
+See [Construction geometry](CONSTRUCTION_GEOMETRY.md).

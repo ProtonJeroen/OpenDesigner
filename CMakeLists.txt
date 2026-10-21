@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(OpenDesigner VERSION 0.3.7 LANGUAGES CXX)
+project(OpenDesigner VERSION 0.4.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -50,6 +50,9 @@ set(OPENDESIGNER_LIBRARIES
     TKMath
     TKernel
 )
+add_library(OpenDesignerConstruction STATIC src/ConstructionGeometry.cpp src/ConstructionGeometry.h)
+target_include_directories(OpenDesignerConstruction PUBLIC src ${OpenCASCADE_INCLUDE_DIR})
+target_link_libraries(OpenDesignerConstruction PUBLIC ${OPENDESIGNER_LIBRARIES})
 add_library(OpenDesignerDeleteFaceGeometry STATIC src/DeleteFaceGeometry.cpp src/DeleteFaceGeometry.h
     src/PlanarFaceDeletion.cpp src/PlanarFaceDeletion.h)
 target_include_directories(OpenDesignerDeleteFaceGeometry PUBLIC src ${OpenCASCADE_INCLUDE_DIR})
@@ -69,9 +72,12 @@ install(TARGETS OpenDesigner RUNTIME DESTINATION bin)
 option(OPENDESIGNER_BUILD_TESTS "Build viewport pull regression tests" OFF)
 if(OPENDESIGNER_BUILD_TESTS)
     enable_testing()
+    add_executable(OpenDesignerConstructionTests tests/ConstructionGeometryTest.cpp)
+    target_link_libraries(OpenDesignerConstructionTests PRIVATE OpenDesignerConstruction)
+    add_test(NAME construction-geometry COMMAND OpenDesignerConstructionTests)
     add_executable(OpenDesignerNativeDocumentTests tests/NativeDocumentTest.cpp src/NativeDocument.cpp)
     target_include_directories(OpenDesignerNativeDocumentTests PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
-    target_link_libraries(OpenDesignerNativeDocumentTests PRIVATE ${OPENDESIGNER_LIBRARIES})
+    target_link_libraries(OpenDesignerNativeDocumentTests PRIVATE OpenDesignerConstruction)
     add_test(NAME native-document-roundtrip COMMAND OpenDesignerNativeDocumentTests)
     set_tests_properties(native-document-roundtrip PROPERTIES TIMEOUT 60)
 
@@ -112,7 +118,7 @@ if(OPENDESIGNER_BUILD_TESTS)
     target_link_libraries(OpenDesignerMoveFaceTests PRIVATE ${OPENDESIGNER_LIBRARIES})
     add_test(NAME move-face COMMAND OpenDesignerMoveFaceTests)
     add_executable(OpenDesignerSelectionContextTests
-        tests/SelectionContextTest.cpp tests/NativeDocumentSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
+        tests/SelectionContextTest.cpp tests/NativeDocumentSessionTest.cpp tests/ConstructionSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
         src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
         src/MoveFace.cpp src/FaceOperations.cpp src/FaceTransformGeometry.cpp
         src/FaceTransformGeometry.h src/SelectionContext.cpp src/MoveFaceGeometry.h src/BRepReconstruction.cpp src/MoveFaceGeometry.cpp)
@@ -120,6 +126,8 @@ if(OPENDESIGNER_BUILD_TESTS)
     target_link_libraries(OpenDesignerSelectionContextTests PRIVATE ${OPENDESIGNER_LIBRARIES})
     add_test(NAME selection-context COMMAND OpenDesignerSelectionContextTests)
     add_test(NAME native-document-sessions COMMAND OpenDesignerSelectionContextTests --documents)
+    add_test(NAME construction-sessions COMMAND OpenDesignerSelectionContextTests --construction)
+    set_tests_properties(construction-sessions PROPERTIES TIMEOUT 120)
     set_tests_properties(native-document-sessions PROPERTIES TIMEOUT 120)
     add_executable(OpenDesignerFaceTransformTests tests/FaceTransformTest.cpp src/FaceTransformGeometry.cpp
         src/BRepReconstruction.cpp src/MoveFaceGeometry.cpp)
@@ -155,8 +163,8 @@ endif()
 # Keep document snapshot capture linked wherever the viewport is exercised.
 foreach(viewport_target OpenDesigner OpenDesignerPullTests OpenDesignerBooleanTests OpenDesignerMoveFaceTests OpenDesignerSelectionContextTests OpenDesignerDebugModelTests OpenDesignerDeleteFaceTests)
     if(TARGET ${viewport_target})
-        target_sources(${viewport_target} PRIVATE src/DebugExport.cpp src/DeleteFace.cpp src/ModelingErrors.cpp src/NativeDocument.cpp)
-        target_link_libraries(${viewport_target} PRIVATE OpenDesignerDeleteFaceGeometry OpenDesignerDebug)
+        target_sources(${viewport_target} PRIVATE src/DebugExport.cpp src/DeleteFace.cpp src/ModelingErrors.cpp src/NativeDocument.cpp src/ConstructionTools.cpp src/ConstructionPanel.cpp)
+        target_link_libraries(${viewport_target} PRIVATE OpenDesignerDeleteFaceGeometry OpenDesignerDebug OpenDesignerConstruction)
     endif()
 endforeach()
 install(TARGETS OpenDesignerDebugModel RUNTIME DESTINATION bin)

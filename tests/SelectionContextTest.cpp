@@ -140,7 +140,7 @@ struct SelectionContextTest {
                 for(const auto& ring:v.rotationRings_) require(ring.IsNull(),"history retained rotation rings");
                 require(v.multiFaceParts_.empty()&&!v.commandPanel_->isVisible()&&!v.dragDimension_->isVisible(),"history retained command UI or subshape references");
                 std::unique_ptr<QMenu> menu(v.createSelectionMenu(QPoint(-20,-20)));
-                require(menu&&menu->actions().size()==2&&menu->actions()[0]==v.undoAction()&&menu->actions()[1]==v.redoAction(),"history did not restore background Undo/Redo menu");
+                require(menu&&menu->actions().size()==4&&menu->actions()[0]==v.undoAction()&&menu->actions()[1]==v.redoAction(),"history did not restore background Undo/Redo menu");
                 require(popup(v,QPoint(-20,-20)),"empty-space right click after history did not open a menu");
             };
             // Undo while a separate unconfirmed Move candidate is visible.
@@ -161,7 +161,32 @@ struct SelectionContextTest {
             require(v.boxes_[0].name==before.name&&v.boxes_[0].color==before.color,"history lost source Part properties");
         }
     }
+    static void zoomMenus() {
+        MainWindow window;window.show();QApplication::processEvents();auto& v=*window.findChild<CadViewport*>();
+        v.addBox();v.addBox();
+        auto& part=v.boxes_[0];part.orientation.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),0.4);
+        part.orientation.SetTranslationPart(gp_Vec(500,200,100));part.presentation->SetLocalTransformation(part.orientation);
+        v.selectParts({});const auto title=window.windowTitle();
+        const auto undo=v.undoStack_.size(),redo=v.redoStack_.size();
+        std::unique_ptr<QMenu> background(v.createSelectionMenu(QPoint(-20,-20)));
+        require(action(*background,"context.fit_all")->text()=="Fit All" && !background->findChild<QAction*>("context.fit_selected"),"wrong empty-selection zoom menu");
+        action(*background,"context.fit_all")->trigger();const double allScale=v.view_->Camera()->Scale();
+        v.selectParts({0});const auto partOwners=owners(v);
+        std::unique_ptr<QMenu> selected(v.createSelectionMenu(QPoint(-20,-20)));
+        require(action(*selected,"context.fit_selected")->text()=="Fit Selected" && !selected->findChild<QAction*>("context.fit_all"),"wrong selected zoom menu");
+        action(*selected,"context.fit_selected")->trigger();
+        require(v.view_->Camera()->Scale()<allScale && v.view_->Camera()->Center().Distance(gp_Pnt(50,40,30).Transformed(part.orientation))<1.e-3,"Fit Selected did not frame the located Part");
+        require(owners(v)==partOwners && popup(v,QPoint(-20,-20)),"Part background zoom menu lost selection");
+        chooseFace(v,0,topFace(part.shape));const auto faceOwners=owners(v);
+        selected.reset(v.createSelectionMenu(QPoint(-20,-20)));action(*selected,"context.fit_selected")->trigger();
+        require(v.view_->Camera()->Center().Distance(gp_Pnt(50,40,60).Transformed(part.orientation))<1.e-3,"Face zoom framed whole Part or applied placement incorrectly");
+        require(owners(v)==faceOwners && popup(v,QPoint(-20,-20)),"Face background zoom menu lost selection");
+        v.selectParts({0,1});selected.reset(v.createSelectionMenu(QPoint()));
+        action(*selected,"context.fit_selected")->trigger();require(v.view_->Camera()->Scale()>allScale*0.8,"multi-Part zoom ignored some selected geometry");
+        require(v.undoStack_.size()==undo && v.redoStack_.size()==redo && window.windowTitle()==title && !v.commandSession_,"zoom mutated document/history or started a modeling command");
+    }
     static void run() {
+        zoomMenus();
         MainWindow window; window.show(); QApplication::processEvents();
         auto& v=*window.findChild<CadViewport*>();
         auto* tree=window.findChild<QTreeWidget*>(); auto* root=tree->topLevelItem(0);
@@ -169,7 +194,7 @@ struct SelectionContextTest {
         // The background uses the same QAction objects as Edit/toolbar, not a
         // second history or a modeling command.
         std::unique_ptr<QMenu> background(v.createSelectionMenu(QPoint(5,5)));
-        require(background && background->actions().size()==2,"missing background history menu");
+        require(background && background->actions().size()==4,"missing background history menu");
         require(background->actions()[0]==v.undoAction() && background->actions()[1]==v.redoAction(),"history actions were duplicated");
         require(!v.undoAction()->isEnabled() && !v.redoAction()->isEnabled(),"empty history actions enabled");
         require(v.undoAction()->shortcut()==QKeySequence(Qt::CTRL|Qt::Key_Z)
@@ -190,14 +215,14 @@ struct SelectionContextTest {
         click(v,p0); idle(); require(v.selectionContext().kind==CadViewport::SelectionContext::Kind::Faces,"default click not Face");
         const auto faceOwners=owners(v);
         require(popup(v,p0) && owners(v)==faceOwners,"selected Face context menu changed selection");
-        require(!popup(v,QPoint(-20,-20)) && owners(v)==faceOwners,"background cleared selected Face");
+        require(popup(v,QPoint(-20,-20)) && owners(v)==faceOwners,"background menu lost selected Face");
         click(v,p1,Qt::ControlModifier); idle(); require(v.selectionContext().faces.size()==2,"Ctrl did not add Face");
         click(v,p0,Qt::AltModifier); click(v,p1,Qt::AltModifier|Qt::ControlModifier); idle();
         require(v.selectedPartIndices_==std::vector<size_t>({0,1}),"Alt/Ctrl+Alt Part selection failed");
         const auto selected=owners(v);
         QKeyEvent altRelease(QEvent::KeyRelease,Qt::Key_Alt,Qt::NoModifier); QApplication::sendEvent(&v,&altRelease);
         require(owners(v)==selected && popup(v,p0) && owners(v)==selected,"Alt release/right click changed Part selection");
-        require(!popup(v,QPoint(-20,-20)) && owners(v)==selected,"background cleared/replaced existing selection");
+        require(popup(v,QPoint(-20,-20)) && owners(v)==selected,"background menu cleared/replaced existing selection");
         std::unique_ptr<QMenu> parts(v.createSelectionMenu(p0)); action(*parts,"context.move_part")->trigger();
         require(v.directMoveMode_ && !v.moveAxes_[0].IsNull() && v.rotationRings_[0].IsNull(),"explicit Move activation failed");
         QKeyEvent emptyConfirm(QEvent::KeyPress,Qt::Key_Return,Qt::NoModifier); QApplication::sendEvent(&v,&emptyConfirm); idle();
@@ -336,6 +361,7 @@ struct SelectionContextTest {
 
 };
 void runNativeDocumentSessions();
+void runConstructionSessions();
 int main(int argc,char** argv) {
 #if defined(Q_OS_LINUX)
     if(qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM") && !qEnvironmentVariableIsEmpty("DISPLAY"))qputenv("QT_QPA_PLATFORM","xcb");
@@ -344,6 +370,7 @@ int main(int argc,char** argv) {
     QApplication app(argc,argv);
     try {
         if(app.arguments().contains("--documents")) runNativeDocumentSessions();
+        else if(app.arguments().contains("--construction")) runConstructionSessions();
         else { SelectionContextTest::run(); SelectionContextTest::historyDeselect(); }
         std::cout<<"Selection, command lifecycle and document checks passed.\n";return 0;
     }
