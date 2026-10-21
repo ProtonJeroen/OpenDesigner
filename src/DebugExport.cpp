@@ -18,12 +18,23 @@ int faceIndex(const TopoDS_Shape& shape,const TopoDS_Face& face) {
 }
 }
 QJsonObject CadViewport::debugCommand(const CommandSession& session) const {
-    static const char* names[]={"Move Part","Rotate Part","Move Face","Rotate Face","Align Face","Boolean","Primitive Pull","Delete Face"};
+    static const char* names[]={"Move Part","Rotate Part","Move Face","Rotate Face","Align Face","Boolean","Primitive Pull","Delete Face","Construction"};
     QJsonArray parts;for(auto index:session.selection) parts.append(QString::number(index));
     QJsonObject operation{{"name",names[static_cast<int>(session.kind)]},{"partIds",parts},
         {"value",session.value},{"valueUnit",session.kind==CommandSession::Kind::Rotate||session.kind==CommandSession::Kind::RotateFace?"degrees":"mm"},
         {"validPreview",session.valid},{"changed",session.changed},
         {"worldPivot",vector(session.pivot.XYZ())},{"worldDirection",vector(session.direction.XYZ())}};
+    if(session.construction) {
+        operation["constructionMethod"]=Construction::definition(session.construction->request.method).name;
+        operation["constructionId"]=session.construction->candidate.id;
+        operation["constructionOrigin"]=vector(session.construction->candidate.frame.Location().XYZ());
+        operation["constructionNormal"]=vector(session.construction->candidate.frame.Direction().XYZ());
+        operation["constructionX"]=vector(session.construction->candidate.frame.XDirection().XYZ());
+        operation["inputVector"]=vector(session.construction->request.vector.XYZ());
+        operation["inputAngles"]=vector(session.construction->request.angles.XYZ());
+        operation["inputValue"]=session.construction->request.value;
+        operation["alternativeBisector"]=session.construction->request.alternativeBisector;
+    }
     operation["state"]=static_cast<int>(session.state);
     operation["worldDelta3x4"]=transform(session.delta);
     if(session.faceBefore) {

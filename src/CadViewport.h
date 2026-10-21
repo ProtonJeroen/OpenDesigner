@@ -16,6 +16,7 @@ class QLabel;
 class QContextMenuEvent;
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
+#include <AIS_TextLabel.hxx>
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Face.hxx>
 #include <gp_Trsf.hxx>
@@ -26,6 +27,9 @@ class QContextMenuEvent;
 #include <Aspect_DisplayConnection.hxx>
 #include <vector>
 #include <array>
+#include <map>
+#include <QStringList>
+class ConstructionPanel;
 #include "NativeDocument.h"
 
 class CadViewport final : public QWidget {
@@ -36,6 +40,14 @@ public:
     bool exportDocumentSnapshot(NativeDocumentSnapshot& snapshot) const;
     bool importDocumentSnapshot(const NativeDocumentSnapshot& snapshot, QString& error);
     void resetDocument();
+    const std::vector<Construction::Object>& constructionObjects() const { return constructions_; }
+    const QStringList& constructionSelection() const { return selectedConstructionIds_; }
+    void startConstruction(Construction::Method method,const QString& targetId = {});
+    void selectConstructions(const QStringList& ids);
+    bool updateConstruction(const Construction::Object& object);
+    void deleteConstructions(const QStringList& ids);
+    void fitConstructions(const QStringList& ids);
+    void populateConstructionMenu(QMenu& menu);
     size_t partSlotCount() const { return boxes_.size(); }
     void addBox();
     void addCylinder();
@@ -87,6 +99,8 @@ signals:
     void selectionModeChanged(SelectionMode mode);
     void transformModesChanged(bool faceNormalMove, bool move, bool rotate);
     void documentReplaced();
+    void constructionsChanged();
+    void constructionSelectionChanged(const QStringList& ids);
 protected:
     QPaintEngine* paintEngine() const override;
     void paintEvent(QPaintEvent*) override;
@@ -98,6 +112,7 @@ protected:
     void contextMenuEvent(QContextMenuEvent*) override;
     bool eventFilter(QObject*, QEvent*) override;
 private:
+    friend struct ConstructionSessionTest;
     friend struct CadViewportPullTest;
     friend struct NativeDocumentSessionTest;
     friend struct BooleanOperationsTest;
@@ -107,10 +122,11 @@ private:
     friend struct DeleteFaceTest;
     struct SelectedFace { size_t partIndex; TopoDS_Face face; };
     struct SelectionContext {
-        enum class Kind { None, Parts, Faces };
+        enum class Kind { None, Parts, Faces, Constructions };
         Kind kind = Kind::None;
         std::vector<size_t> parts;
         std::vector<SelectedFace> faces;
+        QStringList constructions;
     };
     QAction* undoAction_ = nullptr;
     QAction* redoAction_ = nullptr;
@@ -166,9 +182,19 @@ private:
         QJsonObject debugOperation;
     };
     struct FaceChange { CadPart before, after; };
+    struct ConstructionChange { std::vector<Construction::Object> before, after; };
+    struct ConstructionChoice { QString key, label, objectId; Construction::Reference reference; };
+    struct ConstructionSessionState {
+        Construction::Request request;
+        Construction::Object candidate;
+        QString targetId;
+        QStringList selection;
+        std::vector<std::vector<ConstructionChoice>> choices;
+        int pickRole = -1;
+    };
     struct PullChange {
         // Optional diagnostic data; history remains authoritative for Undo/Redo.
-        size_t partIndex;
+        size_t partIndex = 0;
         std::array<double, 3> beforeMin, beforeMax;
         std::array<double, 3> afterMin, afterMax;
         gp_Trsf beforeOrientation, afterOrientation;
@@ -178,6 +204,7 @@ private:
         double beforeBaseOffset = 0.0, afterBaseOffset = 0.0;
         ConeParameters beforeCone, afterCone;
         std::vector<PullChange> groupedChanges;
+        std::shared_ptr<ConstructionChange> constructionChange;
         std::shared_ptr<BooleanChange> booleanChange;
         std::shared_ptr<FaceChange> faceChange;
         QJsonObject debugOperation;
@@ -185,7 +212,8 @@ private:
     // Transaction state only: confirmed changes use the existing modeling history.
     struct CommandSession {
         enum class State { Selection, Parameters, Preview, Confirmed, Cancelled };
-        enum class Kind { Move, Rotate, MoveFace, RotateFace, AlignFace, Boolean, Pull, DeleteFace };
+        enum class Kind { Move, Rotate, MoveFace, RotateFace, AlignFace, Boolean, Pull, DeleteFace, Construction };
+        std::shared_ptr<ConstructionSessionState> construction;
         State state = State::Selection;
         Kind kind = Kind::Move;
         std::vector<PullChange> changes;
@@ -216,6 +244,39 @@ private:
         bool keepTools = false, chooseTarget = false;
         std::shared_ptr<BooleanChange> booleanChange;
     };
+    std::vector<Construction::Object> constructions_;
+    std::map<QString,Handle(AIS_Shape)> constructionPresentations_;
+    std::map<QString,Handle(AIS_TextLabel)> constructionLabels_;
+    Handle(AIS_TextLabel) constructionPreviewLabel_;
+    std::array<int,3> constructionNameCounters_{};
+    QStringList selectedConstructionIds_;
+    ConstructionPanel* constructionPanel_ = nullptr;
+    std::vector<Handle(AIS_Shape)> constructionHandles_;
+    int constructionDragAxis_ = -1;
+    QPoint constructionDragStart_;
+    gp_Vec constructionDragBefore_;
+    double constructionDragValue_ = 0.0, constructionLastAngle_ = 0.0, constructionAccumulatedAngle_ = 0.0;
+    double constructionHandleLength_ = 30.0;
+    bool constructionRotating_ = false;
+    const Construction::Object* constructionObject(const QString& id) const;
+    Handle(AIS_Shape) constructionPresentation(const Construction::Object& object,bool preview=false) const;
+    Handle(AIS_TextLabel) constructionLabel(const Construction::Object& object,bool preview=false) const;
+    void updateConstructionLabels();
+    void rebuildConstructionPresentations();
+    void restoreConstructions(const std::vector<Construction::Object>& objects);
+    bool commitConstructions(const std::vector<Construction::Object>& objects);
+    bool previewConstruction();
+    void closeConstructionSession(bool confirm);
+    bool constructionMousePress(const QPoint& point,Qt::KeyboardModifiers modifiers);
+    bool constructionMouseMove(const QPoint& point,Qt::KeyboardModifiers modifiers);
+    void constructionMouseRelease();
+    void chooseConstructionRole(size_t role);
+    bool captureConstructionReference(const QPoint& point);
+    bool acceptConstructionChoice(size_t role,const QString& key);
+    void displayConstructionHandles();
+    void clearConstructionHandles();
+    double constructionCursorAngle(const QPoint& point) const;
+    void restoreConstructionPicker();
     QJsonObject debugCommand(const CommandSession& session) const;
     std::optional<CommandSession> commandSession_;
     QWidget* commandPanel_ = nullptr;

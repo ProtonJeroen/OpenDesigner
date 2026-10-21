@@ -1,6 +1,6 @@
 # Native OpenDesigner documents
 
-OpenDesigner 0.3.7 stores native documents as a single `.odc` file. The file is
+OpenDesigner stores native documents as a single `.odc` file. The file is
 an OCCT XCAF document written by the BinXCAF driver. Parts keep their exact
 local B-Rep; no display tessellation is used as a source for Save/Open.
 
@@ -66,3 +66,23 @@ recognition are synchronous. General curved/freeform reconstruction retains the
 limits of the existing modeling solvers; recognition does not make an
 unsupported edit safe. Windows/macOS runtime validation and portable application
 packaging remain outstanding.
+
+## v0.4.0 construction extension
+
+Current writes use schema v2; the reader also accepts v0.3.7 schema v1 and
+initializes an empty construction collection. Schema v2 retains exact Part
+geometry/properties and camera and adds independent Workplane/Axis/Point
+metadata in the same BinXCAF file. Its root marker and explicit version prevent
+legacy readers from silently discarding these records. Unknown schemas and
+malformed construction frames, flags and duplicate document IDs are refused.
+Save captures confirmed construction values even while an editing preview is
+active. Save/Save As retain construction selection and history; New/Open reset
+and rebuild both Parts and construction objects. See
+[Construction geometry](CONSTRUCTION_GEOMETRY.md) for the schema and tests.
+
+Construction presentation metadata additionally stores a local display offset
+separately from the analytic origin, plus per-type WP/AX/PT name counters on the
+construction group. Earlier v2 files without these optional attributes retain
+zero display offsets and infer their counters from existing names. All data stays
+in the single `.odc` file. Viewport text labels are rebuilt from object names and
+camera state; no AIS objects or screen positions are serialized.

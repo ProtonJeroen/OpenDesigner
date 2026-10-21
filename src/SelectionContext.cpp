@@ -14,6 +14,8 @@
 #include <TopoDS.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <TopExp_Explorer.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
 #include <Standard_Failure.hxx>
 #include <exception>
 #include <algorithm>
@@ -25,6 +27,12 @@ CadViewport::SelectionContext CadViewport::selectionContext() const {
     bool faces=false,parts=false;
     for (context_->InitSelected();context_->MoreSelected();context_->NextSelected()) {
         const auto object=context_->SelectedInteractive();
+        bool construction=false;
+        for(const auto& [id,presentation]:constructionPresentations_) if(presentation==object) {
+            if(const auto* state=constructionObject(id);state && state->visible && state->selectable) result.constructions.push_back(id);
+            construction=true;break;
+        }
+        if(construction) continue;
         size_t index=0;
         while(index<boxes_.size() && boxes_[index].presentation!=object) ++index;
         if (!isPartVisible(index)) return {};
@@ -38,6 +46,10 @@ CadViewport::SelectionContext CadViewport::selectionContext() const {
             if(!member) return {}; // Never offer an edit for stale topology.
             result.faces.push_back({index,face}); faces=true;
         } else parts=true;
+    }
+    if(!result.constructions.empty()) {
+        if(faces || parts) return {};
+        result.kind=SelectionContext::Kind::Constructions;return result;
     }
     if(!faces && !parts) {
         // Some existing Undo paths refresh geometry before restoring OCCT owners.
@@ -108,9 +120,25 @@ QMenu* CadViewport::createSelectionMenu(const QPoint& anchor) {
     if(selection.kind==SelectionContext::Kind::None) {
         updateHistoryActions();
         menu->addAction(undoAction_); menu->addAction(redoAction_);
+        menu->addSeparator();
+        auto* fit=menu->addAction(tr("Fit All"));fit->setObjectName("context.fit_all");
+        connect(fit,&QAction::triggered,this,&CadViewport::fitAll);
     }
     else if(selection.kind==SelectionContext::Kind::Parts) populatePartMenu(*menu,selection);
+    else if(selection.kind==SelectionContext::Kind::Constructions) populateConstructionMenu(*menu);
     else populateFaceMenu(*menu,selection,anchor);
+    if(selection.kind==SelectionContext::Kind::Parts || selection.kind==SelectionContext::Kind::Faces) {
+        menu->addSeparator();
+        auto* fit=menu->addAction(tr("Fit Selected"));fit->setObjectName("context.fit_selected");
+        connect(fit,&QAction::triggered,this,[this,selection] {
+            if(selection.kind==SelectionContext::Kind::Parts) {fitSelection(selection.parts);return;}
+            Bnd_Box bounds;
+            for(const auto& selected:selection.faces) if(isPartVisible(selected.partIndex))
+                BRepBndLib::Add(selected.face.Moved(TopLoc_Location(boxes_[selected.partIndex].orientation)),bounds,Standard_False);
+            if(bounds.IsVoid() || view_.IsNull()) return;
+            view_->FitAll(bounds,0.1,Standard_False);view_->ZFitAll();updateConstructionLabels();view_->Redraw();
+        });
+    }
     if(menu->isEmpty()) { delete menu; return nullptr; }
     return menu;
 }
@@ -153,6 +181,12 @@ void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection
         remove->setObjectName(QStringLiteral("context.delete_face"));
         connect(remove,&QAction::triggered,this,&CadViewport::deleteFace);
     }
+    if(selection.faces.size()==2 && std::all_of(selection.faces.begin(),selection.faces.end(),[](const auto& selected) {
+        return BRepAdaptor_Surface(selected.face).GetType()==GeomAbs_Plane;
+    })) {
+        auto* midplane=menu.addAction(tr("Midplane Workplane"));midplane->setObjectName("context.midplane");
+        connect(midplane,&QAction::triggered,this,[this]{startConstruction(Construction::Method::PlaneMidplane);});
+    }
     auto* move=menu.addAction(tr("Move Face"));move->setObjectName(QStringLiteral("context.move_face"));
     QString error=tr("Select exactly one supported planar face.");gp_Pnt center;gp_Dir direction;
     const bool supported=selection.faces.size()==1 && MoveFaceGeometry::reference(
@@ -167,6 +201,20 @@ void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection
         auto* align=menu.addAction(tr("Align Face"));
         align->setObjectName(QStringLiteral("context.align_face"));
         connect(align,&QAction::triggered,this,&CadViewport::alignFace);
+    }
+    if(selection.faces.size()==1) {
+        const BRepAdaptor_Surface surface(selection.faces.front().face);
+        if(surface.GetType()==GeomAbs_Plane || surface.GetType()==GeomAbs_Cylinder) {
+            auto* construction=menu.addMenu(tr("Construction Geometry"));
+            const auto add=[&](const QString& text,Construction::Method method) {
+                auto* action=construction->addAction(text);
+                connect(action,&QAction::triggered,this,[this,method]{startConstruction(method);});
+            };
+            if(surface.GetType()==GeomAbs_Plane) {
+                add(tr("Workplane from Face"),Construction::Method::PlaneFace);
+                add(tr("Offset Workplane"),Construction::Method::PlaneOffset);
+            } else add(tr("Axis from Cylinder"),Construction::Method::AxisCylinder);
+        }
     }
     auto* resize=menu.addAction(tr("Pull / Resize"));resize->setObjectName(QStringLiteral("context.resize"));
     if(!supportsResize(selection)) { delete resize; return; }
@@ -185,23 +233,11 @@ void CadViewport::contextMenuEvent(QContextMenuEvent* event) {
         if(context_->HasDetected()) {
             selectedPartIndices_.clear(); context_->SelectDetected(AIS_SelectionScheme_Replace);
             selection=selectionContext(); emit partSelectionChanged(selection.parts);
+            selectedConstructionIds_=selection.constructions;emit constructionSelectionChanged(selectedConstructionIds_);
         }
     }
-    if(selection.kind!=SelectionContext::Kind::None && event->reason()==QContextMenuEvent::Mouse) {
-        context_->MoveTo(event->pos().x(),event->pos().y(),view_,Standard_True);
-        if(!context_->HasDetected()) return;
-        const auto object=context_->DetectedInteractive();
-        bool selected=false;
-        if(selection.kind==SelectionContext::Kind::Parts) {
-            for(const auto i:selection.parts) if(boxes_[i].presentation==object) selected=true;
-        } else {
-            const auto owner=Handle(StdSelect_BRepOwner)::DownCast(context_->DetectedOwner());
-            if(!owner.IsNull()) for(const auto& face:selection.faces)
-                if(boxes_[face.partIndex].presentation==object &&
-                   (face.face.IsSame(owner->Shape()) || (!owner->Shape().IsNull() && owner->Shape().ShapeType()!=TopAbs_FACE))) selected=true;
-        }
-        if(!selected) return; // Right-click never replaces or clears a selection.
-    }
+    // An existing selection owns the menu everywhere, including empty space.
+    // Right-click never replaces or clears it to provide the zoom action.
     std::unique_ptr<QMenu> menu(createSelectionMenu(event->pos()));
     if(menu) menu->exec(event->globalPos());
 }

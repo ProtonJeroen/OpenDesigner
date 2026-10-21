@@ -12,6 +12,7 @@ public:
     explicit MainWindow(QWidget* parent = nullptr);
 private:
     friend struct NativeDocumentSessionTest;
+    friend struct ConstructionSessionTest;
     bool maybeSave();
     bool saveDocument();
     bool saveDocumentAs();
@@ -20,9 +21,11 @@ private:
     void markDocumentDirty();
     void updateWindowTitle();
     void rebuildStructureBrowser();
+    void rebuildConstructionBrowser();
     CadViewport* viewport_ = nullptr;
     QTreeWidget* structure_ = nullptr;
     QTreeWidgetItem* root_ = nullptr;
+    QTreeWidgetItem* constructionRoot_ = nullptr;
     QString documentPath_;
     bool documentDirty_ = false;
     bool documentTransition_ = false;
