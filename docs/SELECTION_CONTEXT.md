@@ -54,8 +54,12 @@ context menu. Middle-button camera behavior is unchanged.
 Part menus provide Move Part, Rotate Part, Duplicate, supported Boolean
 operations, Hide and Color. Hidden Parts can still be shown through the Structure
 Browser. Face menus contain only supported operations: Move Face, Rotate Face
-and Align Face for accepted planar analytic B-Reps, plus Primitive Pull / Resize
-for supported primitive/Box faces. Rotate Face asks for a straight target edge
+and Align Face for accepted planar analytic B-Reps, plus Pull / Resize for
+recognized complete analytic primitives/boxes and cylindrical faces in a
+GeneralBRep, including holes. Capabilities are derived from the current B-Rep;
+creation history and primitive flags are not prerequisites. A requested offset
+must validate as one closed solid before it can be committed. Rotate Face asks
+for a straight target edge
 or projected World X/Y/Z axis. Align Face asks for a separate planar reference
 and offers Coplanar/Parallel. Unsupported Face functions are absent.
 An unsupported Face with no available operations has no empty context menu.

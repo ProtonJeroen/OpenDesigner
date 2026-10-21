@@ -5,9 +5,15 @@
 #include <QDoubleSpinBox>
 #include <QTimer>
 #include <QDialogButtonBox>
+#include <QMenu>
+#include <QTemporaryDir>
+#include <Graphic3d_ZLayerId.hxx>
+#include <Image_PixMap.hxx>
 #include <QPushButton>
 #include <QKeyEvent>
 #include <BRepPrimAPI_MakeCone.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <QLineEdit>
 #include <QLocale>
@@ -74,6 +80,19 @@ struct CadViewportPullTest {
                             Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
         v.mouseReleaseEvent(&release);
     }
+    static void requireRenderedArrow(const CadViewport& v, const gp_Pnt& grab) {
+        Image_PixMap pixels;
+        require(v.view_->ToPixMap(pixels,v.width(),v.height()),"cannot capture rendered Pull arrows");
+        const QPoint point=project(v,grab);
+        bool orange=false;
+        for (int x=point.x()-6;x<=point.x()+6;++x)
+            for (int y=point.y()-6;y<=point.y()+6;++y) {
+                const auto color=pixels.PixelColor(x,y).GetRGB();
+                orange=orange || (color.Red()>0.2 && color.Green()>0.05
+                    && color.Red()>1.15*color.Green() && color.Green()>1.5*color.Blue());
+            }
+        require(orange,"Pull arrow is hidden in the rendered viewport");
+    }
     static void pickSphere(CadViewport& v, size_t index) {
         // The center click also covers the screen-right radial fallback.
         click(v,project(v,center(v,index)));
@@ -88,6 +107,11 @@ struct CadViewportPullTest {
             gp_Vec(v.primitiveArrowDirection_)*15.0).Transformed(part.orientation);
         const QPoint screen = project(v,point);
         require(v.beginArrowDrag(screen), "pull arrow could not be grabbed");
+        require(v.dragDimension_->isVisible(), "pull dimension editor is not visible");
+        require(v.dragDimension_->parentWidget() == v.commandPanel_,
+                "pull dimension editor is outside the command panel");
+        require(v.commandPanel_->rect().contains(v.dragDimension_->geometry().center()),
+                "pull dimension editor is outside the command panel geometry");
         return screen;
     }
     static void release(CadViewport& v, const QPoint& screen) {
@@ -369,6 +393,62 @@ struct CadViewportPullTest {
         checkDimension(v,100.0,true);
     }
 
+    static void runCylindricalFace() {
+        CadViewport v;
+        v.resize(1000,800); v.show(); QApplication::processEvents();
+        v.addBox();
+        const auto tool=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(50,40,0),gp_Dir(0,0,1)),20,60).Shape();
+        v.boxes_[0].shape=BRepAlgoAPI_Cut(v.boxes_[0].shape,tool).Shape();
+        const auto originalShape=v.boxes_[0].shape;
+        v.boxes_[0].geometryKind=CadViewport::CadPart::GeometryKind::GeneralBRep;
+        v.boxes_[0].baseMin=v.boxes_[0].min; v.boxes_[0].baseMax=v.boxes_[0].max;
+        v.boxes_[0].presentation->SetShape(v.boxes_[0].shape);
+        v.context_->Redisplay(v.boxes_[0].presentation,Standard_False);
+        v.fitAll();
+        TopoDS_Face cylinderFace;
+        for(TopExp_Explorer it(v.boxes_[0].shape,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());
+            if(BRepAdaptor_Surface(face).GetType()==GeomAbs_Cylinder) {cylinderFace=face;break;}
+        }
+        require(!cylinderFace.IsNull(),"cylindrical hole face missing");
+        v.context_->ClearSelected(Standard_False);
+        v.context_->AddOrRemoveSelected(new StdSelect_BRepOwner(cylinderFace,v.boxes_[0].presentation,5,Standard_True),Standard_False);
+        std::unique_ptr<QMenu> menu(v.createSelectionMenu(QPoint(400,300)));
+        auto* resize=menu->findChild<QAction*>("context.resize");
+        require(resize,"general cylindrical face omitted Pull / Resize");
+        resize->trigger();
+        require(v.pullMode_ && v.cylindricalFacePull_ && v.arrowVisible_,"cylindrical Pull did not start");
+        const QPoint start=project(v,v.primitiveArrowOrigin_.Translated(gp_Vec(v.primitiveArrowDirection_)*15.0));
+        require(v.beginArrowDrag(start),"cylindrical Pull arrow could not be grabbed");
+        checkDimension(v,40.0,true);
+        dragBy(v,start,5.0);
+        checkDimension(v,50.0,true);
+        exact(v,50.0,true);
+        require(v.undoStack_.size()==1,"cylindrical Pull did not create one history entry");
+        bool radiusFound=false;
+        for(TopExp_Explorer it(v.boxes_[0].shape,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());
+            if(BRepAdaptor_Surface(face).GetType()==GeomAbs_Cylinder
+                && std::abs(BRepAdaptor_Surface(face).Cylinder().Radius()-25.0)<1.e-5) radiusFound=true;
+        }
+        require(radiusFound,"cylindrical Pull did not change the hole diameter");
+        require(BRepCheck_Analyzer(v.boxes_[0].shape).IsValid(),"cylindrical Pull produced invalid B-Rep");
+        v.undoPull();
+        require(v.boxes_[0].shape.IsSame(originalShape),"cylindrical Pull Undo path failed");
+
+        // A radius at or below the geometric limit is refused without
+        // replacing the source shape and leaves the editor available to cancel.
+        v.context_->AddOrRemoveSelected(new StdSelect_BRepOwner(cylinderFace,v.boxes_[0].presentation,5,Standard_True),Standard_False);
+        std::unique_ptr<QMenu> invalidMenu(v.createSelectionMenu(QPoint(400,300)));
+        invalidMenu->findChild<QAction*>("context.resize")->trigger();
+        const QPoint invalidStart=project(v,v.primitiveArrowOrigin_.Translated(gp_Vec(v.primitiveArrowDirection_)*15.0));
+        require(v.beginArrowDrag(invalidStart),"invalid cylindrical Pull session did not start");
+        require(!v.previewCommand(-19.995),"degenerate cylindrical Pull was accepted");
+        require(!v.commandSession_->geometryError.isEmpty(),"invalid cylindrical Pull did not explain the failure");
+        require(v.boxes_[0].shape.IsSame(originalShape),"invalid cylindrical Pull changed the source shape");
+        v.cancelCommandSession();
+    }
+
     using ConeTarget = CadViewport::ConePullTarget;
     static gp_Pnt coneEnd(const CadViewport& v, size_t index, bool top) {
         const auto& part = v.boxes_[index];
@@ -423,6 +503,108 @@ struct CadViewportPullTest {
         require(v.conePullTarget_ == target,"wrong cone arrow picked");
         return screen;
     }
+    static void runNativePull(CadViewport& v, const QString& suppliedPath = {}) {
+        NativeDocumentSnapshot snapshot;
+        QString error;
+        QTemporaryDir directory;
+        if (suppliedPath.isEmpty()) {
+            v.addCone();
+            v.boxes_[0].shape=BRepPrimAPI_MakeCone(40,16,80).Shape();
+            v.boxes_[0].conePrimitive=false; // Reproduce the early-v1 file.
+            gp_Trsf rotation; rotation.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(0,0,1)),0.2);
+            v.boxes_[0].orientation=rotation;
+            v.addBox();
+            const auto tool=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(175,40,0),gp_Dir(0,0,1)),19,60).Shape();
+            v.boxes_[1].shape=BRepAlgoAPI_Cut(v.boxes_[1].shape,tool).Shape();
+            v.boxes_[1].geometryKind=CadViewport::CadPart::GeometryKind::GeneralBRep;
+            // A cut cone still has a conical support, but must not be rebuilt
+            // as a complete primitive using its stale editing parameters.
+            v.addCone();
+            const auto notch=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(270,0,0),gp_Dir(0,0,1)),10,80).Shape();
+            v.boxes_[2].shape=BRepAlgoAPI_Cut(v.boxes_[2].shape,notch).Shape();
+            v.boxes_[2].conePrimitive=false;
+            v.addSphere(); v.boxes_[3].spherePrimitive=false;
+            v.addCylinder(); v.boxes_[4].cylinderPrimitive=false;
+            require(v.exportDocumentSnapshot(snapshot),"native Pull snapshot failed");
+            const QString path=directory.filePath("pull.odc");
+            require(NativeDocumentStorage::save(path,snapshot,error),"native Pull save failed");
+            require(NativeDocumentStorage::load(path,snapshot,error),"native Pull load failed");
+        } else {
+            require(NativeDocumentStorage::load(suppliedPath,snapshot,error),"supplied native document load failed");
+        }
+        require(v.importDocumentSnapshot(snapshot,error),"native Pull import failed");
+        if (suppliedPath.isEmpty()) {
+            require(!v.boxes_[2].conePrimitive,"cut cone incorrectly recovered as a complete primitive");
+            v.fitAll();
+        }
+        size_t coneIndex=v.boxes_.size(), holeIndex=v.boxes_.size();
+        TopoDS_Face coneFace, holeFace;
+        for (size_t i=0;i<v.boxes_.size();++i) {
+            auto analyzed=v.boxes_[i];
+            const bool primitive=v.recognizePullPrimitive(analyzed);
+            for (TopExp_Explorer f(v.boxes_[i].shape,TopAbs_FACE);f.More();f.Next()) {
+                const auto face=TopoDS::Face(f.Current());
+                const auto type=BRepAdaptor_Surface(face).GetType();
+                if (primitive && analyzed.conePrimitive && type==GeomAbs_Cone) { coneIndex=i; coneFace=face; }
+                if (holeIndex==v.boxes_.size() && type==GeomAbs_Cylinder && face.Orientation()==TopAbs_REVERSED) {
+                    holeIndex=i; holeFace=face;
+                }
+            }
+        }
+        require(coneIndex<v.boxes_.size(),"native cone was not recognized from its shape");
+        require(holeIndex<v.boxes_.size(),"native cylindrical hole missing");
+        require(v.boxes_[coneIndex].shape.IsSame(snapshot.parts[coneIndex].shape),"cone recovery replaced saved geometry");
+        const auto startResize=[&](size_t index,const TopoDS_Face& face) {
+            v.context_->ClearSelected(Standard_False);
+            v.context_->AddOrRemoveSelected(new StdSelect_BRepOwner(face,v.boxes_[index].presentation,5,Standard_True),Standard_False);
+            std::unique_ptr<QMenu> menu(v.createSelectionMenu(QPoint(500,350)));
+            auto* resize=menu->findChild<QAction*>("context.resize");
+            require(resize,"native face omitted Pull / Resize");
+            resize->trigger();
+            require(v.arrowVisible_,"native face did not activate an arrow");
+        };
+        const auto coneBefore=v.boxes_[coneIndex];
+        // Exercise every restored cone handle through production hit testing.
+        for (int target=0;target<4;++target) {
+            startResize(coneIndex,coneFace);
+            for (const auto& arrow:v.coneArrows_)
+                require(!arrow.IsNull() && v.context_->IsDisplayed(arrow),"native cone arrow is not displayed");
+            const auto t=static_cast<ConeTarget>(target);
+            const auto point=v.coneArrowOrigin(v.boxes_[coneIndex],t)
+                .Translated(gp_Vec(v.coneArrowDirection(t))*22).Transformed(v.boxes_[coneIndex].orientation);
+            requireRenderedArrow(v,point);
+            require(v.beginArrowDrag(project(v,point)),"native cone arrow cannot be grabbed");
+            require(v.conePullTarget_==t,"native cone picked the wrong handle");
+            require(v.previewCommand(1.0),"native cone cannot be manipulated");
+            v.cancelCommandSession();
+            require(v.boxes_[coneIndex].shape.IsSame(coneBefore.shape),"native cone Cancel changed saved shape");
+        }
+        startResize(holeIndex,holeFace);
+        require(!v.faceArrow_.IsNull() && v.context_->IsDisplayed(v.faceArrow_),"native hole arrow is not displayed");
+        require(v.faceArrow_->ZLayer()==Graphic3d_ZLayerId_Topmost,"native hole arrow can be occluded by material");
+        const auto point=v.primitiveArrowOrigin_.Translated(gp_Vec(v.primitiveArrowDirection_)*15)
+            .Transformed(v.boxes_[holeIndex].orientation);
+        requireRenderedArrow(v,point);
+        require(v.beginArrowDrag(project(v,point)),"native hole arrow cannot be grabbed");
+        require(v.previewCommand(1.0),"native hole cannot be manipulated");
+        v.cancelCommandSession();
+        require(v.boxes_[holeIndex].shape.IsSame(snapshot.parts[holeIndex].shape),"native hole Cancel changed saved shape");
+        if (suppliedPath.isEmpty()) for (size_t index : {size_t(3),size_t(4)}) {
+            const auto type=index==3 ? GeomAbs_Sphere : GeomAbs_Cylinder;
+            TopoDS_Face curved;
+            for (TopExp_Explorer f(v.boxes_[index].shape,TopAbs_FACE);f.More();f.Next())
+                if (BRepAdaptor_Surface(TopoDS::Face(f.Current())).GetType()==type) { curved=TopoDS::Face(f.Current()); break; }
+            require(!curved.IsNull(),"native untagged curved face missing");
+            startResize(index,curved);
+            const auto start=beginPull(v);
+            require(v.previewCommand(1.0),"untagged sphere/cylinder cannot be resized");
+            release(v,start);
+            v.cancelCommandSession();
+            require(v.boxes_[index].shape.IsSame(snapshot.parts[index].shape),"untagged primitive Cancel changed source geometry");
+        }
+        require(v.undoStack_.empty() && v.redoStack_.empty(),"native Pull cancellation changed history");
+    }
+
     static void runCone(CadViewport& v) {
         v.addCone();
         checkCone(v,0,80,40,80);
@@ -1060,8 +1242,14 @@ int main(int argc, char** argv) {
     viewport.show();
     app.processEvents();
     try {
-        if (app.arguments().contains(QStringLiteral("--sessions")))
+        if (app.arguments().contains(QStringLiteral("--native-pull"))) {
+            const int arg=app.arguments().indexOf(QStringLiteral("--native-pull"));
+            CadViewportPullTest::runNativePull(viewport,app.arguments().value(arg+1));
+        }
+        else if (app.arguments().contains(QStringLiteral("--sessions")))
             CadViewportPullTest::runSessions(viewport);
+        else if (app.arguments().contains(QStringLiteral("--cylindrical-face")))
+            CadViewportPullTest::runCylindricalFace();
         else if (app.arguments().contains(QStringLiteral("--rotation")))
             CadViewportPullTest::runRotation(viewport);
         else if (app.arguments().contains(QStringLiteral("--gizmo")))

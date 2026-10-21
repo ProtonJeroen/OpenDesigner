@@ -335,12 +335,17 @@ struct SelectionContextTest {
     }
 
 };
+void runNativeDocumentSessions();
 int main(int argc,char** argv) {
 #if defined(Q_OS_LINUX)
     if(qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM") && !qEnvironmentVariableIsEmpty("DISPLAY"))qputenv("QT_QPA_PLATFORM","xcb");
 #endif
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc,argv);
-    try {SelectionContextTest::run();SelectionContextTest::historyDeselect();std::cout<<"Selection modes, context menus, shared commands and Boolean Move Face passed.\n";return 0;}
+    try {
+        if(app.arguments().contains("--documents")) runNativeDocumentSessions();
+        else { SelectionContextTest::run(); SelectionContextTest::historyDeselect(); }
+        std::cout<<"Selection, command lifecycle and document checks passed.\n";return 0;
+    }
     catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

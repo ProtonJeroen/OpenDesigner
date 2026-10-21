@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(OpenDesigner VERSION 0.3.6 LANGUAGES CXX)
+project(OpenDesigner VERSION 0.3.7 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -20,7 +20,7 @@ add_executable(OpenDesigner
     src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
         src/BRepReconstruction.cpp src/MoveFaceGeometry.cpp src/MoveFaceGeometry.h src/MoveFace.cpp
         src/FaceOperations.cpp src/FaceTransformGeometry.cpp src/FaceTransformGeometry.h
-        src/SelectionContext.cpp
+        src/SelectionContext.cpp src/NativeDocument.h
 )
 target_include_directories(OpenDesigner PRIVATE ${OpenCASCADE_INCLUDE_DIR})
 
@@ -42,6 +42,9 @@ set(OPENDESIGNER_LIBRARIES
     TKFeat
     TKShHealing
     TKMesh
+    TKLCAF
+    TKXCAF
+    TKBinXCAF
     TKG3d
     TKG2d
     TKMath
@@ -66,6 +69,12 @@ install(TARGETS OpenDesigner RUNTIME DESTINATION bin)
 option(OPENDESIGNER_BUILD_TESTS "Build viewport pull regression tests" OFF)
 if(OPENDESIGNER_BUILD_TESTS)
     enable_testing()
+    add_executable(OpenDesignerNativeDocumentTests tests/NativeDocumentTest.cpp src/NativeDocument.cpp)
+    target_include_directories(OpenDesignerNativeDocumentTests PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
+    target_link_libraries(OpenDesignerNativeDocumentTests PRIVATE ${OPENDESIGNER_LIBRARIES})
+    add_test(NAME native-document-roundtrip COMMAND OpenDesignerNativeDocumentTests)
+    set_tests_properties(native-document-roundtrip PROPERTIES TIMEOUT 60)
+
     add_executable(OpenDesignerPullTests
         tests/CadViewportPullTest.cpp
         src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
@@ -74,6 +83,8 @@ if(OPENDESIGNER_BUILD_TESTS)
     target_include_directories(OpenDesignerPullTests PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
     target_link_libraries(OpenDesignerPullTests PRIVATE ${OPENDESIGNER_LIBRARIES})
     add_test(NAME primitive-pull COMMAND OpenDesignerPullTests)
+    add_test(NAME cylindrical-face-pull COMMAND OpenDesignerPullTests --cylindrical-face)
+    add_test(NAME native-document-pull COMMAND OpenDesignerPullTests --native-pull)
     add_test(NAME cone-pull COMMAND OpenDesignerPullTests --cone)
     add_test(NAME command-sessions COMMAND OpenDesignerPullTests --sessions)
     add_test(NAME rotation-pivot COMMAND OpenDesignerPullTests --rotation)
@@ -90,7 +101,7 @@ if(OPENDESIGNER_BUILD_TESTS)
     target_compile_definitions(OpenDesignerBooleanTests PRIVATE OPENDESIGNER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     target_link_libraries(OpenDesignerBooleanTests PRIVATE ${OPENDESIGNER_LIBRARIES})
     add_test(NAME boolean-operations COMMAND OpenDesignerBooleanTests)
-    set_tests_properties(primitive-pull cone-pull gizmo-center rotation-pivot command-sessions PROPERTIES TIMEOUT 60)
+    set_tests_properties(primitive-pull cylindrical-face-pull native-document-pull cone-pull gizmo-center rotation-pivot command-sessions PROPERTIES TIMEOUT 60)
     add_executable(OpenDesignerMoveFaceTests
         tests/MoveFaceTest.cpp src/MainWindow.h src/MainWindow.cpp
         src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
@@ -101,13 +112,15 @@ if(OPENDESIGNER_BUILD_TESTS)
     target_link_libraries(OpenDesignerMoveFaceTests PRIVATE ${OPENDESIGNER_LIBRARIES})
     add_test(NAME move-face COMMAND OpenDesignerMoveFaceTests)
     add_executable(OpenDesignerSelectionContextTests
-        tests/SelectionContextTest.cpp src/MainWindow.h src/MainWindow.cpp
+        tests/SelectionContextTest.cpp tests/NativeDocumentSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
         src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
         src/MoveFace.cpp src/FaceOperations.cpp src/FaceTransformGeometry.cpp
         src/FaceTransformGeometry.h src/SelectionContext.cpp src/MoveFaceGeometry.h src/BRepReconstruction.cpp src/MoveFaceGeometry.cpp)
     target_include_directories(OpenDesignerSelectionContextTests PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
     target_link_libraries(OpenDesignerSelectionContextTests PRIVATE ${OPENDESIGNER_LIBRARIES})
     add_test(NAME selection-context COMMAND OpenDesignerSelectionContextTests)
+    add_test(NAME native-document-sessions COMMAND OpenDesignerSelectionContextTests --documents)
+    set_tests_properties(native-document-sessions PROPERTIES TIMEOUT 120)
     add_executable(OpenDesignerFaceTransformTests tests/FaceTransformTest.cpp src/FaceTransformGeometry.cpp
         src/BRepReconstruction.cpp src/MoveFaceGeometry.cpp)
     target_include_directories(OpenDesignerFaceTransformTests PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
@@ -142,7 +155,7 @@ endif()
 # Keep document snapshot capture linked wherever the viewport is exercised.
 foreach(viewport_target OpenDesigner OpenDesignerPullTests OpenDesignerBooleanTests OpenDesignerMoveFaceTests OpenDesignerSelectionContextTests OpenDesignerDebugModelTests OpenDesignerDeleteFaceTests)
     if(TARGET ${viewport_target})
-        target_sources(${viewport_target} PRIVATE src/DebugExport.cpp src/DeleteFace.cpp src/ModelingErrors.cpp)
+        target_sources(${viewport_target} PRIVATE src/DebugExport.cpp src/DeleteFace.cpp src/ModelingErrors.cpp src/NativeDocument.cpp)
         target_link_libraries(${viewport_target} PRIVATE OpenDesignerDeleteFaceGeometry OpenDesignerDebug)
     endif()
 endforeach()

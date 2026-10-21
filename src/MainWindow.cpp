@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 #include "CadViewport.h"
+#include "NativeDocument.h"
 #include <QTreeWidget>
 #include <QSignalBlocker>
 #include <QAbstractItemView>
@@ -17,9 +18,11 @@
 #include <QMessageBox>
 #include <QActionGroup>
 #include <QFileDialog>
+#include <QCloseEvent>
+#include <QFileInfo>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.3.6 — Advanced Face Topology (prototype)");
+    setWindowTitle("OpenDesigner 0.3.7");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     connect(viewport_,&CadViewport::geometryOperationFailed,this,[this](const QString& operation,const QString& reason) {
@@ -43,12 +46,26 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     structure_->setContextMenuPolicy(Qt::CustomContextMenu);
     structure_->setEditTriggers(QAbstractItemView::EditKeyPressed | QAbstractItemView::DoubleClicked);
     structure_->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    auto* root = new QTreeWidgetItem(structure_, QStringList{tr("Assembly 1")});
+    root_ = new QTreeWidgetItem(structure_, QStringList{tr("Assembly 1")});
+    auto* root = root_;
     root->setExpanded(true);
     dock->setWidget(structure_);
     addDockWidget(Qt::LeftDockWidgetArea, dock);
 
     auto* file = menuBar()->addMenu(tr("&File"));
+    auto* newAction = file->addAction(tr("&New"));
+    newAction->setShortcut(QKeySequence::New);
+    connect(newAction, &QAction::triggered, this, &MainWindow::newDocument);
+    auto* openAction = file->addAction(tr("&Open..."));
+    openAction->setShortcut(QKeySequence::Open);
+    connect(openAction, &QAction::triggered, this, &MainWindow::openDocument);
+    saveAction_ = file->addAction(tr("&Save"));
+    saveAction_->setShortcut(QKeySequence::Save);
+    connect(saveAction_, &QAction::triggered, this, &MainWindow::saveDocument);
+    saveAsAction_ = file->addAction(tr("Save &As..."));
+    saveAsAction_->setShortcut(QKeySequence::SaveAs);
+    connect(saveAsAction_, &QAction::triggered, this, &MainWindow::saveDocumentAs);
+    file->addSeparator();
     auto* debugExport=file->addAction(tr("Export Debug Model..."));
     debugExport->setObjectName("exportDebugModelAction");
     connect(debugExport,&QAction::triggered,this,[this] {
@@ -141,7 +158,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.3.6 — Advanced Face Topology prototype."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.3.7 — Native OpenDesigner documents."));
     });
     auto* toolbar = addToolBar(tr("Modeling"));
     connect(viewport_,&CadViewport::transformModesChanged,this,[interactiveMove,directMove,interactiveRotate](bool faceNormal,bool move,bool rotate) {
@@ -171,6 +188,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         item->setText(1, QStringLiteral("👁"));
         root->setExpanded(true);
         statusBar()->showMessage(name + tr(" created"), 3000);
+        if (!documentTransition_) markDocumentDirty();
+    });
+    connect(viewport_, &CadViewport::partsChanged, this, [this] {
+        if (!documentTransition_) markDocumentDirty();
+    });
+    connect(viewport_, &CadViewport::documentReplaced, this, [this] {
+        rebuildStructureBrowser();
     });
     // Rows retain their stable slot IDs. Boolean-consumed parts and undone
     // results are hidden rather than renumbering other browser references.
@@ -290,4 +314,115 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         statusBar()->showMessage(msg, 5000);
     });
     statusBar()->showMessage(tr("Selection: Faces / Parts | Right-click selected geometry: commands | Drag orange arrow: Pull Face / Move Part (toggle mode) | Shift during drag: free movement | Middle: orbit | Shift+middle: pan | Wheel: zoom"));
+    updateWindowTitle();
+}
+
+void MainWindow::updateWindowTitle() {
+    const QString name = documentPath_.isEmpty()
+        ? tr("Untitled") : QFileInfo(documentPath_).fileName();
+    setWindowTitle(tr("OpenDesigner 0.3.7 — %1%2").arg(name, documentDirty_ ? QStringLiteral(" *") : QString()));
+}
+
+void MainWindow::markDocumentDirty() {
+    if (documentTransition_ || documentDirty_) return;
+    documentDirty_ = true;
+    updateWindowTitle();
+}
+
+bool MainWindow::maybeSave() {
+    if (!documentDirty_) return true;
+    const auto answer = QMessageBox::warning(this, tr("Unsaved changes"),
+        tr("The document has unsaved changes. Save them before continuing?"),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+    if (answer == QMessageBox::Cancel) return false;
+    if (answer == QMessageBox::Save) return saveDocument();
+    return true;
+}
+
+bool MainWindow::saveDocument() {
+    if (documentPath_.isEmpty()) return saveDocumentAs();
+    NativeDocumentSnapshot snapshot;
+    QString error;
+    if (!viewport_->exportDocumentSnapshot(snapshot) ||
+        !NativeDocumentStorage::save(documentPath_, snapshot, error)) {
+        if (error.isEmpty()) error=tr("Could not capture the current document for saving.");
+        QMessageBox::warning(this, tr("Save failed"), error);
+        return false;
+    }
+    documentDirty_ = false;
+    updateWindowTitle();
+    statusBar()->showMessage(tr("Document saved to %1").arg(documentPath_), 5000);
+    return true;
+}
+
+bool MainWindow::saveDocumentAs() {
+    QString suggested = documentPath_.isEmpty() ? QStringLiteral("Untitled.odc") : documentPath_;
+    QFileDialog dialog(this,tr("Save OpenDesigner document"),suggested,tr("OpenDesigner document (*.odc)"));
+    dialog.setAcceptMode(QFileDialog::AcceptSave);
+    dialog.setDefaultSuffix(QStringLiteral("odc"));
+    if (dialog.exec()!=QDialog::Accepted || dialog.selectedFiles().isEmpty()) return false;
+    QString path=dialog.selectedFiles().front();
+    if (path.isEmpty()) return false;
+    if (!path.endsWith(QStringLiteral(".odc"), Qt::CaseInsensitive)) path += QStringLiteral(".odc");
+    const QString oldPath = documentPath_;
+    documentPath_ = path;
+    if (!saveDocument()) { documentPath_ = oldPath; updateWindowTitle(); return false; }
+    return true;
+}
+
+void MainWindow::newDocument() {
+    if (!maybeSave()) return;
+    documentTransition_ = true;
+    viewport_->resetDocument();
+    documentPath_.clear();
+    documentDirty_ = false;
+    documentTransition_ = false;
+    updateWindowTitle();
+    statusBar()->showMessage(tr("New document"), 3000);
+}
+
+void MainWindow::openDocument() {
+    if (!maybeSave()) return;
+    const QString path = QFileDialog::getOpenFileName(this, tr("Open OpenDesigner document"),
+                                                      QString(), tr("OpenDesigner document (*.odc)"));
+    if (path.isEmpty()) return;
+    NativeDocumentSnapshot snapshot;
+    QString error;
+    if (!NativeDocumentStorage::load(path, snapshot, error)) {
+        QMessageBox::warning(this, tr("Open failed"), error);
+        return;
+    }
+    documentTransition_ = true;
+    if (!viewport_->importDocumentSnapshot(snapshot, error)) {
+        documentTransition_ = false;
+        QMessageBox::warning(this, tr("Open failed"), error);
+        return;
+    }
+    documentTransition_ = false;
+    documentPath_ = path;
+    documentDirty_ = false;
+    updateWindowTitle();
+    statusBar()->showMessage(tr("Document opened from %1").arg(path), 5000);
+}
+
+void MainWindow::rebuildStructureBrowser() {
+    if (!root_) return;
+    const QSignalBlocker blocker(structure_);
+    const auto oldChildren = root_->takeChildren();
+    qDeleteAll(oldChildren);
+    for (size_t index = 0; index < viewport_->partSlotCount(); ++index) {
+        auto* item = new QTreeWidgetItem(root_, QStringList{viewport_->partName(index)});
+        item->setData(0, Qt::UserRole, static_cast<qulonglong>(index));
+        item->setFlags(item->flags() | Qt::ItemIsEditable);
+        const bool active = viewport_->isPartActive(index);
+        item->setHidden(!active);
+        const bool visible = viewport_->isPartVisible(index);
+        item->setText(1, visible ? QStringLiteral("👁") : QStringLiteral("—"));
+        item->setForeground(0, visible ? QBrush() : QBrush(QColor(Qt::gray)));
+    }
+    root_->setExpanded(true);
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    if (maybeSave()) event->accept(); else event->ignore();
 }

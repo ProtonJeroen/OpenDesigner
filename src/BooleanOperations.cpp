@@ -8,6 +8,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QUuid>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Common.hxx>
@@ -94,6 +95,8 @@ TopoDS_Shape normalizeBooleanResult(const TopoDS_Shape& shape) {
 
 void CadViewport::announcePartCreated(const QString& name) {
     boxes_.back().name = name;
+    if (boxes_.back().persistentId.isEmpty())
+        boxes_.back().persistentId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     emit partCreated(name);
 }
 bool CadViewport::isPartActive(size_t index) const {
@@ -120,6 +123,7 @@ void CadViewport::setPartColor(size_t index, const QColor& color) {
         context_->Redisplay(part.presentation,Standard_False);
         view_->Redraw();
     }
+    emit partsChanged();
 }
 std::vector<size_t> CadViewport::selectedBooleanParts() const {
     std::vector<size_t> result;

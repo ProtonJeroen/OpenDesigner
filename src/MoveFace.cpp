@@ -178,6 +178,8 @@ void CadViewport::applyFaceState(size_t index, const CadPart& state) {
     auto& part=boxes_[index];
     context_->ClearSelected(Standard_False); // Owners from replaced topology must not be reused.
     part.shape=state.shape; part.geometryKind=state.geometryKind;
+    part.persistentId=state.persistentId; part.name=state.name; part.color=state.color;
+    part.visible=state.visible;
     part.min=state.min; part.max=state.max; part.baseMin=state.baseMin; part.baseMax=state.baseMax;
     part.orientation=state.orientation;
     part.cylinderPrimitive=state.cylinderPrimitive; part.spherePrimitive=state.spherePrimitive;

@@ -1,4 +1,5 @@
 #include "CadViewport.h"
+#include "BRepReconstruction.h"
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QPaintEngine>
@@ -30,9 +31,12 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakeSolid.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <TopExp_Explorer.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
+#include <BRepOffset_MakeOffset.hxx>
 #include <gp_Circ.hxx>
 #include <ElCLib.hxx>
 #include <BRep_Builder.hxx>
@@ -51,6 +55,7 @@
 #include <QLabel>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
+#include <QUuid>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRep_Tool.hxx>
 #include <TopoDS.hxx>
@@ -58,6 +63,10 @@
 #include <gp_Pnt.hxx>
 #include <gp_Pln.hxx>
 #include <Quantity_Color.hxx>
+#include <Graphic3d_Camera.hxx>
+#include <gp_Cone.hxx>
+#include <gp_Cylinder.hxx>
+#include <gp_Sphere.hxx>
 #include <cmath>
 #include <algorithm>
 
@@ -317,7 +326,12 @@ void CadViewport::closeCommandSession(bool confirm) {
         refreshPartSelection();
         emit partSelectionChanged(selectedPartIndices_);
         emit partsChanged();
-    } else for (const auto& owner : session.owners) context_->AddOrRemoveSelected(owner,Standard_False);
+    } else {
+        for (const auto& owner : session.owners) context_->AddOrRemoveSelected(owner,Standard_False);
+        if (confirm && !session.changes.empty()
+            && (faceCommand ? changedFace : std::abs(session.value) > 1.e-10))
+            emit partsChanged();
+    }
     draggingFace_ = draggingRotation_ = dimensionEditing_ = false;
     groupRotationDragging_ = false;
     dragDimension_->hide(); commandButtons_->hide(); commandPanel_->hide();
@@ -460,18 +474,20 @@ void CadViewport::updateFaceArrow() {
         }
         return;
     }
-    gp_Pnt center = (part.cylinderPrimitive || part.spherePrimitive || part.conePrimitive) && !movePartMode_ ? primitiveArrowOrigin_ :
+    gp_Pnt center = (part.cylinderPrimitive || part.spherePrimitive || part.conePrimitive || cylindricalFacePull_) && !movePartMode_ ? primitiveArrowOrigin_ :
         gp_Pnt((part.min[0]+part.max[0])*0.5,(part.min[1]+part.max[1])*0.5,
                (part.min[2]+part.max[2])*0.5);
-    gp_Vec direction = (part.cylinderPrimitive || part.spherePrimitive || part.conePrimitive) && !movePartMode_ ?
+    gp_Vec direction = (part.cylinderPrimitive || part.spherePrimitive || part.conePrimitive || cylindricalFacePull_) && !movePartMode_ ?
         gp_Vec(primitiveArrowDirection_) : gp_Vec(0,0,0);
-    if ((!part.cylinderPrimitive && !part.spherePrimitive && !part.conePrimitive) || movePartMode_) {
+    if ((!part.cylinderPrimitive && !part.spherePrimitive && !part.conePrimitive && !cylindricalFacePull_) || movePartMode_) {
         center.SetCoord(arrowAxis_+1,arrowMax_?part.max[arrowAxis_]:part.min[arrowAxis_]);
         direction.SetCoord(arrowAxis_+1,arrowMax_?1.0:-1.0);
     }
     center.Transform(part.orientation);
     direction.Transform(part.orientation);
     displayPullArrow(faceArrow_,center,direction);
+    if (cylindricalFacePull_)
+        context_->SetZLayer(faceArrow_, Graphic3d_ZLayerId_Topmost);
 }
 void CadViewport::displayPullArrow(Handle(AIS_Shape)& arrow, gp_Pnt center, gp_Vec direction) {
     constexpr double shaftLength = 22.0;
@@ -501,6 +517,7 @@ void CadViewport::addBox() {
     initializeViewer();
     const double x = partCount_ * 125.0;
     CadPart part;
+    part.persistentId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     part.min = {x, 0.0, 0.0};
     part.max = {x + 100.0, 80.0, 60.0};
     TopoDS_Shape shape = BRepPrimAPI_MakeBox(gp_Pnt(x, 0, 0), 100.0, 80.0, 60.0).Shape();
@@ -525,6 +542,7 @@ void CadViewport::addCylinder() {
     constexpr double radius = 40.0;
     constexpr double height = 80.0;
     CadPart part;
+    part.persistentId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     part.geometryKind = CadPart::GeometryKind::GeneralBRep;
     part.cylinderPrimitive = true;
     part.cylinderRadius = radius;
@@ -554,6 +572,7 @@ void CadViewport::addSphere() {
     const double x = partCount_ * 125.0;
     constexpr double radius = 40.0;
     CadPart part;
+    part.persistentId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     part.geometryKind = CadPart::GeometryKind::GeneralBRep;
     part.spherePrimitive = true;
     part.sphereRadius = radius;
@@ -578,6 +597,7 @@ void CadViewport::addCone() {
     initializeViewer();
     const double x = partCount_*125.0;
     CadPart part;
+    part.persistentId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     part.geometryKind = CadPart::GeometryKind::GeneralBRep;
     part.conePrimitive = true;
     part.min = {x-40.0,-40.0,0.0};
@@ -625,6 +645,7 @@ void CadViewport::duplicateSelectedParts() {
         if (!isPartVisible(index)) continue;
         const CadPart original = boxes_[index];
         CadPart copy;
+        copy.persistentId = QUuid::createUuid().toString(QUuid::WithoutBraces);
         copy.geometryKind = original.geometryKind;
         copy.cylinderPrimitive = original.cylinderPrimitive;
         copy.spherePrimitive = original.spherePrimitive;
@@ -773,6 +794,7 @@ void CadViewport::pullSelectedFace() {
     view_->Redraw();
     emit statusMessage(tr("%1 selected face(s) pulled by %2 mm across %3 part(s).")
         .arg(faceCount).arg(distance).arg(changes.size()));
+    emit partsChanged();
 }
 void CadViewport::rotateSelectedPart() {
     cancelCommandSession();
@@ -829,6 +851,7 @@ void CadViewport::rotateSelectedPart() {
     }
     emit statusMessage(tr("Part rotated %1 degrees around world %2 axis.")
         .arg(angleBox.value()).arg(axisBox.currentText()));
+    emit partsChanged();
 }
 void CadViewport::movePartAlongSelectedFace() {
     cancelCommandSession();
@@ -887,6 +910,7 @@ void CadViewport::movePartAlongSelectedFace() {
     updateHistoryActions();
     applyBoxBounds(index, afterMin, afterMax);
     emit statusMessage(tr("Part translated %1 mm; dimensions unchanged.").arg(distance));
+    emit partsChanged();
 }
 gp_Pnt CadViewport::partLocalCenter(const CadPart& part) const {
     const auto& min = part.geometryKind == CadPart::GeometryKind::GeneralBRep
@@ -1039,6 +1063,272 @@ void CadViewport::redoPull() {
 void CadViewport::fitAll() {
     if (!view_.IsNull()) { view_->FitAll(0.01, Standard_False); view_->ZFitAll(); view_->Redraw(); }
 }
+
+bool CadViewport::exportDocumentSnapshot(NativeDocumentSnapshot& snapshot) const {
+    try {
+        snapshot = {};
+        snapshot.schemaVersion = NativeDocumentStorage::CurrentSchemaVersion;
+        for (size_t i = 0; i < boxes_.size(); ++i) {
+            const CadPart* saved=&boxes_[i];
+            if (commandSession_ && commandSession_->kind==CommandSession::Kind::Pull)
+                for (const auto& change:commandSession_->changes)
+                    if (change.partIndex==i && change.faceChange) saved=&change.faceChange->before;
+            const auto& part=*saved;
+            if (!part.active || part.shape.IsNull()) continue;
+            NativePartState state;
+            state.id = part.persistentId.isEmpty()
+                ? QStringLiteral("slot-%1").arg(i) : part.persistentId;
+            state.name = part.name;
+            state.shape = part.shape;
+            state.transform = part.orientation;
+            state.color = part.color;
+            state.visible = part.visible;
+            state.geometryKind = static_cast<int>(part.geometryKind);
+            state.cylinderPrimitive = part.cylinderPrimitive;
+            state.spherePrimitive = part.spherePrimitive;
+            state.conePrimitive = part.conePrimitive;
+            state.sphereRadius = part.sphereRadius;
+            state.cylinderRadius = part.cylinderRadius;
+            state.cylinderHeight = part.cylinderHeight;
+            state.cylinderBaseOffset = part.cylinderBaseOffset;
+            state.coneBottomRadius = part.cone.bottomRadius;
+            state.coneTopRadius = part.cone.topRadius;
+            state.coneHeight = part.cone.height;
+            state.coneBaseOffset = part.cone.baseOffset;
+            snapshot.parts.push_back(std::move(state));
+        }
+        if (!view_.IsNull()) {
+            const auto camera = view_->Camera();
+            snapshot.camera.eye = camera->Eye();
+            snapshot.camera.center = camera->Center();
+            snapshot.camera.up = camera->Up();
+            snapshot.camera.scale = camera->Scale();
+            snapshot.camera.projectionType = static_cast<int>(camera->ProjectionType());
+        }
+        return true;
+    } catch (const Standard_Failure&) {
+        return false;
+    }
+}
+
+void CadViewport::resetDocument() {
+    cancelCommandSession();
+    finishModelingInteraction();
+    if (!context_.IsNull()) {
+        context_->ClearSelected(Standard_False);
+        for (auto& part : boxes_)
+            if (!part.presentation.IsNull()) context_->Remove(part.presentation, Standard_False);
+    }
+    boxes_.clear();
+    selectedPartIndices_.clear();
+    partCount_ = 0;
+    undoStack_.clear();
+    redoStack_.clear();
+    clearHistorySelection();
+    updateHistoryActions();
+    if (!view_.IsNull()) { view_->FitAll(0.01, Standard_False); view_->ZFitAll(); view_->Redraw(); }
+    emit partSelectionChanged({});
+    emit documentReplaced();
+    emit partsChanged();
+}
+
+bool CadViewport::recognizePullPrimitive(CadPart& part) const {
+    // Editing metadata is a derived cache, never evidence of geometric
+    // capability. Certify a complete primitive against the current B-Rep.
+    try {
+        gp_Cone cone;
+        gp_Cylinder cylinder;
+        gp_Sphere sphere;
+        int coneFaces=0, cylinderFaces=0, sphereFaces=0, capFaces=0;
+        std::vector<gp_Pln> planes;
+        double bottom=0.0, top=0.0;
+        for (TopExp_Explorer f(part.shape,TopAbs_FACE);f.More();f.Next()) {
+            const BRepAdaptor_Surface surface(TopoDS::Face(f.Current()));
+            if (surface.GetType()==GeomAbs_Cone) { cone=surface.Cone(); ++coneFaces; }
+            else if (surface.GetType()==GeomAbs_Cylinder) { cylinder=surface.Cylinder(); ++cylinderFaces; }
+            else if (surface.GetType()==GeomAbs_Sphere) { sphere=surface.Sphere(); ++sphereFaces; }
+            else if (surface.GetType()==GeomAbs_Plane) {
+                const auto plane=surface.Plane();
+                planes.push_back(plane);
+                const double z=plane.Location().Z();
+                if (capFaces==0) bottom=top=z;
+                else { bottom=std::min(bottom,z); top=std::max(top,z); }
+                ++capFaces;
+            } else return false;
+        }
+        CadPart recognized=part;
+        recognized.cylinderPrimitive=recognized.spherePrimitive=recognized.conePrimitive=false;
+        recognized.geometryKind=CadPart::GeometryKind::GeneralBRep;
+        TopoDS_Shape candidate;
+        const bool horizontalCaps=std::all_of(planes.begin(),planes.end(),[](const auto& plane) {
+            return plane.Axis().Direction().IsParallel(gp_Dir(0,0,1),1.e-8);
+        });
+        if (coneFaces==1 && cylinderFaces==0 && sphereFaces==0
+            && (capFaces==1 || capFaces==2) && horizontalCaps
+            && cone.Axis().Direction().IsEqual(gp_Dir(0,0,1),1.e-8)) {
+            if (capFaces==1) { bottom=std::min(bottom,cone.Apex().Z()); top=std::max(top,cone.Apex().Z()); }
+            const double slope=std::tan(cone.SemiAngle());
+            const double bottomRadius=cone.RefRadius()+(bottom-cone.Location().Z())*slope;
+            const double topRadius=std::max(0.0,cone.RefRadius()+(top-cone.Location().Z())*slope);
+            if (bottomRadius<=0.01 || top-bottom<=0.01) return false;
+            const gp_Pnt base(cone.Location().X(),cone.Location().Y(),bottom);
+            candidate=BRepPrimAPI_MakeCone(gp_Ax2(base,gp_Dir(0,0,1)),bottomRadius,topRadius,top-bottom).Shape();
+            recognized.conePrimitive=true;
+            recognized.cone={bottomRadius,topRadius,top-bottom,0.0};
+        } else if (cylinderFaces==1 && coneFaces==0 && sphereFaces==0
+            && capFaces==2 && horizontalCaps && top-bottom>0.01
+            && cylinder.Axis().Direction().IsEqual(gp_Dir(0,0,1),1.e-8)) {
+            candidate=BRepPrimAPI_MakeCylinder(gp_Ax2(
+                gp_Pnt(cylinder.Location().X(),cylinder.Location().Y(),bottom),gp_Dir(0,0,1)),
+                cylinder.Radius(),top-bottom).Shape();
+            recognized.cylinderPrimitive=true;
+            recognized.cylinderRadius=cylinder.Radius();
+            recognized.cylinderHeight=top-bottom; recognized.cylinderBaseOffset=0.0;
+            // The equal-radius limit also supports both cone diameter handles.
+            if (part.conePrimitive) {
+                recognized.cylinderPrimitive=false; recognized.conePrimitive=true;
+                recognized.cone={cylinder.Radius(),cylinder.Radius(),top-bottom,0.0};
+            }
+        } else if (sphereFaces==1 && coneFaces==0 && cylinderFaces==0 && capFaces==0) {
+            candidate=BRepPrimAPI_MakeSphere(sphere.Location(),sphere.Radius()).Shape();
+            recognized.spherePrimitive=true; recognized.sphereRadius=sphere.Radius();
+        } else if (capFaces==6 && coneFaces==0 && cylinderFaces==0 && sphereFaces==0) {
+            Bnd_Box bounds; BRepBndLib::AddOptimal(part.shape,bounds,false,false);
+            double x0,y0,z0,x1,y1,z1; bounds.Get(x0,y0,z0,x1,y1,z1);
+            candidate=BRepPrimAPI_MakeBox(gp_Pnt(x0,y0,z0),gp_Pnt(x1,y1,z1)).Shape();
+            recognized.geometryKind=CadPart::GeometryKind::Box;
+        } else return false;
+        double volume=0.0;
+        if (!BRepReconstruction::validSolid(part.shape,volume)
+            || !BRepReconstruction::equivalent(part.shape,candidate)) return false;
+        Bnd_Box bounds; BRepBndLib::AddOptimal(candidate,bounds,false,false);
+        bounds.Get(recognized.min[0],recognized.min[1],recognized.min[2],
+            recognized.max[0],recognized.max[1],recognized.max[2]);
+        recognized.baseMin=recognized.min; recognized.baseMax=recognized.max;
+        // Keep current editing anchors if already consistent with the shape.
+        // This preserves the opposite cap during repeated height Pulls.
+        if (recognized.conePrimitive && part.conePrimitive
+            && std::abs(part.cone.bottomRadius-recognized.cone.bottomRadius)<1.e-7
+            && std::abs(part.cone.topRadius-recognized.cone.topRadius)<1.e-7
+            && std::abs(part.cone.height-recognized.cone.height)<1.e-7
+            && std::abs(part.baseMin[2]+part.cone.baseOffset-bottom)<1.e-7) {
+            recognized.cone=part.cone; recognized.baseMin=part.baseMin; recognized.baseMax=part.baseMax;
+        } else if (recognized.cylinderPrimitive && part.cylinderPrimitive
+            && std::abs(part.cylinderRadius-recognized.cylinderRadius)<1.e-7
+            && std::abs(part.cylinderHeight-recognized.cylinderHeight)<1.e-7
+            && std::abs(part.baseMin[2]+part.cylinderBaseOffset-bottom)<1.e-7) {
+            recognized.cylinderBaseOffset=part.cylinderBaseOffset;
+            recognized.baseMin=part.baseMin; recognized.baseMax=part.baseMax;
+        }
+        part=std::move(recognized);
+        return true;
+    } catch (const Standard_Failure&) {
+        return false;
+    }
+}
+
+bool CadViewport::importDocumentSnapshot(const NativeDocumentSnapshot& snapshot, QString& error) {
+    if (snapshot.schemaVersion != NativeDocumentStorage::CurrentSchemaVersion) {
+        error = tr("Unsupported OpenDesigner document schema.");
+        return false;
+    }
+    for (const auto& state : snapshot.parts) {
+        if (state.shape.IsNull() || state.id.isEmpty()) {
+            error = tr("The document contains an invalid Part.");
+            return false;
+        }
+    }
+    if (!std::isfinite(snapshot.camera.scale) || snapshot.camera.scale <= 0.0) {
+        error = tr("The document contains an invalid camera state.");
+        return false;
+    }
+    const auto& cameraState=snapshot.camera;
+    for (int axis=1;axis<=3;++axis) {
+        if (!std::isfinite(cameraState.eye.Coord(axis)) || !std::isfinite(cameraState.center.Coord(axis))
+            || !std::isfinite(cameraState.up.Coord(axis))) {
+            error=tr("The document contains invalid camera coordinates."); return false;
+        }
+    }
+    const gp_Vec cameraDirection(cameraState.eye,cameraState.center);
+    if (cameraState.projectionType<0 || cameraState.projectionType>4
+        || cameraDirection.SquareMagnitude()<1.e-16
+        || cameraDirection.Crossed(gp_Vec(cameraState.up)).SquareMagnitude()<1.e-16) {
+        error=tr("The document contains an invalid camera orientation."); return false;
+    }
+    std::vector<CadPart> imported;
+    try {
+        imported.reserve(snapshot.parts.size());
+        for (const auto& state : snapshot.parts) {
+            CadPart part;
+            part.persistentId = state.id;
+            part.name = state.name;
+            part.shape = state.shape;
+            part.orientation = state.transform;
+            part.color = state.color;
+            part.visible = state.visible;
+            part.geometryKind = state.geometryKind == 0 ? CadPart::GeometryKind::Box : CadPart::GeometryKind::GeneralBRep;
+            part.cylinderPrimitive = state.cylinderPrimitive;
+            part.spherePrimitive = state.spherePrimitive;
+            part.conePrimitive = state.conePrimitive;
+            part.sphereRadius = state.sphereRadius;
+            part.cylinderRadius = state.cylinderRadius;
+            part.cylinderHeight = state.cylinderHeight;
+            part.cylinderBaseOffset = state.cylinderBaseOffset;
+            part.cone.bottomRadius = state.coneBottomRadius;
+            part.cone.topRadius = state.coneTopRadius;
+            part.cone.height = state.coneHeight;
+            part.cone.baseOffset = state.coneBaseOffset;
+            Bnd_Box bounds;
+            BRepBndLib::Add(part.shape, bounds);
+            if (bounds.IsVoid()) throw std::runtime_error("Part has no bounds.");
+            double xmin, ymin, zmin, xmax, ymax, zmax;
+            bounds.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+            part.min = {xmin, ymin, zmin}; part.max = {xmax, ymax, zmax};
+            part.baseMin = part.min; part.baseMax = part.max;
+            part.presentation = new AIS_Shape(part.shape);
+            part.presentation->SetColor(Quantity_Color(part.color.redF(), part.color.greenF(),
+                part.color.blueF(), Quantity_TOC_RGB));
+            part.presentation->SetLocalTransformation(part.orientation);
+            imported.push_back(std::move(part));
+        }
+        initializeViewer();
+        const Handle(Graphic3d_Camera) camera=new Graphic3d_Camera(view_->Camera());
+        camera->SetEyeAndCenter(snapshot.camera.eye,snapshot.camera.center);
+        camera->SetUp(snapshot.camera.up);
+        camera->SetScale(snapshot.camera.scale);
+        camera->SetProjectionType(static_cast<Graphic3d_Camera::Projection>(snapshot.camera.projectionType));
+        // Prepare every presentation before replacing the document. Kernel or
+        // graphics failures still leave the old geometry and history intact.
+        for (auto& loaded : imported) {
+            context_->Display(loaded.presentation, Standard_False);
+            context_->SetDisplayMode(loaded.presentation, AIS_Shaded, Standard_False);
+            context_->Deactivate(loaded.presentation);
+            if (!loaded.visible) context_->Erase(loaded.presentation,Standard_False);
+            if (loaded.visible)
+                context_->Activate(loaded.presentation,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
+        }
+        resetDocument();
+        boxes_=std::move(imported);
+        partCount_=static_cast<int>(boxes_.size());
+        view_->SetCamera(camera);
+        view_->ZFitAll();
+        view_->Redraw();
+        emit documentReplaced();
+        emit partsChanged();
+        error.clear();
+        return true;
+    } catch (const Standard_Failure& e) {
+        error = QString::fromUtf8(e.GetMessageString());
+    } catch (const std::exception& e) {
+        error = QString::fromUtf8(e.what());
+    }
+    if (!context_.IsNull()) {
+        for (const auto& part:imported)
+            if (!part.presentation.IsNull()) context_->Remove(part.presentation,Standard_False);
+        if (!view_.IsNull()) view_->Redraw();
+    }
+    return false;
+}
 bool CadViewport::beginFaceDrag(const QPoint& origin) {
     if (context_.IsNull()) return false;
     context_->MoveTo(origin.x(), origin.y(), view_, Standard_False);
@@ -1113,12 +1403,12 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
     if (part.conePrimitive && !movePartMode_) {
         if (!pickConeArrow(origin)) return false;
     } else if (faceArrow_.IsNull()) return false;
-    gp_Pnt center = (part.cylinderPrimitive || part.spherePrimitive || part.conePrimitive) && !movePartMode_ ? primitiveArrowOrigin_ :
+    gp_Pnt center = (part.cylinderPrimitive || part.spherePrimitive || part.conePrimitive || cylindricalFacePull_) && !movePartMode_ ? primitiveArrowOrigin_ :
         gp_Pnt((part.min[0]+part.max[0])*0.5,(part.min[1]+part.max[1])*0.5,
                (part.min[2]+part.max[2])*0.5);
-    gp_Vec outward = (part.cylinderPrimitive || part.spherePrimitive || part.conePrimitive) && !movePartMode_ ?
+    gp_Vec outward = (part.cylinderPrimitive || part.spherePrimitive || part.conePrimitive || cylindricalFacePull_) && !movePartMode_ ?
         gp_Vec(primitiveArrowDirection_) : gp_Vec(0,0,0);
-    if ((!part.cylinderPrimitive && !part.spherePrimitive && !part.conePrimitive) || movePartMode_) {
+    if ((!part.cylinderPrimitive && !part.spherePrimitive && !part.conePrimitive && !cylindricalFacePull_) || movePartMode_) {
         center.SetCoord(arrowAxis_+1,arrowMax_?part.max[arrowAxis_]:part.min[arrowAxis_]);
         outward.SetCoord(arrowAxis_+1,arrowMax_?1.0:-1.0);
     }
@@ -1138,13 +1428,14 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
     const double distance = std::hypot(origin.x() - (x0 + t * dx),
                                        origin.y() - (y0 + t * dy));
     if (distance > 12.0) return false;
-    if ((part.cylinderPrimitive || part.spherePrimitive || part.conePrimitive) && !movePartMode_) {
+    if ((part.cylinderPrimitive || part.spherePrimitive || part.conePrimitive || cylindricalFacePull_) && !movePartMode_) {
         primitivePullDragging_ = true;
         primitivePullBefore_ = {arrowPartIndex_,part.min,part.max,part.min,part.max,
             part.orientation,part.orientation};
         primitivePullBefore_.beforeShape = part.shape;
         primitivePullBefore_.beforeCone = part.cone;
-        primitivePullBefore_.beforeRadius = part.spherePrimitive ? part.sphereRadius : part.cylinderRadius;
+        primitivePullBefore_.beforeRadius = cylindricalFacePull_ ? cylindricalPullRadius_
+            : part.spherePrimitive ? part.sphereRadius : part.cylinderRadius;
         primitivePullBefore_.beforeHeight = part.cylinderHeight;
         primitivePullBefore_.beforeBaseOffset = part.cylinderBaseOffset;
         dragIndex_ = arrowPartIndex_;
@@ -1160,8 +1451,12 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
         context_->MoveTo(-1,-1,view_,Standard_False);
         dragDimension_->setToolTip(primitivePullIsDiameter()
             ? tr("Final diameter in mm") : tr("Final height in mm"));
-        showDragDimension(origin);
         dragDimension_->setText(primitivePullDimensionText());
+        // The dimension editor is reparented into the floating command panel
+        // by beginCommandSession().  Positioning it with viewport coordinates
+        // would move it outside that parent and leave only a blank panel
+        // visible.  Let the panel layout place the editor instead.
+        showCommandControls(origin);
         return true;
     }
     dragIndex_ = arrowPartIndex_;
@@ -1372,6 +1667,7 @@ double CadViewport::primitivePullStartDimension() const {
                                      : primitivePullBefore_.beforeHeight;
 }
 bool CadViewport::primitivePullIsDiameter() const {
+    if (cylindricalFacePull_) return true;
     if (boxes_[dragIndex_].conePrimitive)
         return conePullTarget_ == ConePullTarget::BottomDiameter
             || conePullTarget_ == ConePullTarget::TopDiameter;
@@ -1381,7 +1677,8 @@ bool CadViewport::primitivePullIsDiameter() const {
 QString CadViewport::primitivePullDimensionText() const {
     const auto& part = boxes_[dragIndex_];
     const bool diameter = primitivePullIsDiameter();
-    const double dimension = part.conePrimitive
+    const double dimension = cylindricalFacePull_ ? 2.0*cylindricalPullRadius_
+        : part.conePrimitive
         ? (diameter ? 2.0*(conePullTarget_ == ConePullTarget::BottomDiameter
             ? part.cone.bottomRadius : part.cone.topRadius) : part.cone.height)
         : (diameter ? 2.0*(part.spherePrimitive ? part.sphereRadius : part.cylinderRadius)
@@ -1444,6 +1741,7 @@ void CadViewport::setPartVisible(size_t index, bool visible) {
         if (isPartVisible(selected))
             remaining.push_back(selected);
     selectParts(remaining);
+    emit partsChanged();
 }
 bool CadViewport::isPartVisible(size_t index) const {
     return isPartActive(index) && boxes_[index].visible;
@@ -1494,6 +1792,7 @@ void CadViewport::refreshPartSelection() {
 }
 bool CadViewport::applyPrimitivePull(double distance) {
     if (dragIndex_ >= boxes_.size() || context_.IsNull()) return false;
+    if (cylindricalFacePull_) return applyCylindricalFacePull(distance);
     auto& part = boxes_[dragIndex_];
     if (!std::isfinite(distance)) return false;
     if (part.conePrimitive) {
@@ -1599,6 +1898,70 @@ bool CadViewport::applyPrimitivePull(double distance) {
     updateFaceArrow();
     view_->Redraw();
     return true;
+}
+bool CadViewport::applyCylindricalFacePull(double distance) {
+    if (dragIndex_ >= boxes_.size() || cylindricalPullFace_.IsNull()
+        || primitivePullBefore_.beforeShape.IsNull() || !std::isfinite(distance)) return false;
+    const double radius = primitivePullBefore_.beforeRadius + distance;
+    if (radius <= 0.01) {
+        if (commandSession_) commandSession_->geometryError = tr("Cylinder radius must be greater than 0.01 mm.");
+        return false;
+    }
+    try {
+        const double offsetDistance = cylindricalPullFace_.Orientation()==TopAbs_REVERSED ? -distance : distance;
+        BRepOffset_MakeOffset offset;
+        // Isolate kernel work from the source snapshot, including tolerances
+        // and surface data. Every preview starts from the original geometry.
+        BRepBuilderAPI_Copy isolated(primitivePullBefore_.beforeShape,true,false);
+        const auto target=TopoDS::Face(isolated.ModifiedShape(cylindricalPullFace_));
+        offset.Initialize(isolated.Shape(),0.0,1.0e-7,
+                          BRepOffset_Skin,true,false,GeomAbs_Intersection);
+        offset.SetOffsetOnFace(target,offsetDistance);
+        offset.MakeOffsetShape();
+        double volume=0.0;
+        TopoDS_Shape candidate = offset.Shape();
+        // MakeOffset returns a closed shell for some cut solids.  Promote that
+        // single closed shell to a solid; no new faces or volumes are created.
+        if (offset.IsDone()) {
+            int solids=0, shells=0;
+            TopoDS_Shell shell;
+            for (TopExp_Explorer e(candidate,TopAbs_SOLID);e.More();e.Next()) ++solids;
+            for (TopExp_Explorer e(candidate,TopAbs_SHELL);e.More();e.Next()) {
+                ++shells; shell=TopoDS::Shell(e.Current());
+            }
+            if (solids==0 && shells==1 && BRep_Tool::IsClosed(shell)) {
+                BRepBuilderAPI_MakeSolid makeSolid;
+                makeSolid.Add(shell);
+                if (makeSolid.IsDone()) candidate=makeSolid.Solid();
+            }
+        }
+        if (!offset.IsDone() || !BRepReconstruction::validSolid(candidate,volume)) {
+            if (commandSession_) commandSession_->geometryError = tr("The cylindrical face could not be resized while preserving a closed solid.");
+            return false;
+        }
+        auto& part=boxes_[dragIndex_];
+        part.shape=candidate;
+        part.geometryKind=CadPart::GeometryKind::GeneralBRep;
+        part.cylinderPrimitive=part.spherePrimitive=part.conePrimitive=false;
+        Bnd_Box bounds;
+        BRepBndLib::AddOptimal(part.shape,bounds,false,false);
+        bounds.Get(part.min[0],part.min[1],part.min[2],part.max[0],part.max[1],part.max[2]);
+        part.baseMin=part.min;part.baseMax=part.max;
+        primitiveArrowOrigin_.Translate(gp_Vec(primitiveArrowDirection_)*(radius-cylindricalPullRadius_));
+        cylindricalPullRadius_=radius;
+        context_->ClearSelected(Standard_False);
+        part.presentation->SetShape(part.shape);
+        part.presentation->SetLocalTransformation(part.orientation);
+        context_->Redisplay(part.presentation,Standard_False);
+        context_->Deactivate(part.presentation);
+        context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
+        updateFaceArrow();
+        view_->Redraw();
+        return true;
+    } catch (const Standard_Failure&) {
+        if (commandSession_) commandSession_->geometryError = tr("Open CASCADE could not safely resize the cylindrical face.");
+        return false;
+    }
 }
 void CadViewport::restorePullChange(const PullChange& change, bool after) {
     if (change.faceChange) {
@@ -2034,6 +2397,9 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
 void CadViewport::updateSelectedFaceArrow(const QPoint& point) {
     // Keep one manipulation arrow as an anchor for a multi-face selection.
     // The grouped drag operation will use all selected face owners.
+    cylindricalFacePull_=false;
+    cylindricalPullFace_.Nullify();
+    cylindricalPullRadius_=0.0;
     if (context_->NbSelected() >= 1) {
         context_->InitSelected();
         Handle(StdSelect_BRepOwner) arrowOwner =
@@ -2044,6 +2410,45 @@ void CadViewport::updateSelectedFaceArrow(const QPoint& point) {
             for (size_t i = 0; i < boxes_.size(); ++i) {
                 if (boxes_[i].presentation != selected) continue;
                 const BRepAdaptor_Surface surf(TopoDS::Face(arrowOwner->Shape()));
+                if (!movePartMode_ && surf.GetType()==GeomAbs_Cylinder
+                    && !boxes_[i].cylinderPrimitive && !boxes_[i].spherePrimitive
+                    && !boxes_[i].conePrimitive) {
+                    double volume=0.0;
+                    if (!BRepReconstruction::validSolid(boxes_[i].shape,volume)) break;
+                    const auto cylinder=surf.Cylinder();
+                    const gp_Vec axis(cylinder.Axis().Direction());
+                    // Choose a camera-facing radial direction. A fixed local
+                    // X axis can point into the screen and make a zero-length
+                    // projected arrow. The topmost layer keeps an inner wall's
+                    // outward (diameter-increasing) handle visible over material.
+                    Standard_Real x,y,z,rx,ry,rz,ux,uy,uz;
+                    view_->Convert(point.x(),point.y(),x,y,z);
+                    view_->Convert(point.x()+40,point.y(),rx,ry,rz);
+                    view_->Convert(point.x(),point.y()+40,ux,uy,uz);
+                    const auto inverse=boxes_[i].orientation.Inverted();
+                    gp_Vec radial=gp_Vec(gp_Pnt(x,y,z),gp_Pnt(rx,ry,rz)).Transformed(inverse);
+                    gp_Vec alternate=gp_Vec(gp_Pnt(x,y,z),gp_Pnt(ux,uy,uz)).Transformed(inverse);
+                    radial-=axis.Multiplied(radial.Dot(axis));
+                    alternate-=axis.Multiplied(alternate.Dot(axis));
+                    if (alternate.SquareMagnitude()>radial.SquareMagnitude()) radial=alternate;
+                    if (radial.Magnitude()<1.0e-6) break;
+                    radial.Normalize();
+                    GProp_GProps properties;
+                    BRepGProp::SurfaceProperties(TopoDS::Face(arrowOwner->Shape()),properties);
+                    const gp_Vec axisToCenter(cylinder.Axis().Location(),properties.CentreOfMass());
+                    const gp_Pnt axialCenter=cylinder.Axis().Location().Translated(
+                        axis.Multiplied(axisToCenter.Dot(axis)));
+                    cylindricalFacePull_=true;
+                    cylindricalPullFace_=TopoDS::Face(arrowOwner->Shape());
+                    cylindricalPullRadius_=cylinder.Radius();
+                    primitiveArrowDirection_=gp_Dir(radial);
+                    primitiveArrowOrigin_=axialCenter.Translated(radial.Multiplied(cylindricalPullRadius_));
+                    arrowPartIndex_=i;
+                    arrowVisible_=true;
+                    updateFaceArrow();
+                    emit statusMessage(tr("Cylindrical face: drag the arrow or enter the final diameter in mm."));
+                    break;
+                }
                 if (boxes_[i].conePrimitive && !movePartMode_) {
                     const auto& part = boxes_[i];
                     Standard_Real x,y,z,rx,ry,rz;

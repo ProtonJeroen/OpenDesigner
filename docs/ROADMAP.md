@@ -14,6 +14,41 @@
 - STEP, IGES, STL
 - GLB/glTF and FBX import/export
 
+## v0.3.7 — Native documents
+
+- File → New/Open/Save/Save As and Ctrl+N/Ctrl+O/Ctrl+S use the native `.odc`
+  document format.
+- BinXCAF/XCAF stores exact local B-Reps for multiple Parts in a root assembly,
+  including stable IDs, names, colors, visibility and placement.
+- Camera state is stored on Save without making ordinary camera navigation dirty.
+- Unsaved changes are shown in the title and protected by New/Open/close prompts;
+  failed loads and saves leave the current document intact.
+- New and successful Open reset selection, previews, manipulators and Undo/Redo;
+  Save and Save As preserve them.
+- Round-trip coverage verifies multiple Parts, exact geometry metrics, metadata,
+  transforms, camera state and malformed-file refusal. See
+  [Native documents](NATIVE_DOCUMENTS.md).
+- Pull capabilities are derived from the current B-Rep, independent of creation
+  history and stored primitive flags. Complete supported analytic primitives
+  require validity and material-equivalence certification; general cylindrical
+  walls use face offsets. Save/Open regressions exercise visible cone/hole
+  handles, manipulation and Cancel with missing flags; cut cones are not
+  rebuilt as whole primitives. Activation redraws immediately and hole arrows
+  remain visible over surrounding material.
+
+- Atomic replacement uses Qt's safe-save transaction after BinXCAF completes;
+  failed writes remove staging files and leave existing documents intact. Open
+  stages a read-only source in the system temporary directory and rejects wrong
+  formats before entering the OCCT reader.
+- UI regressions verify Save/Save As history and selection preservation,
+  confirmed-state saving during Pull previews, camera-only Save, dirty prompts,
+  failed operations, full browser rebuilding and New/Open history/tool reset.
+- The user confirmed Native Save/Open and the cone/hole Pull interaction on
+  Fedora KDE on 2026-10-21. v0.3.7 is complete within schema-v1 scope: one root
+  assembly, no persisted Undo/Redo or feature history, synchronous storage and
+  existing documented modeling limits. Nested assemblies, Windows/macOS runtime
+  validation and packaged distribution remain future work.
+
 OpenDesigner targets Windows, Linux and macOS. Version sections record implemented
 work and its limits; Next milestones and follow-up items describe planned work.
 
@@ -173,6 +208,6 @@ nonconvex cell partitions, persistent subshape IDs and cancellable kernel work.
   cleanup and the inclined L-shaped deletion on 2026-10-20. These are targeted
   desktop confirmations, not a claim of exhaustive platform validation.
 - v0.3.6 implementation is complete within the documented analytic scope.
-  The full CMake build and all 12 CTests cover geometry, blue preview, transactions,
+  The full CMake build and the v0.3.6 regression CTests cover geometry, blue preview, transactions,
   uniform popups, diagnostic roundtrips and cached history. Windows/macOS validation,
   unrestricted freeform reconstruction and packaged distribution remain future work.
