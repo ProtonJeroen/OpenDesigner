@@ -2,9 +2,11 @@
 
 OpenDesigner is an open-source cross-platform 3D direct-modeling application inspired by classic CoCreate SolidDesigner.
 
-**Status:** v0.3.6 Advanced Face Topology prototype; not a packaged release.
+**Status:** v0.3.7 Native Save/Open prototype; not a packaged release.
 The supplied Delete Face and Unite seam cases were manually confirmed by the user
-on 2026-10-20. Automated regression coverage and remaining scope limits are documented below.
+on 2026-10-20. Native Save/Open and the cone/hole Pull fixes were tested and
+confirmed by the user on Fedora KDE on 2026-10-21. Automated regression coverage
+and remaining scope limits are documented below.
 
 ## Prototype features
 - Qt 6 desktop window with dockable Structure Browser
@@ -23,9 +25,11 @@ on 2026-10-20. Automated regression coverage and remaining scope limits are docu
 - Material-preserving Boolean seam cleanup and uniform geometry failure popups
 - Structure Browser with names, color, visibility and stable Boolean result selection
 - Orbit, pan and zoom
+- Native `.odc` documents with File → New/Open/Save/Save As, exact B-Rep
+  round-trips, Part metadata, placements and saved camera state
 
 ## Build (Linux)
-Requires CMake 3.21+, a C++20 compiler, Qt 6.4+ Widgets and Open CASCADE visualization and modeling algorithms development libraries (including TKBO/TKBool/TKFeat).
+Requires CMake 3.21+, a C++20 compiler, Qt 6.4+ Widgets and Open CASCADE visualization, modeling, OCAF and data-exchange development libraries (including TKBO/TKBool/TKFeat and TKLCAF/TKXCAF/TKBinXCAF), plus libarchive development headers.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -60,6 +64,9 @@ Selection shortcuts, explicit context actions and eligibility: [Selection and co
 Face removal, conservative reconstruction limits and shared geometry error
 popups: [Delete Face](docs/DELETE_FACE.md).
 
+Native document storage, `.odc` schema v1, transaction-safe Save/Open and
+round-trip tests: [Native documents](docs/NATIVE_DOCUMENTS.md).
+
 The v0.3.6 interaction workflow retains passive selection: click Faces, Alt+click Parts,
 Ctrl to add/remove. Choose a context or Modeling action to show its manipulators.
 OK/Enter and Cancel/Esc completely close the function and remove all temporary UI;
@@ -84,7 +91,7 @@ exact OCCT B-Reps, selection, available operation parameters and diagnostics in 
 `build/OpenDesignerDebugModel model.zip --view` reloads an isolated read-only model
 and compares stored meshes, fresh triangulation and B-Rep wireframe. See
 [debug export instructions](docs/DEBUG_MODEL.md). This is not `.odc` Save/Open;
-that remains planned for v0.3.7. Building requires libarchive development headers
+that remains a separate diagnostic format from v0.3.7 `.odc` documents. Building requires libarchive development headers
 (`libarchive-devel` on Fedora).
 
 The exact supplied **Rotate Face +30° → Move Face +49 mm** case now retains

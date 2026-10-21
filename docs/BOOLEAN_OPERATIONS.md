@@ -67,8 +67,11 @@ Move/Rotate gizmos work on the result and use its B-Rep volume centroid. Use the
 Structure Browser to rename it, hide/show it, or choose **Color...** from its
 context menu. Ctrl+D duplicates the result, preserving geometry, transform and
 color. Boolean results can be operands in further Booleans. General face-offset
-Pull is not implemented for arbitrary Boolean B-Reps; Box and primitive-specific
-Pull commands are not applied to those results.
+Pull remains refused for arbitrary Boolean B-Reps. A certified analytical
+cylindrical face is an exception: Pull / Resize can change its final diameter
+when OCCT can offset the selected wall and rebuild one closed solid, including
+through and blind cylindrical holes. Box and primitive-specific Pull commands
+are not applied to unrelated Boolean faces.
 
 ## Empty results and errors
 

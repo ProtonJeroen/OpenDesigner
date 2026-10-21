@@ -82,10 +82,15 @@ void CadViewport::setSelectionMode(SelectionMode mode) {
 bool CadViewport::supportsResize(const SelectionContext& selection) const {
     if(selection.kind!=SelectionContext::Kind::Faces || selection.faces.empty()) return false;
     for(const auto& selected:selection.faces) {
-        const auto& part=boxes_[selected.partIndex];
+        auto part=boxes_[selected.partIndex];
+        const bool primitive=recognizePullPrimitive(part);
         const BRepAdaptor_Surface surface(selected.face);
-        if(selection.faces.size()==1 && (part.cylinderPrimitive || part.spherePrimitive || part.conePrimitive)) return true;
-        if(part.geometryKind!=CadPart::GeometryKind::Box || surface.GetType()!=GeomAbs_Plane) return false;
+        if(selection.faces.size()==1 && primitive) return true;
+        if(selection.faces.size()==1 && surface.GetType()==GeomAbs_Cylinder) {
+            double volume=0.0;
+            return BRepReconstruction::validSolid(part.shape,volume);
+        }
+        if(!primitive || part.geometryKind!=CadPart::GeometryKind::Box || surface.GetType()!=GeomAbs_Plane) return false;
         const auto direction=surface.Plane().Axis().Direction();
         bool side=false;
         for(int axis=0;axis<3;++axis) if(std::abs(direction.Coord(axis+1))>0.999) {
@@ -209,6 +214,9 @@ void CadViewport::resetModelingTools() {
     movePartMode_=directMoveMode_=rotateMode_=pullMode_=moveFacePicking_=false;
     draggingFace_=draggingRotation_=primitivePullDragging_=multiFaceDragging_=groupRotationDragging_=false;
     dimensionEditing_=primitivePullEditing_=multiFaceEditing_=false;
+    cylindricalFacePull_=false;
+    cylindricalPullFace_.Nullify();
+    cylindricalPullRadius_=0.0;
     hideFaceArrow(); hideMoveAxes(); hideRotationRings(); clearMultiFaceHighlight();
     if(!moveFaceArrow_.IsNull() && !context_.IsNull()) { context_->Remove(moveFaceArrow_,Standard_False); moveFaceArrow_.Nullify(); }
     if(!faceRotationManipulator_.IsNull() && !context_.IsNull()) { context_->Remove(faceRotationManipulator_,Standard_False); faceRotationManipulator_.Nullify(); }
@@ -238,7 +246,18 @@ void CadViewport::startPrimitivePull() {
         return;
     }
     pullMode_=true;
+    for (const auto index:selection.parts) {
+        auto& part=boxes_[index];
+        if (!recognizePullPrimitive(part)) {
+            part.cylinderPrimitive=part.spherePrimitive=part.conePrimitive=false;
+            part.geometryKind=CadPart::GeometryKind::GeneralBRep;
+        }
+    }
     updateSelectedFaceArrow(previous_);
+    // All arrows are displayed with deferred viewer updates. Activation must
+    // render them even when the cursor does not move after the menu closes.
+    view_->Invalidate();
+    view_->Redraw();
     emit statusMessage(tr("Pull / Resize: drag an orange arrow; OK/Enter confirms, Cancel/Esc restores the original."));
 }
 void CadViewport::beginPullSession() {

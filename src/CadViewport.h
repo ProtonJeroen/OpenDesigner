@@ -26,12 +26,17 @@ class QContextMenuEvent;
 #include <Aspect_DisplayConnection.hxx>
 #include <vector>
 #include <array>
+#include "NativeDocument.h"
 
 class CadViewport final : public QWidget {
     Q_OBJECT
 public:
     explicit CadViewport(QWidget* parent = nullptr);
     bool exportDebugModel(const QString& path, QString& error, const QJsonArray& browserSelection = {}) const;
+    bool exportDocumentSnapshot(NativeDocumentSnapshot& snapshot) const;
+    bool importDocumentSnapshot(const NativeDocumentSnapshot& snapshot, QString& error);
+    void resetDocument();
+    size_t partSlotCount() const { return boxes_.size(); }
     void addBox();
     void addCylinder();
     void addSphere();
@@ -81,6 +86,7 @@ signals:
     void geometryOperationFailed(const QString& operation, const QString& reason);
     void selectionModeChanged(SelectionMode mode);
     void transformModesChanged(bool faceNormalMove, bool move, bool rotate);
+    void documentReplaced();
 protected:
     QPaintEngine* paintEngine() const override;
     void paintEvent(QPaintEvent*) override;
@@ -93,6 +99,7 @@ protected:
     bool eventFilter(QObject*, QEvent*) override;
 private:
     friend struct CadViewportPullTest;
+    friend struct NativeDocumentSessionTest;
     friend struct BooleanOperationsTest;
     friend struct MoveFaceTest;
     friend struct SelectionContextTest;
@@ -146,8 +153,10 @@ private:
         bool visible = true;
         bool active = true;
         QString name;
+        QString persistentId;
         QColor color = QColor(211,211,211);
     };
+    bool recognizePullPrimitive(CadPart& part) const;
     struct BooleanChange {
         std::vector<size_t> sources;
         std::vector<CadPart> sourceStates;
@@ -260,6 +269,7 @@ private:
     void resetModelingTools();
     void beginPullSession();
     bool previewPrimitivePull(double value);
+    bool applyCylindricalFacePull(double distance);
     bool pullMode_ = false;
     bool calculateBoolean(BooleanOperation operation, const std::vector<size_t>& parts,
                           std::optional<size_t> target, bool keepTools, bool previewOnly);
@@ -325,6 +335,9 @@ private:
     gp_Dir primitiveArrowDirection_ = gp_Dir(1,0,0);
     bool primitivePullDragging_ = false;
     bool primitivePullEditing_ = false;
+    bool cylindricalFacePull_ = false;
+    TopoDS_Face cylindricalPullFace_;
+    double cylindricalPullRadius_ = 0.0;
     PullChange primitivePullBefore_;
 
     std::vector<CadPart> boxes_;
