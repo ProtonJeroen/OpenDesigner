@@ -101,7 +101,7 @@ QString idFromLabel(const TDF_Label& label) {
     return value.startsWith(kPartIdPrefix) ? value.mid(int(std::strlen(kPartIdPrefix))) : QString();
 }
 
-NativePartState readPart(const TDF_Label& label) {
+NativePartState readPart(const TDF_Label& label, const Handle(XCAFDoc_ColorTool)& colors) {
     NativePartState part;
     part.id = idFromLabel(label);
     Handle(TDataStd_Name) name;
@@ -115,9 +115,9 @@ NativePartState readPart(const TDF_Label& label) {
         part.transform = XCAFDoc_ShapeTool::GetLocation(label).Transformation();
     }
     Quantity_Color color;
-    if (XCAFDoc_ColorTool::GetColor(label, XCAFDoc_ColorSurf, color))
+    if (colors->GetColor(label, XCAFDoc_ColorSurf, color))
         part.color = QColor::fromRgbF(color.Red(), color.Green(), color.Blue());
-    part.visible = XCAFDoc_ColorTool::IsVisible(label) != Standard_False;
+    part.visible = colors->IsVisible(label) != Standard_False;
     for (TDF_ChildIterator it(label); it.More(); it.Next()) {
         Handle(TDataStd_RealArray) values;
         if (!it.Value().FindAttribute(TDataStd_RealArray::GetID(), values) || values->Lower()!=0 || values->Upper() < 7) continue;
@@ -260,6 +260,7 @@ bool NativeDocumentStorage::load(const QString& path, NativeDocumentSnapshot& sn
         if (status != PCDM_RS_OK || document.IsNull())
             throw std::runtime_error(QString("Cannot open the OpenDesigner document (status %1).").arg(static_cast<int>(status)).toStdString());
         const auto shapeTool = XCAFDoc_DocumentTool::ShapeTool(document->Main());
+        const auto colors = XCAFDoc_DocumentTool::ColorTool(document->Main());
         TDF_LabelSequence freeShapes; shapeTool->GetFreeShapes(freeShapes);
         TDF_Label root;
         for (int i = 1; i <= freeShapes.Length(); ++i) {
@@ -272,7 +273,7 @@ bool NativeDocumentStorage::load(const QString& path, NativeDocumentSnapshot& sn
         NativeDocumentSnapshot loaded; loaded.schemaVersion = CurrentSchemaVersion;
         if (!readCamera(root, loaded.camera)) throw std::runtime_error("Document contains invalid camera metadata.");
         for (int i = 1; i <= components.Length(); ++i) {
-            auto part = readPart(components.Value(i));
+            auto part = readPart(components.Value(i), colors);
             if (part.id.isEmpty()) part.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
             if (part.name.isEmpty()) part.name = QStringLiteral("Part %1").arg(i);
             if (part.shape.IsNull()) throw std::runtime_error("Document contains an empty Part.");
