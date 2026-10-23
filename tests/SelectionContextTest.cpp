@@ -361,7 +361,15 @@ struct SelectionContextTest {
 
 };
 void runNativeDocumentSessions();
+void runPartlessDocuments();
 void runConstructionSessions();
+void runSketchSessions();
+void runSketchDrawing();
+void runSketchArcDirections();
+void runSketchOverdrawSessions();
+void runSketchOverdrawTraversal();
+void runSketchConstructionSessions();
+void runSketchReleaseSessions();
 int main(int argc,char** argv) {
 #if defined(Q_OS_LINUX)
     if(qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM") && !qEnvironmentVariableIsEmpty("DISPLAY"))qputenv("QT_QPA_PLATFORM","xcb");
@@ -369,7 +377,15 @@ int main(int argc,char** argv) {
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc,argv);
     try {
-        if(app.arguments().contains("--documents")) runNativeDocumentSessions();
+        if(app.arguments().contains("--sketch-release")) runSketchReleaseSessions();
+        else if(app.arguments().contains("--partless")) runPartlessDocuments();
+        else if(app.arguments().contains("--arc-direction")) runSketchArcDirections();
+        else if(app.arguments().contains("--overdraw-traversal")) runSketchOverdrawTraversal();
+        else if(app.arguments().contains("--sketch-construction")) runSketchConstructionSessions();
+        else if(app.arguments().contains("--overdraw")) runSketchOverdrawSessions();
+        else if(app.arguments().contains("--drawing")) runSketchDrawing();
+        else if(app.arguments().contains("--sketch")) runSketchSessions();
+        else if(app.arguments().contains("--documents")) runNativeDocumentSessions();
         else if(app.arguments().contains("--construction")) runConstructionSessions();
         else { SelectionContextTest::run(); SelectionContextTest::historyDeselect(); }
         std::cout<<"Selection, command lifecycle and document checks passed.\n";return 0;

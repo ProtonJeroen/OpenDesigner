@@ -9,6 +9,7 @@
 #include <algorithm>
 
 void CadViewport::deleteFace() {
+    endSketchEditing();
     cancelCommandSession();
     const auto selection=selectionContext();
     if(selection.kind!=SelectionContext::Kind::Faces||selection.faces.empty()) {

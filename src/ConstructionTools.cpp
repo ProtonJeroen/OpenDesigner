@@ -126,16 +126,23 @@ void CadViewport::rebuildConstructionPresentations() {
     if(!view_.IsNull()) {view_->Invalidate();view_->Redraw();}
 }
 void CadViewport::restoreConstructions(const std::vector<Object>& objects) {
-    constructions_=objects;advanceNameCounters(objects,constructionNameCounters_);rebuildConstructionPresentations();emit constructionsChanged();
+    constructions_=objects;validateActiveSketchContext();advanceNameCounters(objects,constructionNameCounters_);rebuildConstructionPresentations();rebuildSketchPresentations();emit constructionsChanged();emit sketchEntitiesChanged();
 }
 bool CadViewport::commitConstructions(const std::vector<Object>& objects) {
     bool same=objects.size()==constructions_.size();
     if(same) for(size_t i=0;i<objects.size();++i) if(!equivalent(objects[i],constructions_[i])) {same=false;break;}
     if(same) return false;
-    PullChange change{};change.constructionChange=std::make_shared<ConstructionChange>(ConstructionChange{constructions_,objects});
+    auto retained=sketchEntities_;
+    std::erase_if(retained,[&](const auto& e){return std::none_of(objects.begin(),objects.end(),[&](const auto& o){return o.id==e.workplaneId && o.kind==Kind::Workplane;});});
+    PullChange change{};change.constructionChange=std::make_shared<ConstructionChange>(ConstructionChange{constructions_,objects,sketchEntities_,retained});
+    sketchEntities_=std::move(retained);
     restoreConstructions(objects);undoStack_.push_back(change);redoStack_.clear();updateHistoryActions();return true;
 }
 void CadViewport::selectConstructions(const QStringList& ids) {
+    if(!activeSketchWorkplaneId_.isEmpty() && ids.size()==1) {
+        const auto* owner=constructionObject(ids.front());
+        if(owner && owner->kind==Kind::Workplane && owner->id!=activeSketchWorkplaneId_) activateSketchWorkplane(owner->id);
+    }
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Construction) {
         auto& s=*commandSession_->construction;
         if(s.pickRole>=0) {
@@ -144,14 +151,14 @@ void CadViewport::selectConstructions(const QStringList& ids) {
             return;
         }
     }
-    cancelCommandSession();initializeViewer();selectedPartIndices_.clear();selectedConstructionIds_.clear();
+    cancelCommandSession();clearSketchSelection();initializeViewer();selectedPartIndices_.clear();selectedConstructionIds_.clear();
     context_->ClearSelected(Standard_False);
     for(const auto& id:ids) if(const auto* object=constructionObject(id)) {
         if(selectedConstructionIds_.contains(id)) continue;
         selectedConstructionIds_.push_back(id);
         if(object->visible && object->selectable) context_->AddOrRemoveSelected(constructionPresentations_.at(id),Standard_False);
     }
-    emit partSelectionChanged({});emit constructionSelectionChanged(selectedConstructionIds_);view_->Redraw();
+    emit partSelectionChanged({});emit constructionSelectionChanged(selectedConstructionIds_);refreshSketchPicking();view_->Redraw();
 }
 bool CadViewport::updateConstruction(const Object& object) {
     QString error;if(!constructionObject(object.id) || !valid(object,error)) {emit statusMessage(error);return false;}
@@ -172,13 +179,18 @@ void CadViewport::fitConstructions(const QStringList& ids) {
             bounds.Add(gp_Pnt(p.X()-e,p.Y()-e,p.Z()-e));bounds.Add(gp_Pnt(p.X()+e,p.Y()+e,p.Z()+e));
         }
     }
-    if(!bounds.IsVoid()) {view_->FitAll(bounds,0.05,Standard_False);view_->ZFitAll();updateConstructionLabels();view_->Redraw();}
+    if(!bounds.IsVoid()) {view_->FitAll(bounds,0.05,Standard_False);stabilizeViewCamera();view_->ZFitAll();updateConstructionLabels();view_->Redraw();}
 }
 void CadViewport::populateConstructionMenu(QMenu& menu) {
     const auto ids=selectedConstructionIds_;
     if(ids.size()==1) if(const auto* object=constructionObject(ids.front())) {
         const auto add=[&](const QString& label,Method method) {auto* a=menu.addAction(label);connect(a,&QAction::triggered,this,[this,method,id=object->id]{startConstruction(method,id);});};
-        if(object->kind==Kind::Workplane) {add(tr("Move Workplane"),Method::PlaneMove);add(tr("Rotate Workplane"),Method::PlaneRotate);add(tr("Offset Workplane"),Method::PlaneOffset);add(tr("Normal Axis"),Method::AxisNormalPlane);}
+        if(object->kind==Kind::Workplane) {
+            auto* edit=menu.addAction(tr("Edit Sketch"));edit->setObjectName("context.edit_sketch");
+            connect(edit,&QAction::triggered,this,[this,id=object->id]{activateSketchWorkplane(id);});
+            auto* normal=menu.addAction(tr("Look Normal to Workplane"));
+            connect(normal,&QAction::triggered,this,[this,id=object->id]{activateSketchWorkplane(id);});
+            add(tr("Move Workplane"),Method::PlaneMove);add(tr("Rotate Workplane"),Method::PlaneRotate);add(tr("Offset Workplane"),Method::PlaneOffset);add(tr("Normal Axis"),Method::AxisNormalPlane);}
         else if(object->kind==Kind::Axis) {add(tr("Move Axis"),Method::AxisMove);add(tr("Rotate Axis"),Method::AxisRotate);add(tr("Point on Axis"),Method::PointOnAxis);add(tr("Workplane Normal through Point"),Method::PlaneNormalAxisPoint);add(tr("Workplane through Axis and Point"),Method::PlaneThroughAxisPoint);add(tr("Workplane at Angle"),Method::PlaneAxisAngle);}
         else {add(tr("Offset Point"),Method::PointOffset);add(tr("Edit Coordinates"),Method::PointXYZ);add(tr("Axis and Direction"),Method::AxisPointDirection);add(tr("Project Point"),Method::PointProject);}
         auto* lock=menu.addAction(object->selectable?tr("Lock selection"):tr("Unlock selection"));
@@ -199,6 +211,7 @@ void CadViewport::populateConstructionMenu(QMenu& menu) {
     connect(menu.addAction(tr("Delete Construction")),&QAction::triggered,this,[this,ids]{deleteConstructions(ids);});
 }
 void CadViewport::startConstruction(Method method,const QString& targetId) {
+    endSketchEditing();
     cancelCommandSession();initializeViewer();
     auto session=std::make_shared<ConstructionSessionState>();session->request.method=method;session->selection=selectedConstructionIds_;
     const auto& d=definition(method);
@@ -348,6 +361,16 @@ bool CadViewport::previewConstruction() {
             if(object->selectable) context_->Activate(presentation,object->kind==Kind::Workplane?AIS_Shape::SelectionMode(TopAbs_EDGE):0,Standard_False);
         }
     }
+    for(const auto& [id,p]:sketchPreviews_) context_->Remove(p,Standard_False);
+    sketchPreviews_.clear();
+    for(const auto& entity:sketchEntities_) if(const auto* owner=constructionObject(entity.workplaneId)) {
+        auto p=sketchPresentations_.at(entity.id);
+        if(validCandidate && entity.workplaneId==state.targetId && state.candidate.kind==Kind::Workplane) {
+            context_->Erase(p,Standard_False);
+            auto preview=sketchPresentation(entity,state.candidate,true);sketchPreviews_[entity.id]=preview;
+            displaySketchPresentation(entity,state.candidate,preview,true);
+        } else displaySketchPresentation(entity,*owner,p);
+    }
     clearConstructionHandles();
     if(validCandidate) {
         commandSession_->preview=constructionPresentation(state.candidate,true);
@@ -365,6 +388,8 @@ bool CadViewport::previewConstruction() {
 }
 void CadViewport::closeConstructionSession(bool confirm) {
     auto session=std::move(*commandSession_);commandSession_.reset();
+    for(const auto& [id,p]:sketchPreviews_) context_->Remove(p,Standard_False);
+    sketchPreviews_.clear();
     if(!session.preview.IsNull()) context_->Remove(session.preview,Standard_False);
     if(!constructionPreviewLabel_.IsNull()) {context_->Remove(constructionPreviewLabel_,Standard_False);constructionPreviewLabel_.Nullify();}
     clearConstructionHandles();constructionDragAxis_=-1;
@@ -375,15 +400,22 @@ void CadViewport::closeConstructionSession(bool confirm) {
         auto objects=constructions_;bool replaced=false;
         for(auto& object:objects) if(object.id==session.construction->targetId) {object=session.construction->candidate;replaced=true;break;}
         if(!replaced) {objects.push_back(session.construction->candidate);++constructionNameCounters_[size_t(session.construction->candidate.kind)];}
-        commitConstructions(objects);
+        if(!commitConstructions(objects)) rebuildSketchPresentations();
         selectConstructions({session.construction->candidate.id});
     } else {
-        rebuildConstructionPresentations();selectedConstructionIds_=session.construction->selection;
+        rebuildConstructionPresentations();rebuildSketchPresentations();selectedConstructionIds_=session.construction->selection;
         context_->ClearSelected(Standard_False);
         for(const auto& id:selectedConstructionIds_) if(const auto* object=constructionObject(id);object && object->visible && object->selectable)
             context_->AddOrRemoveSelected(constructionPresentations_.at(id),Standard_False);
-        if(selectedConstructionIds_.isEmpty()) for(const auto& owner:session.owners) context_->AddOrRemoveSelected(owner,Standard_False);
+        if(selectedConstructionIds_.isEmpty()) {
+            if(!selectedSketchIds_.empty()) {
+                // Sketch presentations were rebuilt; never restore their stale owners.
+                for(const auto& entity:sketchEntities_) if(selectedSketchIds_.contains(entity.id) && sketchPickable(entity))
+                    context_->AddOrRemoveSelected(sketchPresentations_.at(entity.id),Standard_False);
+            } else for(const auto& owner:session.owners) context_->AddOrRemoveSelected(owner,Standard_False);
+        }
         selectedPartIndices_=session.selection;emit partSelectionChanged(selectionContext().parts);emit constructionSelectionChanged(selectedConstructionIds_);
+        emit sketchSelectionChanged(selectedSketchIds_);
     }
     resetModelingTools();view_->Invalidate();view_->Redraw();setFocus();
 }

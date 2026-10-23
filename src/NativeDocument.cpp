@@ -34,9 +34,13 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <map>
+#include <type_traits>
 
 namespace {
-constexpr char kRootMarker[] = "OpenDesigner.RootAssembly.v2";
+constexpr char kRootMarker[] = "OpenDesigner.RootAssembly.v3";
+constexpr char kV2RootMarker[] = "OpenDesigner.RootAssembly.v2";
+constexpr char kSketchMarker[] = "OpenDesigner.Sketch.v1";
 constexpr char kLegacyRootMarker[] = "OpenDesigner.RootAssembly.v1";
 constexpr char kConstructionMarker[] = "OpenDesigner.Construction.v1";
 constexpr char kPartIdPrefix[] = "OpenDesigner.PartId.v1:";
@@ -227,6 +231,85 @@ void readConstructions(const TDF_Label& root,std::vector<Construction::Object>& 
     Construction::advanceNameCounters(objects,counters);
 }
 
+void putSketches(const TDF_Label& root,const std::vector<Sketch::Entity>& entities) {
+    const auto group=root.NewChild();
+    TDataStd_AsciiString::Set(group,TCollection_AsciiString(kSketchMarker));
+    // One 2D collection per Workplane. Entity values contain no source references.
+    std::map<QString,TDF_Label> planes;
+    int order=0;
+    for(const auto& entity:entities) {
+        if(!planes.contains(entity.workplaneId)) {
+            const auto plane=group.NewChild();planes[entity.workplaneId]=plane;
+            TDataStd_AsciiString::Set(plane,TCollection_AsciiString(entity.workplaneId.toUtf8().constData()));
+        }
+        const auto label=planes.at(entity.workplaneId).NewChild();
+        TDataStd_Integer::Set(label,order++);
+        TDataStd_AsciiString::Set(label,TCollection_AsciiString(entity.id.toUtf8().constData()));
+        TDataStd_Name::Set(label,TCollection_ExtendedString(entity.name.toStdU16String().c_str()));
+        auto flags=TDataStd_IntegerArray::Set(label,0,3);
+        flags->SetValue(0,int(entity.geometry.index()));flags->SetValue(1,int(entity.role));
+        flags->SetValue(2,entity.visible?1:0);flags->SetValue(3,entity.selectable?1:0);
+        std::vector<double> data;
+        std::visit([&](const auto& g) {
+            using T=std::decay_t<decltype(g)>;
+            if constexpr(std::is_same_v<T,Sketch::Segment>) data={g.start.x,g.start.y,g.end.x,g.end.y};
+            else if constexpr(std::is_same_v<T,Sketch::InfiniteLine>) data={g.origin.x,g.origin.y,g.direction.x,g.direction.y};
+            else if constexpr(std::is_same_v<T,Sketch::Circle>) data={g.center.x,g.center.y,g.radius};
+            else data={g.center.x,g.center.y,g.radius,g.startAngle,g.sweepAngle};
+        },entity.geometry);
+        auto values=TDataStd_RealArray::Set(label,0,int(data.size())-1);
+        for(int i=0;i<int(data.size());++i) values->SetValue(i,data[size_t(i)]);
+    }
+}
+void readSketches(const TDF_Label& root,std::vector<Sketch::Entity>& entities,const std::vector<Construction::Object>& constructions) {
+    bool found=false;QSet<QString> owners;
+    std::map<int,Sketch::Entity> ordered;
+    for(TDF_ChildIterator group(root);group.More();group.Next()) {
+        Handle(TDataStd_AsciiString) marker;
+        if(!group.Value().FindAttribute(TDataStd_AsciiString::GetID(),marker)
+           || !marker->Get().IsEqual(TCollection_AsciiString(kSketchMarker))) continue;
+        if(found) throw std::runtime_error("Duplicate 2D geometry group.");
+        found=true;
+        for(TDF_ChildIterator plane(group.Value());plane.More();plane.Next()) {
+            Handle(TDataStd_AsciiString) owner;
+            if(!plane.Value().FindAttribute(TDataStd_AsciiString::GetID(),owner)) throw std::runtime_error("Missing 2D Workplane ID.");
+            const auto ownerId=QString::fromUtf8(owner->Get().ToCString());
+            if(owners.contains(ownerId) || ownerId.isEmpty()) throw std::runtime_error("Invalid or duplicate 2D Workplane collection.");
+            if(std::none_of(constructions.begin(),constructions.end(),[&](const auto& o){return o.id==ownerId && o.kind==Construction::Kind::Workplane;}))
+                throw std::runtime_error("2D collection has no owning Workplane.");
+            owners.insert(ownerId);
+            for(TDF_ChildIterator record(plane.Value());record.More();record.Next()) {
+                const auto label=record.Value();
+                Handle(TDataStd_AsciiString) id;Handle(TDataStd_Name) name;Handle(TDataStd_Integer) order;
+                Handle(TDataStd_IntegerArray) flags;Handle(TDataStd_RealArray) values;
+                if(!label.FindAttribute(TDataStd_AsciiString::GetID(),id) || !label.FindAttribute(TDataStd_Name::GetID(),name)
+                   || !label.FindAttribute(TDataStd_Integer::GetID(),order) || order->Get()<0 || ordered.contains(order->Get())
+                   || !label.FindAttribute(TDataStd_IntegerArray::GetID(),flags) || flags->Lower()!=0 || flags->Upper()!=3
+                   || !label.FindAttribute(TDataStd_RealArray::GetID(),values) || values->Lower()!=0)
+                    throw std::runtime_error("Invalid 2D geometry metadata.");
+                const int kind=flags->Value(0);const int sizes[]={4,4,3,5};
+                if(kind<0 || kind>3 || values->Upper()!=sizes[kind]-1) throw std::runtime_error("Unsupported 2D geometry type or data size.");
+                for(int i=1;i<=3;++i) if(flags->Value(i)<0 || flags->Value(i)>1) throw std::runtime_error("Invalid 2D flags.");
+                for(int i=0;i<sizes[kind];++i) if(!std::isfinite(values->Value(i))) throw std::runtime_error("Non-finite 2D geometry.");
+                Sketch::Entity entity;entity.id=QString::fromUtf8(id->Get().ToCString());entity.workplaneId=ownerId;
+                entity.name=QString::fromUtf16(name->Get().ToExtString());entity.role=static_cast<Sketch::Role>(flags->Value(1));
+                entity.visible=flags->Value(2)!=0;entity.selectable=flags->Value(3)!=0;
+                const Sketch::Point point{values->Value(0),values->Value(1)};
+                if(kind==0) entity.geometry=Sketch::Segment{point,{values->Value(2),values->Value(3)}};
+                if(kind==1) entity.geometry=Sketch::InfiniteLine{point,{values->Value(2),values->Value(3)}};
+                if(kind==2) entity.geometry=Sketch::Circle{point,values->Value(2)};
+                if(kind==3) entity.geometry=Sketch::Arc{point,values->Value(2),values->Value(3),values->Value(4)};
+                ordered.emplace(order->Get(),std::move(entity));
+            }
+        }
+    }
+    if(!found) throw std::runtime_error("Missing 2D geometry group.");
+    for(auto& [order,entity]:ordered) {
+        if(order!=int(entities.size())) throw std::runtime_error("Invalid 2D entity order.");
+        entities.push_back(std::move(entity));
+    }
+}
+
 Handle(XCAFApp_Application) application() {
     auto app = XCAFApp_Application::GetApplication();
     static bool defined = false;
@@ -235,7 +318,7 @@ Handle(XCAFApp_Application) application() {
 }
 
 void validateSnapshot(const NativeDocumentSnapshot& snapshot) {
-    if (snapshot.schemaVersion != 1 && snapshot.schemaVersion != NativeDocumentStorage::CurrentSchemaVersion)
+    if ((snapshot.schemaVersion < 1 || snapshot.schemaVersion > NativeDocumentStorage::CurrentSchemaVersion))
         throw std::runtime_error("Unsupported OpenDesigner document schema.");
     if (!std::isfinite(snapshot.camera.scale) || snapshot.camera.scale <= 0.0)
         throw std::runtime_error("Invalid camera scale.");
@@ -248,6 +331,8 @@ void validateSnapshot(const NativeDocumentSnapshot& snapshot) {
         || camera.projectionType<0 || camera.projectionType>4) throw std::runtime_error("Invalid camera orientation or projection.");
     if(snapshot.schemaVersion==1 && !snapshot.constructions.empty())
         throw std::runtime_error("Schema v1 cannot store construction geometry.");
+    if(snapshot.schemaVersion<3 && !snapshot.sketchEntities.empty())
+        throw std::runtime_error("Schema v1/v2 cannot store 2D geometry.");
     QSet<QString> ids;
     for(int counter:snapshot.constructionNameCounters) if(counter<0) throw std::runtime_error("Invalid construction name counters.");
     for(const auto& object:snapshot.constructions) {
@@ -265,6 +350,9 @@ void validateSnapshot(const NativeDocumentSnapshot& snapshot) {
         for (int row=1;row<=3;++row) for (int column=1;column<=4;++column)
             if (!std::isfinite(part.transform.Value(row,column))) throw std::runtime_error("Invalid Part placement.");
     }
+    QString error;
+    if(!Sketch::validate(snapshot.sketchEntities,snapshot.constructions,ids.values(),error))
+        throw std::runtime_error(error.toStdString());
 }
 }
 
@@ -287,7 +375,7 @@ bool NativeDocumentStorage::save(const QString& path, const NativeDocumentSnapsh
             builder.Add(compound, part.shape.Moved(TopLoc_Location(part.transform)));
         const auto root = shapeTool->AddShape(compound, Standard_True, Standard_True);
         TDataStd_Name::Set(root, TCollection_ExtendedString("Assembly 1"));
-        TDataStd_AsciiString::Set(root, TCollection_AsciiString(snapshot.schemaVersion==1?kLegacyRootMarker:kRootMarker));
+        TDataStd_AsciiString::Set(root, TCollection_AsciiString(snapshot.schemaVersion==1?kLegacyRootMarker:snapshot.schemaVersion==2?kV2RootMarker:kRootMarker));
         if(snapshot.schemaVersion>=2) TDataStd_Integer::Set(root,snapshot.schemaVersion);
         TDF_LabelSequence components;
         if (!XCAFDoc_ShapeTool::GetComponents(root, components, Standard_False) || components.Length() != int(snapshot.parts.size()))
@@ -303,6 +391,7 @@ bool NativeDocumentStorage::save(const QString& path, const NativeDocumentSnapsh
         }
         putCamera(root, snapshot.camera);
         if(snapshot.schemaVersion>=2) putConstructions(root,snapshot.constructions,snapshot.constructionNameCounters);
+        if(snapshot.schemaVersion>=3) putSketches(root,snapshot.sketchEntities);
         TCollection_ExtendedString status;
         const auto tempName = temporaryPath.toStdU16String();
         const auto result = app->SaveAs(document, TCollection_ExtendedString(tempName.c_str()), status);
@@ -361,15 +450,16 @@ bool NativeDocumentStorage::load(const QString& path, NativeDocumentSnapshot& sn
             Handle(TDataStd_AsciiString) marker;
             if (!freeShapes.Value(i).FindAttribute(TDataStd_AsciiString::GetID(), marker)) continue;
             const bool legacy=marker->Get().IsEqual(TCollection_AsciiString(kLegacyRootMarker));
-            if(!legacy && !marker->Get().IsEqual(TCollection_AsciiString(kRootMarker))) {
+            const bool v2=marker->Get().IsEqual(TCollection_AsciiString(kV2RootMarker));
+            if(!legacy && !v2 && !marker->Get().IsEqual(TCollection_AsciiString(kRootMarker))) {
                 if(marker->Get().Search("OpenDesigner.RootAssembly.")==1)
                     throw std::runtime_error("Unsupported OpenDesigner document schema.");
                 continue;
             }
             if(!root.IsNull()) throw std::runtime_error("Multiple OpenDesigner root assemblies.");
-            root=freeShapes.Value(i);schema=legacy?1:2;
+            root=freeShapes.Value(i);schema=legacy?1:v2?2:3;
             Handle(TDataStd_Integer) version;
-            if(!legacy && (!root.FindAttribute(TDataStd_Integer::GetID(),version) || version->Get()!=2))
+            if(!legacy && (!root.FindAttribute(TDataStd_Integer::GetID(),version) || version->Get()!=schema))
                 throw std::runtime_error("Unsupported OpenDesigner document schema.");
         }
         if (root.IsNull()) throw std::runtime_error("Document has no OpenDesigner root assembly.");
@@ -385,6 +475,7 @@ bool NativeDocumentStorage::load(const QString& path, NativeDocumentSnapshot& sn
             loaded.parts.push_back(std::move(part));
         }
         if(schema>=2) readConstructions(root,loaded.constructions,loaded.constructionNameCounters);
+        if(schema>=3) readSketches(root,loaded.sketchEntities,loaded.constructions);
         validateSnapshot(loaded);
         app->Close(document);
         snapshot = std::move(loaded); error.clear(); return true;

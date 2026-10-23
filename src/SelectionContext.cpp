@@ -27,6 +27,12 @@ CadViewport::SelectionContext CadViewport::selectionContext() const {
     bool faces=false,parts=false;
     for (context_->InitSelected();context_->MoreSelected();context_->NextSelected()) {
         const auto object=context_->SelectedInteractive();
+        bool sketch=false;
+        for(const auto& [id,presentation]:sketchPresentations_) if(presentation==object) {
+            for(const auto& entity:sketchEntities_) if(entity.id==id && sketchPickable(entity)) result.sketches.push_back(id);
+            sketch=true;break;
+        }
+        if(sketch) continue;
         bool construction=false;
         for(const auto& [id,presentation]:constructionPresentations_) if(presentation==object) {
             if(const auto* state=constructionObject(id);state && state->visible && state->selectable) result.constructions.push_back(id);
@@ -46,6 +52,10 @@ CadViewport::SelectionContext CadViewport::selectionContext() const {
             if(!member) return {}; // Never offer an edit for stale topology.
             result.faces.push_back({index,face}); faces=true;
         } else parts=true;
+    }
+    if(!result.sketches.empty()) {
+        if(faces || parts || !result.constructions.empty()) return {};
+        result.kind=SelectionContext::Kind::Sketches;return result;
     }
     if(!result.constructions.empty()) {
         if(faces || parts) return {};
@@ -126,6 +136,7 @@ QMenu* CadViewport::createSelectionMenu(const QPoint& anchor) {
     }
     else if(selection.kind==SelectionContext::Kind::Parts) populatePartMenu(*menu,selection);
     else if(selection.kind==SelectionContext::Kind::Constructions) populateConstructionMenu(*menu);
+    else if(selection.kind==SelectionContext::Kind::Sketches) populateSketchMenu(*menu);
     else populateFaceMenu(*menu,selection,anchor);
     if(selection.kind==SelectionContext::Kind::Parts || selection.kind==SelectionContext::Kind::Faces) {
         menu->addSeparator();
@@ -136,8 +147,30 @@ QMenu* CadViewport::createSelectionMenu(const QPoint& anchor) {
             for(const auto& selected:selection.faces) if(isPartVisible(selected.partIndex))
                 BRepBndLib::Add(selected.face.Moved(TopLoc_Location(boxes_[selected.partIndex].orientation)),bounds,Standard_False);
             if(bounds.IsVoid() || view_.IsNull()) return;
-            view_->FitAll(bounds,0.1,Standard_False);view_->ZFitAll();updateConstructionLabels();view_->Redraw();
+            view_->FitAll(bounds,0.1,Standard_False);stabilizeViewCamera();view_->ZFitAll();updateConstructionLabels();view_->Redraw();
         });
+    }
+    if(!activeSketchWorkplaneId_.isEmpty()) {
+        menu->addSeparator();auto* drawing=menu->addMenu(tr("2D Drawing"));
+        auto* axes=drawing->addMenu(tr("Construction Axes"));populateSketchAxesMenu(*axes);
+        auto* overdraw=drawing->addAction(tr("Overdraw"));overdraw->setObjectName("context.overdraw");
+        connect(overdraw,&QAction::triggered,this,&CadViewport::startSketchOverdraw);
+        auto* offset=drawing->addAction(tr("Offset Construction Line"));offset->setObjectName("context.offset_line");
+        connect(offset,&QAction::triggered,this,[this]{startSketchConstruction(Sketch::ConstructionTool::OffsetLine);});
+        auto* tangent=drawing->addAction(tr("Common Tangent Construction Line"));tangent->setObjectName("context.common_tangent");
+        connect(tangent,&QAction::triggered,this,[this]{startSketchConstruction(Sketch::ConstructionTool::CommonTangent);});
+        const auto add=[this,drawing](const QString& text,Sketch::DrawTool tool,Sketch::Role role) {
+            connect(drawing->addAction(text),&QAction::triggered,this,[this,tool,role]{startSketchDrawing(tool,role);});
+        };
+        add(tr("Profile Line"),Sketch::DrawTool::Segment,Sketch::Role::Profile);
+        add(tr("Profile Circle"),Sketch::DrawTool::Circle,Sketch::Role::Profile);
+        add(tr("Profile Arc"),Sketch::DrawTool::Arc,Sketch::Role::Profile);
+        add(tr("Construction Line"),Sketch::DrawTool::Segment,Sketch::Role::Construction);
+        add(tr("Infinite Construction Line"),Sketch::DrawTool::InfiniteLine,Sketch::Role::Construction);
+        add(tr("Construction Circle"),Sketch::DrawTool::Circle,Sketch::Role::Construction);
+        add(tr("Construction Arc"),Sketch::DrawTool::Arc,Sketch::Role::Construction);
+        connect(menu->addAction(tr("Look Normal")),&QAction::triggered,this,&CadViewport::lookNormalToSketch);
+        connect(menu->addAction(tr("Finish 2D")),&QAction::triggered,this,&CadViewport::endSketchEditing);
     }
     if(menu->isEmpty()) { delete menu; return nullptr; }
     return menu;
@@ -234,6 +267,7 @@ void CadViewport::contextMenuEvent(QContextMenuEvent* event) {
             selectedPartIndices_.clear(); context_->SelectDetected(AIS_SelectionScheme_Replace);
             selection=selectionContext(); emit partSelectionChanged(selection.parts);
             selectedConstructionIds_=selection.constructions;emit constructionSelectionChanged(selectedConstructionIds_);
+            selectedSketchIds_=selection.sketches;emit sketchSelectionChanged(selectedSketchIds_);
         }
     }
     // An existing selection owns the menu everywhere, including empty space.
@@ -272,9 +306,11 @@ void CadViewport::resetModelingTools() {
     faceAlignTargetLabel_->hide(); faceAlignReferenceLabel_->hide();
     emit transformModesChanged(false,false,false);
     emit selectionModeChanged(selectionMode_);
+    refreshSketchPicking();
     if(!view_.IsNull()) view_->Redraw();
 }
 void CadViewport::startPrimitivePull() {
+    endSketchEditing();
     cancelCommandSession();
     const auto selection=selectionContext();
     if(!supportsResize(selection)) {

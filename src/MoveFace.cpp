@@ -20,6 +20,7 @@
 #include <algorithm>
 
 void CadViewport::moveFace() {
+    endSketchEditing();
     cancelCommandSession();
     setSelectionMode(SelectionMode::Face);
     if (context_.IsNull()) return;
