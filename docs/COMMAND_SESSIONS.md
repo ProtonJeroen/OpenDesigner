@@ -1,4 +1,4 @@
-# Command sessions and preview (v0.3.2–v0.4.0)
+# Command sessions and preview (v0.3.2–v0.4.1)
 
 Interactive Move Part (axis gizmo and orange face-normal arrow) and Rotate Part
 now have a temporary preview. Select geometry and explicitly choose its Modeling/context action to show a gizmo.
@@ -226,3 +226,41 @@ chronological stacks, Cancel creates none. Property and deletion edits use the
 same history. History navigation clears construction/browser selection as well
 as Parts and subshapes. Save excludes pending candidates and retains the session.
 See [Construction geometry](CONSTRUCTION_GEOMETRY.md).
+
+## v0.4.1 2D adapter
+
+`CommandSession::Kind::Sketch` holds an immutable before/after 2D collection and
+separate nonselectable blue presentations. Programmatic tools call
+`previewSketchEntities`; interactive tools add a transient point/cursor state and
+`SketchDrawingPanel`, using the same before/after transaction. OK/Enter confirms one `SketchChange` in the existing
+history, while Cancel/Esc discards the candidate. Unchanged candidate confirmations do
+not create history. Save uses only confirmed entity values. Construction edits
+preview their Workplane contents using the candidate frame; Cancel restores the
+original presentation. Construction deletion snapshots its owned 2D contents in
+the same entry. No second undo manager is introduced. See
+[Sketch Editor](SKETCH_EDITOR.md). During incomplete drawing, Enter accepts XY or
+polar input according to the focused field; once complete it confirms. Back edits
+the temporary points, and Cancel/Esc leaves no entity. Workplane/tool switches
+cancel the transaction; camera navigation does not. Save retains the pending
+command but serializes confirmed values only. New/Open also leave 2D editing.
+
+Phase 3 adds an `overdraw` state to the same Sketch session: an evaluated candidate
+graph, current endpoint, explicit hover alternatives and an ordered list of
+chosen Profile values. Green hover and blue chosen overlays never enter document
+selection or the persisted collection. OK commits all portions in one existing
+`SketchChange`; Back/Backspace and New start only edit the temporary command.
+An empty or invalid Overdraw cannot confirm. Cancel and central termination also
+remove its panel, green overlay and endpoint markers. The original Construction
+entities are never edited or referenced persistently by the resulting profiles.
+
+Offset and common tangent lines use a `lineConstruction` state within that same
+Sketch session. It holds only transient operand/solution picking and one candidate
+Construction entity. Numeric edits, side changes and explicit tangent choices
+update a blue preview; other tangent alternatives are green nonselectable
+overlays. Armed Pick roles accept browser or analytically acquired viewport
+references without ending the command. Missing finite intervals, ambiguous
+solutions and failed calculations cannot confirm; obsolete previews are removed.
+Enter interprets pending numeric fields before confirmation. OK adds one existing
+`SketchChange`; Cancel and central cleanup remove the panel, alternatives and
+markers. Save snapshots exclude pending results. No extra geometry store, history
+manager or persistent source relation is introduced.

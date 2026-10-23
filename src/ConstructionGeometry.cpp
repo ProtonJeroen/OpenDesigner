@@ -88,6 +88,9 @@ const std::vector<Definition>& definitions() {
         {M::PlaneAxisAngle,K::Workplane,"Axis and angle",{{"Axis",R::Axis},{"Zero plane",R::Plane}},{},{},"Angle (degrees)"},
         {M::PlaneParallelPoint,K::Workplane,"Parallel through point",{{"Plane",R::Plane},{"Point",R::Point}},{},{},{}},
         {M::PlaneXYZ,K::Workplane,"XYZ and orientation",{},"Origin (mm)","World X/Y/Z angles (degrees)",{}},
+        {M::PlaneXY,K::Workplane,"XY Workplane",{},{},{},"Offset along normal (mm)"},
+        {M::PlaneXZ,K::Workplane,"XZ Workplane",{},{},{},"Offset along normal (mm)"},
+        {M::PlaneYZ,K::Workplane,"YZ Workplane",{},{},{},"Offset along normal (mm)"},
         {M::PlaneMove,K::Workplane,"Move workplane",{{"Workplane",R::Plane}},"World displacement (mm)",{},{},true},
         {M::PlaneRotate,K::Workplane,"Rotate workplane",{{"Workplane",R::Plane}},"World axis direction",{},"Angle (degrees)",true},
         {M::AxisTwoPoints,K::Axis,"Through two points",{{"Origin",R::Point},{"Direction point",R::Point}},{},{},{}},
@@ -270,6 +273,9 @@ bool build(const Request& q,Object& result,QString& error) {
             rz.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(0,0,1)),q.angles.Z()*pi/180.0);
             out.Transform(rz*ry*rx);out.SetLocation(gp_Pnt(q.vector.XYZ()));break;
         }
+        case Method::PlaneXY: out=gp_Ax3(gp_Pnt(),gp_Dir(0,0,1),gp_Dir(1,0,0));break;
+        case Method::PlaneXZ: out=gp_Ax3(gp_Pnt(),gp_Dir(0,-1,0),gp_Dir(1,0,0));break;
+        case Method::PlaneYZ: out=gp_Ax3(gp_Pnt(),gp_Dir(1,0,0),gp_Dir(0,1,0));break;
         case Method::PlaneMove: case Method::AxisMove: out.SetLocation(a.Location().Translated(q.vector));break;
         case Method::PlaneRotate: case Method::AxisRotate: {
             require(q.vector.Magnitude()>Precision::Confusion(),"The rotation axis must be nonzero.");
@@ -303,6 +309,8 @@ bool build(const Request& q,Object& result,QString& error) {
         case Method::PointProject: out=point(a.Location().Translated(gp_Vec(b.Direction())*(-gp_Vec(b.Location(),a.Location()).Dot(gp_Vec(b.Direction())))));break;
         }
         if(q.reverse && d.kind!=Kind::Point) {out.ZReverse();out.YReverse();}
+        if(q.method==Method::PlaneXY || q.method==Method::PlaneXZ || q.method==Method::PlaneYZ)
+            out.SetLocation(gp_Pnt().Translated(gp_Vec(out.Direction())*q.value));
         require(finite(out.Location().XYZ()) && out.Direct(),"The computed construction frame is invalid.");
         Object candidate=result;candidate.kind=d.kind;candidate.frame=out;
         if(!d.edit) {

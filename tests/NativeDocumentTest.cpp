@@ -107,7 +107,8 @@ int main() {
     for(size_t i=0;i<3;++i) if(!Construction::equivalent(source.constructions[i],loaded.constructions[i])) return 31;
     // Early v2 documents had no presentation offsets or name counters.
     const auto earlyPath=directory.filePath("early-v2.xbf");
-    if(!QFile::copy(path,earlyPath)) return 61;
+    auto earlySource=source;earlySource.schemaVersion=2;
+    if(!NativeDocumentStorage::save(earlyPath,earlySource,error)) return 61;
     {
         auto app=XCAFApp_Application::GetApplication();Handle(TDocStd_Document) document;
         if(app->Open(TCollection_ExtendedString(earlyPath.toStdU16String().c_str()),document)!=PCDM_RS_OK) return 62;

@@ -19,6 +19,9 @@
 #include <AIS_Shape.hxx>
 #include <Aspect_DisplayConnection.hxx>
 #include <Aspect_NeutralWindow.hxx>
+#if defined(Q_OS_WIN)
+#include <WNT_Window.hxx>
+#endif
 #include <OpenGl_GraphicDriver.hxx>
 #include <V3d_Viewer.hxx>
 #include <V3d_View.hxx>
@@ -63,7 +66,8 @@ protected:
     void paintEvent(QPaintEvent*) override {initialize();view_->Redraw();}
     void resizeEvent(QResizeEvent*) override {
         if(view_.IsNull()) return;
-        auto window=Handle(Aspect_NeutralWindow)::DownCast(view_->Window());window->SetSize(width(),height());view_->MustBeResized();
+        auto window=Handle(Aspect_NeutralWindow)::DownCast(view_->Window());
+        if(!window.IsNull()) window->SetSize(width(),height());view_->MustBeResized();
     }
     void mousePressEvent(QMouseEvent* e) override {previous_=e->pos();if(e->button()==Qt::LeftButton) view_->StartRotation(previous_.x(),previous_.y());}
     void mouseMoveEvent(QMouseEvent* e) override {
@@ -78,8 +82,13 @@ private:
         Handle(OpenGl_GraphicDriver) driver=new OpenGl_GraphicDriver(display);
         Handle(V3d_Viewer) viewer=new V3d_Viewer(driver);viewer->SetDefaultLights();viewer->SetLightOn();
         context_=new AIS_InteractiveContext(viewer);view_=viewer->CreateView();
+#if defined(Q_OS_WIN)
+        Handle(WNT_Window) window=new WNT_Window(reinterpret_cast<Aspect_Handle>(winId()));
+#else
         Handle(Aspect_NeutralWindow) window=new Aspect_NeutralWindow;
-        window->SetNativeHandle(static_cast<Aspect_Drawable>(winId()));window->SetSize(width(),height());view_->SetWindow(window);
+        window->SetNativeHandle(static_cast<Aspect_Drawable>(winId()));window->SetSize(width(),height());
+#endif
+        view_->SetWindow(window);
         if(!window->IsMapped()) window->Map();view_->SetBackgroundColor(Quantity_NOC_GRAY20);view_->SetProj(V3d_XposYnegZpos);view_->MustBeResized();
     }
     Handle(AIS_InteractiveContext) context_;Handle(V3d_View) view_;QPoint previous_;

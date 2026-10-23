@@ -34,7 +34,8 @@ enum class Method {
     AxisTwoPoints, AxisPlanes, AxisFaces, AxisEdge, AxisCylinder, AxisPointDirection,
     AxisNormalPlane, AxisMove, AxisRotate,
     PointXYZ, PointVertex, PointEdgeMiddle, PointOnAxis, PointAxisPlane, PointAxes,
-    PointCircleCenter, PointOffset, PointProject, PlaneMidplane
+    PointCircleCenter, PointOffset, PointProject, PlaneMidplane,
+    PlaneXY, PlaneXZ, PlaneYZ
 };
 struct Role { QString name; ReferenceKind kind; };
 struct Definition {

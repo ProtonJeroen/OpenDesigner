@@ -13,6 +13,7 @@
 #include <QCloseEvent>
 #include <QAction>
 #include <Graphic3d_Camera.hxx>
+#include <Bnd_Box.hxx>
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
 #include <cmath>
@@ -41,6 +42,60 @@ void answer(QMessageBox::StandardButton button) {
 }
 }
 struct NativeDocumentSessionTest {
+    static void partless() {
+        QTemporaryDir temp;check(temp.isValid(),"partless temporary directory failed");
+        MainWindow window;window.show();QApplication::processEvents();auto& v=*window.viewport_;
+        for(int scene=0;scene<4;++scene) {
+            if(scene==1) {v.startConstruction(Construction::Method::PlaneXYZ);v.confirmCommandSession();}
+            if(scene>=2) {
+                std::vector<Sketch::Entity> entities;
+                Sketch::Entity line;line.workplaneId=v.constructions_.front().id;
+                line.role=scene==2?Sketch::Role::Construction:Sketch::Role::Profile;line.geometry=Sketch::Segment{{-20,10},{30,10}};entities.push_back(line);
+                auto circle=line;circle.id="partless-circle";circle.geometry=Sketch::Circle{{5,20},12};entities.push_back(circle);
+                QString error;check(v.previewSketchEntities(entities,error,false),qPrintable(error));v.finishSketchEdit(true);
+            }
+            if(scene>0) check(v.activateSketchWorkplane(v.constructions_.front().id),"partless Workplane activation failed");
+            QApplication::processEvents();NativeDocumentSnapshot captured,loaded;QString error;
+            check(v.exportDocumentSnapshot(captured),"partless capture failed");
+            check(v.boxes_.empty() && captured.camera.eye.SquareDistance(captured.camera.center)>1.e-16,"planar fit left a degenerate live camera or fabricated Part");
+            const auto path=temp.filePath(QString("partless-%1.odc").arg(scene));
+            if(!NativeDocumentStorage::save(path,captured,error)) throw std::runtime_error(QString("Partless scene %1: %2; camera scale %3 eye (%4,%5,%6) center (%7,%8,%9), up (%10,%11,%12)")
+                .arg(scene).arg(error).arg(captured.camera.scale,0,'g',16)
+                .arg(captured.camera.eye.X()).arg(captured.camera.eye.Y()).arg(captured.camera.eye.Z())
+                .arg(captured.camera.center.X()).arg(captured.camera.center.Y()).arg(captured.camera.center.Z())
+                .arg(captured.camera.up.X()).arg(captured.camera.up.Y()).arg(captured.camera.up.Z()).toStdString());
+            check(NativeDocumentStorage::load(path,loaded,error),qPrintable(error));
+            check(loaded.parts.empty() && loaded.constructions.size()==captured.constructions.size() && loaded.sketchEntities==captured.sketchEntities,"partless roundtrip changed contents or fabricated Part");
+            for(size_t i=0;i<captured.constructions.size();++i) check(Construction::equivalent(loaded.constructions[i],captured.constructions[i]),"partless roundtrip changed Workplane");
+            window.documentPath_=path;const auto history=v.undoStack_.size();
+            if(!v.sketchEntities_.empty()) v.selectSketchEntities({v.sketchEntities_.front().id});
+            const auto selected=v.sketchSelection();check(window.saveDocument(),"partless GUI Save failed");
+            check(v.undoStack_.size()==history && v.sketchSelection()==selected,"partless Save cleared history/selection");
+            chooseFile(path);window.openDocument();
+            check(window.root_->childCount()==0 && window.constructionRoot_->childCount()==int(captured.constructions.size()),"partless Open browser rebuild failed");
+            check(v.undoStack_.empty() && v.redoStack_.empty() && v.sketchSelection().empty() && v.activeSketchWorkplaneId_.isEmpty(),"partless Open retained tools/history/selection");
+            NativeDocumentSnapshot restored;v.exportDocumentSnapshot(restored);
+            check(restored.camera.eye.IsEqual(captured.camera.eye,1.e-8) && restored.camera.center.IsEqual(captured.camera.center,1.e-8)
+                && restored.camera.up.IsEqual(captured.camera.up,1.e-8) && std::abs(restored.camera.scale-captured.camera.scale)<1.e-8,"partless Open changed camera");
+            v.fitAll();check(v.exportDocumentSnapshot(restored) && NativeDocumentStorage::save(path,restored,error),"partless Fit All made camera unsavable");
+        }
+        // External OCCT fitting can collapse an orthographic camera too. Save
+        // canonicalizes a copy using OCCT's retained Direction, without mutation.
+        auto camera=v.view_->Camera();camera->SetEyeAndCenter(gp_Pnt(0,0,5),gp_Pnt());camera->SetUp(gp_Dir(0,1,0));
+        Bnd_Box plane;plane.Add(gp_Pnt(-100,-100,0));plane.Add(gp_Pnt(100,100,0));v.view_->FitAll(plane,0.05,Standard_False);
+        const auto eye=camera->Eye(),center=camera->Center();const auto direction=camera->Direction();const double scale=camera->Scale();
+        NativeDocumentSnapshot recovered;check(v.exportDocumentSnapshot(recovered),"collapsed camera capture failed");
+        check(camera->Eye().IsEqual(eye,0) && camera->Center().IsEqual(center,0) && camera->Scale()==scale,"Save capture mutated live camera");
+        check(recovered.camera.eye.SquareDistance(recovered.camera.center)>1.e-16 && recovered.camera.scale==scale
+            && gp_Dir(gp_Vec(recovered.camera.eye,recovered.camera.center)).Dot(direction)>1-1.e-12,"capture lost orthographic direction/zoom");
+        QString error;check(NativeDocumentStorage::save(temp.filePath("recovered.odc"),recovered,error),qPrintable(error));
+        auto invalid=recovered;invalid.camera.eye=invalid.camera.center;
+        check(!NativeDocumentStorage::save(temp.filePath("invalid.odc"),invalid,error),"storage silently accepted irrecoverable camera metadata");
+        window.documentDirty_=false;window.newDocument();
+        check(v.exportDocumentSnapshot(recovered) && recovered.parts.empty() && recovered.constructions.empty()
+            && recovered.sketchEntities.empty() && NativeDocumentStorage::save(temp.filePath("new-empty.odc"),recovered,error),"New empty document cannot save");
+        window.documentDirty_=false;
+    }
     static void run() {
         QTemporaryDir temp; check(temp.isValid(),"session temporary directory failed");
         MainWindow window; window.show(); QApplication::processEvents();
@@ -129,3 +184,4 @@ struct NativeDocumentSessionTest {
     }
 };
 void runNativeDocumentSessions() { NativeDocumentSessionTest::run(); }
+void runPartlessDocuments() { NativeDocumentSessionTest::partless(); }

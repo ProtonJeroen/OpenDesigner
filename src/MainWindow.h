@@ -5,6 +5,7 @@ class QTreeWidget;
 class QTreeWidgetItem;
 class QAction;
 class QCloseEvent;
+class QComboBox;
 class CadViewport;
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -13,6 +14,11 @@ public:
 private:
     friend struct NativeDocumentSessionTest;
     friend struct ConstructionSessionTest;
+    friend struct SketchSessionTest;
+    friend struct SketchDrawingTest;
+    friend struct SketchOverdrawSessionTest;
+    friend struct SketchConstructionSessionTest;
+    friend struct SketchReleaseSessionTest;
     bool maybeSave();
     bool saveDocument();
     bool saveDocumentAs();
@@ -22,6 +28,8 @@ private:
     void updateWindowTitle();
     void rebuildStructureBrowser();
     void rebuildConstructionBrowser();
+    void rebuildSketchControls();
+    QComboBox* sketchWorkplane_ = nullptr;
     CadViewport* viewport_ = nullptr;
     QTreeWidget* structure_ = nullptr;
     QTreeWidgetItem* root_ = nullptr;

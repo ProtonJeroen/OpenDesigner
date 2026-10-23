@@ -8,6 +8,7 @@
 #include <gp_Dir.hxx>
 #include <vector>
 #include "ConstructionGeometry.h"
+#include "SketchGeometry.h"
 
 struct NativeCameraState {
     gp_Pnt eye{0.0, 0.0, 1000.0};
@@ -39,16 +40,17 @@ struct NativePartState {
 };
 
 struct NativeDocumentSnapshot {
-    int schemaVersion = 2;
+    int schemaVersion = 3;
     std::vector<NativePartState> parts;
     std::vector<Construction::Object> constructions;
     std::array<int,3> constructionNameCounters{};
+    std::vector<Sketch::Entity> sketchEntities;
     NativeCameraState camera;
 };
 
 class NativeDocumentStorage final {
 public:
-    static constexpr int CurrentSchemaVersion = 2;
+    static constexpr int CurrentSchemaVersion = 3;
     static bool save(const QString& path, const NativeDocumentSnapshot& snapshot, QString& error);
     static bool load(const QString& path, NativeDocumentSnapshot& snapshot, QString& error);
 };

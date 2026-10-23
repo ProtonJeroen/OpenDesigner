@@ -103,6 +103,19 @@ void midplaneChecks() {
 }
 int main() {
  try {
+    for(auto method:{Method::PlaneXY,Method::PlaneXZ,Method::PlaneYZ}) {
+        const gp_Dir normal=method==Method::PlaneXY?gp_Dir(0,0,1):method==Method::PlaneXZ?gp_Dir(0,-1,0):gp_Dir(1,0,0);
+        const gp_Dir x=method==Method::PlaneYZ?gp_Dir(0,1,0):gp_Dir(1,0,0);
+        for(double offset:{0.0,12.345678,-9.5}) for(bool reverse:{false,true}) {
+            Request q;q.method=method;q.value=offset;q.reverse=reverse;Object result;QString error;
+            check(build(q,result,error),"preset failed without geometry or references");
+            check(result.frame.Direct() && result.frame.XDirection().Dot(x)>1-1.e-12,"preset frame is not right-handed or has wrong local X");
+            check(std::abs(result.frame.Direction().Dot(normal)-(reverse?-1:1))<1.e-12,"preset normal incorrect");
+            check(result.frame.Location().IsEqual(gp_Pnt().Translated(gp_Vec(normal)*(reverse?-offset:offset)),1.e-12),"preset offset is not along its displayed normal");
+            const gp_Vec cross=gp_Vec(result.frame.XDirection()).Crossed(gp_Vec(result.frame.YDirection()));
+            check(cross.Dot(gp_Vec(result.frame.Direction()))>1-1.e-12,"preset local axes left-handed");
+        }
+    }
     midplaneChecks();
     presentationChecks();
     const auto p=ref(ReferenceKind::Point,gp_Pnt(1,2,3)),x=ref(ReferenceKind::Point,gp_Pnt(5,2,3)),y=ref(ReferenceKind::Point,gp_Pnt(1,7,3));

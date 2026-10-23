@@ -153,3 +153,40 @@ test executable built successfully. `selection-context`, `native-document-sessio
 and `construction-sessions` all passed (31.45 seconds), including placed Part/Face
 framing, multi-Part and construction Point framing, background menu access and
 selection/history/dirty-state preservation. `git diff --check` passed.
+
+## v0.4.1 2D selection
+
+Sketch edges form their own typed selection, with stable entity UUIDs and browser
+rows beneath the owning Workplane. Ordinary click/Ctrl selects 2D sets; Alt Part
+selection passes through them. Sketch edges cannot be interpreted as Part Faces
+or supplied to existing solid operations. Both entity and owner visibility/locks
+gate viewport selection, while the browser retains management access. Undo/Redo,
+New and Open clear the new selection alongside every existing type. See
+[Sketch Editor](SKETCH_EDITOR.md).
+
+In explicit Edit Sketch mode, only eligible 2D entities of the active Workplane
+participate in viewport picking; other Workplanes and solids remain visible.
+Drawing consumes left clicks as temporary local-XY input, with independent analytic
+snap acquisition inside the configured pixel radius. Finish 2D or starting a 3D
+modeling command restores ordinary picking. Alt-click outside an active drawing
+also returns to Part picking. Changing the toolbar Workplane cancels any pending
+drawing; hiding/locking/deleting its owner exits the editing context. Context and
+snap settings are transient, are not persisted, and do not dirty the document.
+
+Overdraw consumes clicks on analytic boundary nodes and connected bounded pieces
+of Construction entities on the active Workplane. It uses the pixel radius for
+acquisition, while choosing only exact analytic portions. Where several nodes or
+pieces are inside the radius, its panel requires explicit selection; there is no
+automatic route. Green/blue overlays and node markers are nonselectable and never
+become Part/Face operands or browser rows before OK. Ctrl+Z/Redo retain the shared
+session/history policy; Backspace corrects only the last temporary Overdraw choice.
+
+Offset/common-tangent Construction tools arm named 2D operand roles. Offset accepts
+straight Construction/Profile references; common tangent accepts Construction
+circles/arcs only. Sources must be visible/unlocked on the active Workplane,
+independently of provenance. Browser rows supply armed roles; viewport acquisition
+reuses analytic nearest points and the pixel radius. Ambiguous hits require the
+named list. Green tangent alternatives are nonselectable overlays; an explicit
+list choice or unique candidate click chooses blue output. Neither previews nor
+markers become Part/Face operands or browser rows before OK. Mouse offset-side
+choice changes only the exact distance's sign.

@@ -7,6 +7,7 @@
 #include <QResizeEvent>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QDoubleSpinBox>
 #include <QDoubleValidator>
 #include <QShortcut>
 #include <QAction>
@@ -17,6 +18,9 @@
 #include <QLocale>
 #include <algorithm>
 #include <Aspect_NeutralWindow.hxx>
+#if defined(Q_OS_WIN)
+#include <WNT_Window.hxx>
+#endif
 #include <OpenGl_GraphicDriver.hxx>
 #include <AIS_Shape.hxx>
 #include <Prs3d_Drawer.hxx>
@@ -72,6 +76,18 @@
 #include <algorithm>
 
 namespace {
+void stabilizeOrthographicCamera(const Handle(Graphic3d_Camera)& camera) {
+    if(camera.IsNull() || !camera->IsOrthographic()) return;
+    const auto center=camera->Center();const auto direction=camera->Direction();
+    const double scale=camera->Scale();
+    if(!std::isfinite(scale) || scale<=0 || !std::isfinite(center.X()) || !std::isfinite(center.Y()) || !std::isfinite(center.Z())) return;
+    if(camera->Eye().SquareDistance(center)>1.e-16) return;
+    // FitAll on a plane viewed normally can set OCCT's orthographic distance
+    // to zero. OCCT retains Direction separately, but .odc stores Eye/Center.
+    // Restore a representable separation without changing center, zoom or Up.
+    const double distance=std::max(1.0,scale);
+    camera->SetEyeAndCenter(center.Translated(gp_Vec(direction)*(-distance)),center);
+}
 QString dimensionNumber(QString text) {
     text = text.trimmed();
     if (text.startsWith(QChar(0x00d8))) text.remove(0,1);
@@ -155,6 +171,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
 }
 void CadViewport::beginCommandSession(CommandSession::Kind kind,
         const std::vector<size_t>& indices, const gp_Dir& direction, const gp_Pnt& pivot) {
+    if(kind!=CommandSession::Kind::Sketch) endSketchEditing();
     if(commandSession_) cancelCommandSession();
     commandSession_.emplace();
     auto& session = *commandSession_;
@@ -251,6 +268,7 @@ bool CadViewport::updateCommandParameter(bool reportError) {
     return previewCommand(value);
 }
 void CadViewport::confirmCommandSession() {
+    if(commandSession_ && commandSession_->kind==CommandSession::Kind::Sketch) {finishSketchEdit(true);return;}
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Construction) {
         if(constructionPanel_) constructionPanel_->finishEditing();
         if(previewConstruction()) closeConstructionSession(true);
@@ -271,6 +289,7 @@ void CadViewport::confirmCommandSession() {
     }
 }
 void CadViewport::cancelCommandSession() {
+    if(commandSession_ && commandSession_->kind==CommandSession::Kind::Sketch) {finishSketchEdit(false);return;}
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Construction) {
         closeConstructionSession(false);return;
     }
@@ -371,6 +390,9 @@ bool CadViewport::eventFilter(QObject* watched, QEvent* event) {
         const bool sessionWidget=widget && (widget==this || isAncestorOf(widget)
             || widget==commandPanel_ || commandPanel_->isAncestorOf(widget)
             || (constructionPanel_ && (widget==constructionPanel_ || constructionPanel_->isAncestorOf(widget)))
+            || (sketchDrawingPanel_ && (widget==sketchDrawingPanel_ || sketchDrawingPanel_->isAncestorOf(widget)))
+            || (sketchOverdrawPanel_ && (widget==sketchOverdrawPanel_ || sketchOverdrawPanel_->isAncestorOf(widget)))
+            || (sketchConstructionPanel_ && (widget==sketchConstructionPanel_ || sketchConstructionPanel_->isAncestorOf(widget)))
             || (commandSession_->kind==CommandSession::Kind::Boolean && widget && widget->window()==window()));
         if(sessionWidget && key->modifiers()==Qt::ControlModifier
             && (key->key()==Qt::Key_Z || key->key()==Qt::Key_Y)) {
@@ -383,11 +405,18 @@ bool CadViewport::eventFilter(QObject* watched, QEvent* event) {
                 return true;
             }
         }
+        if(sessionWidget && commandSession_->overdraw && key->key()==Qt::Key_Backspace) {
+            event->accept();if(event->type()==QEvent::KeyPress) backOverdrawPiece();return true;
+        }
         if (sessionWidget && (key->key()==Qt::Key_Escape || key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter)) {
             event->accept();
             if (event->type()==QEvent::KeyPress) {
                 if (key->key()==Qt::Key_Escape) cancelCommandSession();
-                else confirmCommandSession();
+                else if(commandSession_->drawing && !commandSession_->drawing->complete && sketchDrawingPanel_) {
+                    const bool polar=widget && (widget==sketchDrawingPanel_->distance || sketchDrawingPanel_->distance->isAncestorOf(widget)
+                        || widget==sketchDrawingPanel_->angle || sketchDrawingPanel_->angle->isAncestorOf(widget));
+                    useSketchNumeric(polar);
+                } else confirmCommandSession();
             }
             return true;
         }
@@ -439,16 +468,22 @@ void CadViewport::initializeViewer() {
         localDynamicStyle->SetDisplayMode(AIS_WireFrame);
     }
     view_ = viewer_->CreateView();
+#if defined(Q_OS_WIN)
+    Handle(WNT_Window) window = new WNT_Window(reinterpret_cast<Aspect_Handle>(winId()));
+#else
     Handle(Aspect_NeutralWindow) window = new Aspect_NeutralWindow();
     window->SetNativeHandle(static_cast<Aspect_Drawable>(winId()));
     window->SetSize(width(), height());
+#endif
     view_->SetWindow(window);
     if (!window->IsMapped()) window->Map();
     view_->SetBackgroundColor(Quantity_NOC_GRAY20);
     view_->MustBeResized();
     view_->SetProj(V3d_XposYnegZpos);
     view_->FitAll();
+    stabilizeViewCamera();
 }
+void CadViewport::stabilizeViewCamera() {if(!view_.IsNull()) stabilizeOrthographicCamera(view_->Camera());}
 void CadViewport::paintEvent(QPaintEvent*) {
     initializeViewer();
     if (!view_.IsNull()) {updateConstructionLabels();view_->Redraw();}
@@ -524,6 +559,7 @@ void CadViewport::displayPullArrow(Handle(AIS_Shape)& arrow, gp_Pnt center, gp_V
 }
 
 void CadViewport::addBox() {
+    endSketchEditing();
     cancelCommandSession();
     initializeViewer();
     const double x = partCount_ * 125.0;
@@ -547,6 +583,7 @@ void CadViewport::addBox() {
     fitAll();
 }
 void CadViewport::addCylinder() {
+    endSketchEditing();
     cancelCommandSession();
     initializeViewer();
     const double x = partCount_ * 125.0;
@@ -578,6 +615,7 @@ void CadViewport::addCylinder() {
     fitAll();
 }
 void CadViewport::addSphere() {
+    endSketchEditing();
     cancelCommandSession();
     initializeViewer();
     const double x = partCount_ * 125.0;
@@ -604,6 +642,7 @@ void CadViewport::addSphere() {
     fitAll();
 }
 void CadViewport::addCone() {
+    endSketchEditing();
     cancelCommandSession();
     initializeViewer();
     const double x = partCount_*125.0;
@@ -629,6 +668,7 @@ void CadViewport::addCone() {
     fitAll();
 }
 void CadViewport::duplicateSelectedParts() {
+    endSketchEditing();
     cancelCommandSession();
     initializeViewer();
     // A face selection identifies its owning part as well. Allow Ctrl+D
@@ -808,6 +848,7 @@ void CadViewport::pullSelectedFace() {
     emit partsChanged();
 }
 void CadViewport::rotateSelectedPart() {
+    endSketchEditing();
     cancelCommandSession();
     const auto indices = selectedBooleanParts();
     if (context_.IsNull() || indices.empty()) {
@@ -865,6 +906,7 @@ void CadViewport::rotateSelectedPart() {
     emit partsChanged();
 }
 void CadViewport::movePartAlongSelectedFace() {
+    endSketchEditing();
     cancelCommandSession();
     if (context_.IsNull() || context_->NbSelected() != 1) {
         emit statusMessage(tr("Select a box face to choose the move direction."));
@@ -1012,6 +1054,7 @@ void CadViewport::clearHistorySelection() {
     // Release subshape owners before rebuilding topology; resetModelingTools
     // must not retain old owners when restoring the default face picker.
     selectedPartIndices_.clear();
+    clearSketchSelection();
     selectedConstructionIds_.clear();
     emit constructionSelectionChanged({});
     if(!context_.IsNull()) {
@@ -1037,7 +1080,10 @@ void CadViewport::undoPull() {
     clearHistorySelection();
     const PullChange change = undoStack_.back();
     undoStack_.pop_back();
-    if (change.constructionChange) restoreConstructions(change.constructionChange->before);
+    if (change.constructionChange) {
+        sketchEntities_=change.constructionChange->sketchesBefore;
+        restoreConstructions(change.constructionChange->before);
+    } else if(change.sketchChange) restoreSketchEntities(change.sketchChange->before);
     else if (change.booleanChange) restoreBooleanChange(*change.booleanChange,false);
     else if (!change.groupedChanges.empty()) {
         batchingPartUpdates_ = true;
@@ -1061,7 +1107,10 @@ void CadViewport::redoPull() {
     clearHistorySelection();
     const PullChange change = redoStack_.back();
     redoStack_.pop_back();
-    if (change.constructionChange) restoreConstructions(change.constructionChange->after);
+    if (change.constructionChange) {
+        sketchEntities_=change.constructionChange->sketchesAfter;
+        restoreConstructions(change.constructionChange->after);
+    } else if(change.sketchChange) restoreSketchEntities(change.sketchChange->after);
     else if (change.booleanChange) restoreBooleanChange(*change.booleanChange,true);
     else if (!change.groupedChanges.empty()) {
         batchingPartUpdates_ = true;
@@ -1077,8 +1126,20 @@ void CadViewport::redoPull() {
 }
 void CadViewport::fitAll() {
     const bool visiblePart=std::any_of(boxes_.begin(),boxes_.end(),[](const auto& part){return part.active && part.visible;});
-    if(!visiblePart && !constructions_.empty()) {QStringList ids;for(const auto& object:constructions_) if(object.visible) ids.push_back(object.id);fitConstructions(ids);return;}
-    if (!view_.IsNull()) { view_->FitAll(0.01, Standard_False); view_->ZFitAll(); updateConstructionLabels();view_->Redraw(); }
+    if(!visiblePart && !constructions_.empty()) {
+        Bnd_Box bounds;
+        for(const auto& object:constructions_) if(object.visible) for(const auto& point:Construction::displayBounds(object)) {
+            const double e=object.kind==Construction::Kind::Point?5.0:0;
+            bounds.Add(point.Translated(gp_Vec(-e,-e,-e)));bounds.Add(point.Translated(gp_Vec(e,e,e)));
+        }
+        for(const auto& entity:sketchEntities_) if(entity.visible) {
+            const auto* owner=constructionObject(entity.workplaneId);
+            if(owner && owner->visible && sketchPresentations_.contains(entity.id)) BRepBndLib::Add(sketchPresentations_.at(entity.id)->Shape(),bounds);
+        }
+        if(!bounds.IsVoid()) {view_->FitAll(bounds,0.05,Standard_False);stabilizeViewCamera();view_->ZFitAll();updateConstructionLabels();view_->Redraw();}
+        return;
+    }
+    if (!view_.IsNull()) { view_->FitAll(0.01, Standard_False);stabilizeViewCamera();view_->ZFitAll();updateConstructionLabels();view_->Redraw(); }
 }
 
 bool CadViewport::exportDocumentSnapshot(NativeDocumentSnapshot& snapshot) const {
@@ -1086,6 +1147,7 @@ bool CadViewport::exportDocumentSnapshot(NativeDocumentSnapshot& snapshot) const
         snapshot = {};
         snapshot.schemaVersion = NativeDocumentStorage::CurrentSchemaVersion;
         snapshot.constructions = constructions_;
+        snapshot.sketchEntities = sketchEntities_;
         snapshot.constructionNameCounters=constructionNameCounters_;
         for (size_t i = 0; i < boxes_.size(); ++i) {
             const CadPart* saved=&boxes_[i];
@@ -1117,7 +1179,10 @@ bool CadViewport::exportDocumentSnapshot(NativeDocumentSnapshot& snapshot) const
             snapshot.parts.push_back(std::move(state));
         }
         if (!view_.IsNull()) {
-            const auto camera = view_->Camera();
+            // Capture a canonical copy as a boundary safeguard for OCCT fits
+            // outside the normal UI paths. Save does not mutate the live view.
+            const Handle(Graphic3d_Camera) camera=new Graphic3d_Camera(view_->Camera());
+            stabilizeOrthographicCamera(camera);
             snapshot.camera.eye = camera->Eye();
             snapshot.camera.center = camera->Center();
             snapshot.camera.up = camera->Up();
@@ -1131,6 +1196,7 @@ bool CadViewport::exportDocumentSnapshot(NativeDocumentSnapshot& snapshot) const
 }
 
 void CadViewport::resetDocument() {
+    endSketchEditing();
     cancelCommandSession();
     finishModelingInteraction();
     if (!context_.IsNull()) {
@@ -1141,6 +1207,8 @@ void CadViewport::resetDocument() {
     for(const auto& [id,presentation]:constructionPresentations_)
         if(!context_.IsNull()) context_->Remove(presentation,Standard_False);
     for(const auto& [id,label]:constructionLabels_) if(!context_.IsNull()) context_->Remove(label,Standard_False);
+    for(const auto& [id,presentation]:sketchPresentations_) if(!context_.IsNull()) context_->Remove(presentation,Standard_False);
+    sketchEntities_.clear();sketchPresentations_.clear();clearSketchSelection();emit sketchEntitiesChanged();
     constructionLabels_.clear();constructionNameCounters_={};
     constructions_.clear();constructionPresentations_.clear();selectedConstructionIds_.clear();
     emit constructionsChanged();emit constructionSelectionChanged({});
@@ -1151,7 +1219,7 @@ void CadViewport::resetDocument() {
     redoStack_.clear();
     clearHistorySelection();
     updateHistoryActions();
-    if (!view_.IsNull()) { view_->FitAll(0.01, Standard_False); view_->ZFitAll(); view_->Redraw(); }
+    if (!view_.IsNull()) {view_->FitAll(0.01,Standard_False);stabilizeViewCamera();view_->ZFitAll();view_->Redraw();}
     emit partSelectionChanged({});
     emit documentReplaced();
     emit partsChanged();
@@ -1253,7 +1321,7 @@ bool CadViewport::recognizePullPrimitive(CadPart& part) const {
 }
 
 bool CadViewport::importDocumentSnapshot(const NativeDocumentSnapshot& snapshot, QString& error) {
-    if (snapshot.schemaVersion != 1 && snapshot.schemaVersion != NativeDocumentStorage::CurrentSchemaVersion) {
+    if ((snapshot.schemaVersion<1 || snapshot.schemaVersion>NativeDocumentStorage::CurrentSchemaVersion)) {
         error = tr("Unsupported OpenDesigner document schema.");
         return false;
     }
@@ -1272,6 +1340,8 @@ bool CadViewport::importDocumentSnapshot(const NativeDocumentSnapshot& snapshot,
             return false;
         }
     }
+    if(snapshot.schemaVersion<3 && !snapshot.sketchEntities.empty()) {error=tr("Schema v1/v2 cannot contain 2D geometry.");return false;}
+    if(!Sketch::validate(snapshot.sketchEntities,snapshot.constructions,documentIds,error)) return false;
     if (!std::isfinite(snapshot.camera.scale) || snapshot.camera.scale <= 0.0) {
         error = tr("The document contains an invalid camera state.");
         return false;
@@ -1290,7 +1360,7 @@ bool CadViewport::importDocumentSnapshot(const NativeDocumentSnapshot& snapshot,
         error=tr("The document contains an invalid camera orientation."); return false;
     }
     std::vector<CadPart> imported;
-    std::map<QString,Handle(AIS_Shape)> importedConstructions;
+    std::map<QString,Handle(AIS_Shape)> importedConstructions, importedSketches;
     std::map<QString,Handle(AIS_TextLabel)> importedLabels;
     for(int counter:snapshot.constructionNameCounters) if(counter<0) {error=tr("Invalid construction name counters.");return false;}
     try {
@@ -1353,17 +1423,27 @@ bool CadViewport::importDocumentSnapshot(const NativeDocumentSnapshot& snapshot,
                 if(object.selectable) context_->Activate(presentation,object.kind==Construction::Kind::Workplane?AIS_Shape::SelectionMode(TopAbs_EDGE):0,Standard_False);
             }
         }
+        for(const auto& entity:snapshot.sketchEntities) {
+            const auto owner=std::find_if(snapshot.constructions.begin(),snapshot.constructions.end(),[&](const auto& o){return o.id==entity.workplaneId;});
+            auto presentation=sketchPresentation(entity,*owner);importedSketches[entity.id]=presentation;
+            displaySketchPresentation(entity,*owner,presentation);
+        }
         resetDocument();
+        sketchEntities_=snapshot.sketchEntities;sketchPresentations_=std::move(importedSketches);
         constructions_=snapshot.constructions;constructionPresentations_=std::move(importedConstructions);
         constructionLabels_=std::move(importedLabels);constructionNameCounters_=snapshot.constructionNameCounters;
         Construction::advanceNameCounters(constructions_,constructionNameCounters_);
         boxes_=std::move(imported);
         partCount_=static_cast<int>(boxes_.size());
+        // Staged presentations were prepared while the previous document's
+        // editing context was still active. Open restores ordinary 3D/2D picks.
+        refreshSketchPicking(true);
         view_->SetCamera(camera);
         view_->ZFitAll();
         updateConstructionLabels();
         view_->Redraw();
         emit documentReplaced();
+        emit sketchEntitiesChanged();
         emit constructionsChanged();
         emit partsChanged();
         error.clear();
@@ -1374,6 +1454,7 @@ bool CadViewport::importDocumentSnapshot(const NativeDocumentSnapshot& snapshot,
         error = QString::fromUtf8(e.what());
     }
     if (!context_.IsNull()) {
+        for(const auto& [id,presentation]:importedSketches) context_->Remove(presentation,Standard_False);
         for(const auto& [id,label]:importedLabels) context_->Remove(label,Standard_False);
         for(const auto& [id,presentation]:importedConstructions) context_->Remove(presentation,Standard_False);
         for (const auto& part:imported)
@@ -1809,14 +1890,17 @@ void CadViewport::fitSelection(const std::vector<size_t>& indices) {
     }
     if (bounds.IsVoid()) return;
     view_->FitAll(bounds, 0.1, Standard_False);
+    stabilizeViewCamera();
     view_->ZFitAll();
     updateConstructionLabels();
     view_->Redraw();
 }
 void CadViewport::selectParts(const std::vector<size_t>& indices) {
+    endSketchEditing();
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Construction) {
         emit statusMessage(tr("Pick the required subshape in the viewport or choose a construction reference."));return;
     }
+    clearSketchSelection();
     selectedConstructionIds_.clear();emit constructionSelectionChanged({});
     if (commandSession_ && commandSession_->kind==CommandSession::Kind::Boolean) { selectBooleanParts(indices,false); return; }
     cancelCommandSession();
@@ -2092,6 +2176,7 @@ void CadViewport::setTransformSelectionMode() {
     else view_->Redraw();
 }
 void CadViewport::setDirectMoveMode(bool enabled) {
+    if(enabled) endSketchEditing();
     if(enabled || directMoveMode_) cancelCommandSession();
     if(enabled && selectedPartIndices_.empty()) {
         emit statusMessage(tr("Move Part: select Parts with Alt+click or the Structure Browser, then choose this command."));
@@ -2283,6 +2368,7 @@ void CadViewport::applyRotationAngle(double degrees) {
     previewCommand(degrees);
 }
 void CadViewport::setRotateMode(bool enabled) {
+    if(enabled) endSketchEditing();
     if(enabled || rotateMode_) cancelCommandSession();
     if(enabled && selectedPartIndices_.empty()) {
         emit statusMessage(tr("Rotate Part: select Parts with Alt+click or the Structure Browser, then choose this command."));
@@ -2305,6 +2391,18 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
     panning_ = e->button() == Qt::MiddleButton && (e->modifiers() & Qt::ShiftModifier);
     if (rotating_ && !view_.IsNull()) view_->StartRotation(previous_.x(), previous_.y());
     if (e->button() == Qt::LeftButton && !context_.IsNull()) {
+        if(sketchConstructionClick(e->pos())) return;
+        if(overdrawClick(e->pos())) return;
+        if(sketchDrawingClick(e->pos(),e->modifiers())) return;
+        if(!activeSketchWorkplaneId_.isEmpty()) {
+            if(e->modifiers()&Qt::AltModifier) endSketchEditing();
+            else {
+                if(!sketchMousePress(e->pos(),e->modifiers())) selectSketchEntities({});
+                return;
+            }
+        }
+        if(sketchMousePress(e->pos(),e->modifiers())) return;
+        clearSketchSelection();
         if(constructionMousePress(e->pos(),e->modifiers())) return;
         if(!selectedConstructionIds_.empty()) {selectedConstructionIds_.clear();emit constructionSelectionChanged({});}
         if (commandSession_ && commandSession_->kind==CommandSession::Kind::Boolean) {
@@ -2363,7 +2461,10 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                 partPicking ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE), Standard_False);
         }
         // Alt-Part picking must pass through visible construction geometry.
-        if(partPicking) for(const auto& [id,presentation]:constructionPresentations_) context_->Deactivate(presentation);
+        if(partPicking) {
+            for(const auto& [id,presentation]:constructionPresentations_) context_->Deactivate(presentation);
+            for(const auto& [id,presentation]:sketchPresentations_) context_->Deactivate(presentation);
+        }
         // Ctrl is reserved for additive face selection, not drag-to-pull.
         context_->MoveTo(e->position().x(), e->position().y(), view_, Standard_True);
         if (partPicking) {
@@ -2413,6 +2514,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             emit partSelectionChanged(selectedPartIndices_);
             for(const auto& object:constructions_) if(object.visible && object.selectable)
                 context_->Activate(constructionPresentations_.at(object.id),object.kind==Construction::Kind::Workplane?AIS_Shape::SelectionMode(TopAbs_EDGE):0,Standard_False);
+            for(const auto& entity:sketchEntities_) if(sketchPickable(entity)) context_->Activate(sketchPresentations_.at(entity.id),0,Standard_False);
             const int count = static_cast<int>(selectedPartIndices_.size());
             emit statusMessage(count > 1
                 ? tr("%1 parts selected. Drag an axis to move the group.").arg(count)
@@ -2631,6 +2733,7 @@ void CadViewport::updateSelectedFaceArrow(const QPoint& point) {
     }
 }
 void CadViewport::setMovePartMode(bool enabled) {
+    if(enabled) endSketchEditing();
     if(enabled || movePartMode_) cancelCommandSession();
     if (arrowVisible_ && boxes_[arrowPartIndex_].conePrimitive) hideFaceArrow();
     movePartMode_ = enabled;
@@ -2655,6 +2758,7 @@ void CadViewport::setSnapStep(double stepMm) {
         : tr("Face snapping disabled."));
 }
 void CadViewport::mouseMoveEvent(QMouseEvent* e) {
+    if(!rotating_ && !panning_ && (sketchConstructionMove(e->pos()) || overdrawMove(e->pos()) || sketchDrawingMove(e->pos(),e->modifiers()))) return;
     if (view_.IsNull()) return;
     QPoint p = e->pos();
     if(constructionMouseMove(p,e->modifiers())) return;
@@ -2714,7 +2818,7 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     if(e->button()==Qt::LeftButton) constructionMouseRelease();
     if (e->button() == Qt::MiddleButton) { rotating_ = false; panning_ = false; }
     if(e->button()==Qt::LeftButton && commandSession_ && (commandSession_->kind==CommandSession::Kind::Boolean
-        || commandSession_->kind==CommandSession::Kind::Construction)) return;
+        || commandSession_->kind==CommandSession::Kind::Construction || commandSession_->kind==CommandSession::Kind::Sketch)) return;
     if (e->button()==Qt::LeftButton && commandSession_) {
         draggingFace_ = draggingRotation_ = draggingFaceRotation_ = false;
         groupRotationDragging_ = false;

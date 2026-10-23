@@ -20,9 +20,13 @@
 #include <QFileDialog>
 #include <QCloseEvent>
 #include <QFileInfo>
+#include <QComboBox>
+#include <QSpinBox>
+#include <QLabel>
+#include <algorithm>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.4.0");
+    setWindowTitle("OpenDesigner 0.4.1");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     connect(viewport_,&CadViewport::geometryOperationFailed,this,[this](const QString& operation,const QString& reason) {
@@ -91,6 +95,40 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     edit->addAction(undoAction);
     edit->addAction(redoAction);
     auto* model = menuBar()->addMenu(tr("&Modeling"));
+    auto* sketchMenu=model->addMenu(tr("2D Modeling"));
+    auto* editSketch=sketchMenu->addAction(tr("Edit Sketch"));editSketch->setObjectName("sketch.edit");
+    connect(editSketch,&QAction::triggered,viewport_,[this]{viewport_->activateSketchWorkplane();});
+    auto* finishSketch=sketchMenu->addAction(tr("Finish 2D"));finishSketch->setObjectName("sketch.finish");finishSketch->setEnabled(false);
+    connect(finishSketch,&QAction::triggered,viewport_,&CadViewport::endSketchEditing);
+    auto* normalSketch=sketchMenu->addAction(tr("Look Normal"));normalSketch->setObjectName("sketch.normal");normalSketch->setEnabled(false);
+    connect(normalSketch,&QAction::triggered,viewport_,&CadViewport::lookNormalToSketch);
+    sketchMenu->addSeparator();
+    auto* construction2D=sketchMenu->addAction(tr("Construction geometry"));construction2D->setObjectName("sketch.construction");construction2D->setCheckable(true);
+    const auto drawAction=[this,sketchMenu,construction2D](const QString& text,const char* name,Sketch::DrawTool tool) {
+        auto* action=sketchMenu->addAction(text);action->setObjectName(name);
+        connect(action,&QAction::triggered,viewport_,[this,construction2D,tool] {
+            viewport_->startSketchDrawing(tool,construction2D->isChecked()?Sketch::Role::Construction:Sketch::Role::Profile);
+        });return action;
+    };
+    auto* line2D=drawAction(tr("Line"),"sketch.line",Sketch::DrawTool::Segment);
+    auto* infinite2D=drawAction(tr("Infinite Construction Line"),"sketch.infinite",Sketch::DrawTool::InfiniteLine);
+    auto* circle2D=drawAction(tr("Circle"),"sketch.circle",Sketch::DrawTool::Circle);
+    auto* arc2D=drawAction(tr("Arc (center/start/end)"),"sketch.arc",Sketch::DrawTool::Arc);
+    auto* axes2D=sketchMenu->addMenu(tr("Construction Axes"));axes2D->setObjectName("sketch.axes");axes2D->setEnabled(false);
+    viewport_->populateSketchAxesMenu(*axes2D);
+    auto* overdraw=sketchMenu->addAction(tr("Overdraw"));overdraw->setObjectName("sketch.overdraw");overdraw->setEnabled(false);
+    connect(overdraw,&QAction::triggered,viewport_,&CadViewport::startSketchOverdraw);
+    auto* offset2D=sketchMenu->addAction(tr("Offset Construction Line"));offset2D->setObjectName("sketch.offset_line");offset2D->setEnabled(false);
+    connect(offset2D,&QAction::triggered,viewport_,[this]{viewport_->startSketchConstruction(Sketch::ConstructionTool::OffsetLine);});
+    auto* tangent2D=sketchMenu->addAction(tr("Common Tangent Construction Line"));tangent2D->setObjectName("sketch.common_tangent");tangent2D->setEnabled(false);
+    connect(tangent2D,&QAction::triggered,viewport_,[this]{viewport_->startSketchConstruction(Sketch::ConstructionTool::CommonTangent);});
+    auto* snap2D=sketchMenu->addAction(tr("Snapping"));snap2D->setObjectName("sketch.snapping");snap2D->setCheckable(true);snap2D->setChecked(true);
+    connect(snap2D,&QAction::toggled,viewport_,&CadViewport::setSketchSnapping);
+    connect(viewport_,&CadViewport::activeSketchWorkplaneChanged,this,[this,finishSketch,normalSketch,overdraw,offset2D,tangent2D,axes2D](const QString& id) {
+        axes2D->setEnabled(!id.isEmpty());
+        finishSketch->setEnabled(!id.isEmpty());normalSketch->setEnabled(!id.isEmpty());overdraw->setEnabled(!id.isEmpty());
+        offset2D->setEnabled(!id.isEmpty());tangent2D->setEnabled(!id.isEmpty());rebuildConstructionBrowser();rebuildSketchControls();
+    });
     auto* constructionMenu=model->addMenu(tr("Construction Geometry"));
     for(const auto kind:{Construction::Kind::Workplane,Construction::Kind::Axis,Construction::Kind::Point}) {
         auto* group=constructionMenu->addMenu(Construction::kindName(kind));
@@ -169,7 +207,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.4.0 — Native OpenDesigner documents."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.4.1 — 2D Modeling foundation."));
     });
     auto* toolbar = addToolBar(tr("Modeling"));
     connect(viewport_,&CadViewport::transformModesChanged,this,[interactiveMove,directMove,interactiveRotate](bool faceNormal,bool move,bool rotate) {
@@ -191,6 +229,23 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     toolbar->addSeparator();
     toolbar->addAction(undoAction);
     toolbar->addAction(redoAction);
+    addToolBarBreak();auto* sketchToolbar=addToolBar(tr("2D Modeling"));sketchToolbar->setObjectName("sketchToolbar");
+    sketchToolbar->addAction(editSketch);
+    sketchWorkplane_=new QComboBox(sketchToolbar);sketchWorkplane_->setObjectName("sketchWorkplane");sketchWorkplane_->setMinimumContentsLength(15);
+    sketchWorkplane_->setToolTip(tr("Active Workplane for 2D editing"));sketchToolbar->addWidget(sketchWorkplane_);
+    connect(sketchWorkplane_,qOverload<int>(&QComboBox::currentIndexChanged),this,[this] {
+        const auto id=sketchWorkplane_->currentData().toString();
+        if(id.isEmpty()) viewport_->endSketchEditing();else viewport_->activateSketchWorkplane(id);
+    });
+    sketchToolbar->addAction(normalSketch);sketchToolbar->addAction(finishSketch);sketchToolbar->addSeparator();
+    sketchToolbar->addAction(construction2D);sketchToolbar->addAction(line2D);sketchToolbar->addAction(infinite2D);
+    sketchToolbar->addAction(circle2D);sketchToolbar->addAction(arc2D);sketchToolbar->addAction(overdraw);
+    sketchToolbar->addAction(axes2D->menuAction());
+    sketchToolbar->addAction(offset2D);sketchToolbar->addAction(tangent2D);sketchToolbar->addSeparator();sketchToolbar->addAction(snap2D);
+    auto* pixels=new QSpinBox(sketchToolbar);pixels->setObjectName("sketchSnapPixels");pixels->setRange(1,100);pixels->setValue(viewport_->sketchSnapPixels());pixels->setSuffix(tr(" px"));
+    pixels->setToolTip(tr("2D snap radius in screen pixels; Shift temporarily bypasses snapping"));sketchToolbar->addWidget(pixels);
+    connect(pixels,qOverload<int>(&QSpinBox::valueChanged),viewport_,&CadViewport::setSketchSnapPixels);rebuildSketchControls();
+
     connect(viewport_, &CadViewport::partCreated, this, [this, root](const QString& name) {
         const QSignalBlocker blocker(structure_);
         auto* item = new QTreeWidgetItem(root, QStringList{name});
@@ -203,6 +258,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(viewport_, &CadViewport::partsChanged, this, [this] {
         if (!documentTransition_) markDocumentDirty();
+    });
+    connect(viewport_, &CadViewport::sketchEntitiesChanged,this,[this] {
+        rebuildConstructionBrowser();if(!documentTransition_) markDocumentDirty();
+    });
+    connect(viewport_, &CadViewport::sketchSelectionChanged,this,[this](const QStringList& ids) {
+        const QSignalBlocker blocker(structure_);
+        for(int i=0;i<constructionRoot_->childCount();++i) {
+            auto* plane=constructionRoot_->child(i);
+            for(int j=0;j<plane->childCount();++j) {
+                auto* item=plane->child(j);item->setSelected(ids.contains(item->data(0,Qt::UserRole).toString()));
+            }
+        }
+        if(ids.empty() && structure_->currentItem() && structure_->currentItem()->data(0,Qt::UserRole+1).toString()=="sketch") structure_->setCurrentItem(nullptr);
     });
     connect(viewport_, &CadViewport::constructionsChanged,this,[this] {
         rebuildConstructionBrowser();if(!documentTransition_) markDocumentDirty();
@@ -234,6 +302,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
     });
     connect(structure_, &QTreeWidget::itemChanged, this, [this,root](QTreeWidgetItem* item,int column) {
+        if(column==0 && item->data(0,Qt::UserRole+1).toString()=="sketch") {
+            const auto id=item->data(0,Qt::UserRole).toString();
+            for(const auto& entity:viewport_->sketchEntities()) if(entity.id==id) {
+                auto updated=entity;updated.name=item->text(0);QString error;
+                if(!viewport_->updateSketchEntity(updated,error)) {rebuildConstructionBrowser();statusBar()->showMessage(error);}
+                break;
+            }
+            return;
+        }
         if(column==0 && item->parent()==constructionRoot_) {
             const auto id=item->data(0,Qt::UserRole).toString();
             for(const auto& object:viewport_->constructionObjects()) if(object.id==id) {
@@ -245,6 +322,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             viewport_->renamePart(item->data(0,Qt::UserRole).toULongLong(),item->text(0));
     });
     connect(structure_, &QTreeWidget::itemSelectionChanged, this, [this, root]() {
+        QStringList sketchIds;
+        for(auto* item:structure_->selectedItems()) if(item->data(0,Qt::UserRole+1).toString()=="sketch") sketchIds.push_back(item->data(0,Qt::UserRole).toString());
+        if(!sketchIds.empty()) {viewport_->selectSketchEntities(sketchIds);return;}
         QStringList constructionIds;
         for(auto* item:structure_->selectedItems()) if(item->parent()==constructionRoot_) constructionIds.push_back(item->data(0,Qt::UserRole).toString());
         if(!constructionIds.empty()) {
@@ -286,6 +366,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     };
     connect(structure_, &QTreeWidget::itemClicked, this,
             [this, root, setVisibility](QTreeWidgetItem* item, int column) {
+        if(item->data(0,Qt::UserRole+1).toString()=="sketch" && column==1) {
+            const auto id=item->data(0,Qt::UserRole).toString();
+            for(const auto& entity:viewport_->sketchEntities()) if(entity.id==id) {
+                auto updated=entity;updated.visible=!updated.visible;QString error;
+                if(!viewport_->updateSketchEntity(updated,error)) statusBar()->showMessage(error);
+                break;
+            }
+            return;
+        }
         if(item->parent()==constructionRoot_ && column==1) {
             const auto id=item->data(0,Qt::UserRole).toString();
             for(const auto& object:viewport_->constructionObjects()) if(object.id==id) {auto updated=object;updated.visible=!updated.visible;viewport_->updateConstruction(updated);break;}
@@ -300,6 +389,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             [this, root, setVisibility](const QPoint& pos) {
         auto* item = structure_->itemAt(pos);
         if(!item) return;
+        if(item->data(0,Qt::UserRole+1).toString()=="sketch") {
+            QStringList ids;
+            if(item->isSelected()) for(auto* selected:structure_->selectedItems())
+                if(selected->data(0,Qt::UserRole+1).toString()=="sketch") ids.push_back(selected->data(0,Qt::UserRole).toString());
+            if(ids.empty()) ids.push_back(item->data(0,Qt::UserRole).toString());
+            viewport_->selectSketchEntities(ids);QMenu menu(structure_);viewport_->populateSketchMenu(menu);
+            menu.exec(structure_->viewport()->mapToGlobal(pos));return;
+        }
         if(item->parent()==constructionRoot_) {
             QStringList ids;
             if(item->isSelected()) for(auto* selected:structure_->selectedItems()) if(selected->parent()==constructionRoot_) ids.push_back(selected->data(0,Qt::UserRole).toString());
@@ -372,7 +469,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 void MainWindow::updateWindowTitle() {
     const QString name = documentPath_.isEmpty()
         ? tr("Untitled") : QFileInfo(documentPath_).fileName();
-    setWindowTitle(tr("OpenDesigner 0.4.0 — %1%2").arg(name, documentDirty_ ? QStringLiteral(" *") : QString()));
+    setWindowTitle(tr("OpenDesigner 0.4.1 — %1%2").arg(name, documentDirty_ ? QStringLiteral(" *") : QString()));
 }
 
 void MainWindow::markDocumentDirty() {
@@ -486,8 +583,29 @@ void MainWindow::rebuildConstructionBrowser() {
         item->setText(1,object.visible?QStringLiteral("👁"):QStringLiteral("—"));
         item->setForeground(0,object.visible?QBrush():QBrush(QColor(Qt::gray)));
         item->setSelected(viewport_->constructionSelection().contains(object.id));
+        if(viewport_->activeSketchWorkplane()==object.id) {
+            auto font=item->font(0);font.setBold(true);item->setFont(0,font);item->setToolTip(0,tr("Active 2D Workplane"));
+        }
+        for(const auto& entity:viewport_->sketchEntities()) if(entity.workplaneId==object.id) {
+            const auto role=entity.role==Sketch::Role::Construction?tr("Construction"):tr("Profile");
+            auto* child=new QTreeWidgetItem(item,QStringList{entity.name.isEmpty()?Sketch::typeName(entity.geometry):entity.name});
+            child->setData(0,Qt::UserRole,entity.id);child->setData(0,Qt::UserRole+1,QStringLiteral("sketch"));
+            child->setFlags(child->flags()|Qt::ItemIsEditable);
+            child->setToolTip(0,role+(entity.selectable?QString():tr(" — selection locked")));
+            child->setText(1,entity.visible?QStringLiteral("👁"):QStringLiteral("—"));
+            child->setForeground(0,entity.visible && object.visible?QBrush():QBrush(QColor(Qt::gray)));
+            child->setSelected(viewport_->sketchSelection().contains(entity.id));
+        }
+        item->setExpanded(true);
     }
-    constructionRoot_->setExpanded(true);
+    constructionRoot_->setExpanded(true);rebuildSketchControls();
+}
+void MainWindow::rebuildSketchControls() {
+    if(!sketchWorkplane_) return;
+    const QSignalBlocker blocker(sketchWorkplane_);sketchWorkplane_->clear();sketchWorkplane_->addItem(tr("Choose Workplane…"),QString());
+    for(const auto& object:viewport_->constructionObjects()) if(object.kind==Construction::Kind::Workplane && object.visible && object.selectable)
+        sketchWorkplane_->addItem(object.name,object.id);
+    const int index=sketchWorkplane_->findData(viewport_->activeSketchWorkplane());sketchWorkplane_->setCurrentIndex(std::max(0,index));
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {

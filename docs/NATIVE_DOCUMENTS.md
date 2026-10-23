@@ -69,7 +69,7 @@ packaging remain outstanding.
 
 ## v0.4.0 construction extension
 
-Current writes use schema v2; the reader also accepts v0.3.7 schema v1 and
+The v0.4.0 implementation writes schema v2; the reader also accepts v0.3.7 schema v1 and
 initializes an empty construction collection. Schema v2 retains exact Part
 geometry/properties and camera and adds independent Workplane/Axis/Point
 metadata in the same BinXCAF file. Its root marker and explicit version prevent
@@ -86,3 +86,39 @@ construction group. Earlier v2 files without these optional attributes retain
 zero display offsets and infer their counters from existing names. All data stays
 in the single `.odc` file. Viewport text labels are rebuilt from object names and
 camera state; no AIS objects or screen positions are serialized.
+
+## v0.4.1 2D extension
+
+Current writes use schema v3. Readers accept v1/v2/v3; earlier schemas initialize
+an empty 2D collection. The same single BinXCAF file stores exact analytic local
+2D parameters, stable entity and owning Workplane IDs, role, name, visibility and
+selectability, alongside existing Part B-Reps, constructions and camera.
+The v3 root marker makes older readers refuse new files safely. Missing groups,
+unknown types, orphan owners, duplicate IDs, invalid flags and degenerate data
+are refused before replacement. Existing atomic Save and transactional Open
+policies remain. See [Sketch Editor](SKETCH_EDITOR.md) for the fixed type
+representations, migration and regressions. Phase-2 interactive drawing writes
+the same schema-v3 values; no parallel sketch format is introduced. The active
+editing Workplane, drawing points/previews and snap preferences are transient.
+Save retains a pending drawing command while storing only confirmed entities;
+Open/New clear the command, editing context, selection and both history stacks.
+The actual camera is saved even though navigation does not mark the document dirty.
+
+After a normal view of a flat Workplane, OCCT can fit to zero Eye/Center distance
+while retaining its independent orthographic Direction. View fitting now restores
+a positive representable separation without changing center/up/zoom. Snapshot
+capture canonicalizes a copy too, so this legitimate 2D view can use the existing
+Eye/Center camera record. Empty and 2D-only documents require no solid component.
+Camera metadata validation stays strict; no schema change or guessed default view
+is used to accept an invalid stored record.
+
+Phase-3 Overdraw also uses schema v3 without additional stored types: only its
+confirmed independent Profile segments/arcs are appended. The source Construction
+entities remain ordinary unchanged values. Candidate graphs, source IDs used for
+picking, green hover and blue temporary choices are not serialized. Editing a
+Construction source after confirmation cannot drive stored Overdraw results.
+
+Offset/common-tangent Construction tools likewise persist ordinary schema-v3
+segments or infinite lines, with local XY values, Construction role and independent
+UUIDs. Reference IDs, solution alternatives and preview state are not serialized.
+Save during either command keeps the session but includes only confirmed values.

@@ -82,6 +82,7 @@ bool CadViewport::startAlignFace(size_t index,const TopoDS_Face& face) {
 }
 
 void CadViewport::rotateFace() {
+    endSketchEditing();
     cancelCommandSession();
     const auto selection=selectionContext();
     if(selection.kind!=SelectionContext::Kind::Faces || selection.faces.size()!=1) {
@@ -91,6 +92,7 @@ void CadViewport::rotateFace() {
 }
 
 void CadViewport::alignFace() {
+    endSketchEditing();
     cancelCommandSession();
     const auto selection=selectionContext();
     if(selection.kind!=SelectionContext::Kind::Faces || selection.faces.size()!=1) {

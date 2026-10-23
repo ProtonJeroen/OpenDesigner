@@ -147,6 +147,7 @@ void CadViewport::intersectSelectedParts() { beginBooleanSession(BooleanOperatio
 void CadViewport::subtractSelectedParts() { beginBooleanSession(BooleanOperation::Subtract); }
 
 void CadViewport::beginBooleanSession(BooleanOperation operation) {
+    endSketchEditing();
     cancelCommandSession();
     const auto selected=selectedBooleanParts();
     beginCommandSession(CommandSession::Kind::Boolean,{},gp_Dir(1,0,0));

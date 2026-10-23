@@ -31,6 +31,11 @@ class QContextMenuEvent;
 #include <QStringList>
 class ConstructionPanel;
 #include "NativeDocument.h"
+#include "SketchDrawingPanel.h"
+#include "SketchSnapping.h"
+#include "SketchOverdraw.h"
+#include "SketchOverdrawPanel.h"
+#include "SketchConstructionPanel.h"
 
 class CadViewport final : public QWidget {
     Q_OBJECT
@@ -40,6 +45,28 @@ public:
     bool exportDocumentSnapshot(NativeDocumentSnapshot& snapshot) const;
     bool importDocumentSnapshot(const NativeDocumentSnapshot& snapshot, QString& error);
     void resetDocument();
+    QString activeSketchWorkplane() const { return activeSketchWorkplaneId_; }
+    bool activateSketchWorkplane(const QString& id = {}, bool alignView = true);
+    void endSketchEditing();
+    void lookNormalToSketch();
+    void startSketchDrawing(Sketch::DrawTool tool, Sketch::Role role = Sketch::Role::Profile);
+    void startSketchOverdraw();
+    void startSketchConstruction(Sketch::ConstructionTool tool);
+    void startSketchAxes(bool localX,bool localY);
+    void populateSketchAxesMenu(QMenu& menu);
+    void setSketchSnapPixels(int pixels);
+    int sketchSnapPixels() const { return sketchSnapPixels_; }
+    void setSketchSnapping(bool enabled);
+    bool sketchSnapping() const { return sketchSnapping_; }
+    const std::vector<Sketch::Entity>& sketchEntities() const { return sketchEntities_; }
+    const QStringList& sketchSelection() const { return selectedSketchIds_; }
+    // Phase-1 transaction adapter for future drawing tools (complete candidate set).
+    bool previewSketchEntities(const std::vector<Sketch::Entity>& entities, QString& error, bool showControls=true);
+    void finishSketchEdit(bool confirm);
+    void selectSketchEntities(const QStringList& ids);
+    bool updateSketchEntity(const Sketch::Entity& entity, QString& error);
+    bool deleteSketchEntities(const QStringList& ids, QString& error);
+    void populateSketchMenu(QMenu& menu);
     const std::vector<Construction::Object>& constructionObjects() const { return constructions_; }
     const QStringList& constructionSelection() const { return selectedConstructionIds_; }
     void startConstruction(Construction::Method method,const QString& targetId = {});
@@ -99,6 +126,9 @@ signals:
     void selectionModeChanged(SelectionMode mode);
     void transformModesChanged(bool faceNormalMove, bool move, bool rotate);
     void documentReplaced();
+    void activeSketchWorkplaneChanged(const QString& id);
+    void sketchEntitiesChanged();
+    void sketchSelectionChanged(const QStringList& ids);
     void constructionsChanged();
     void constructionSelectionChanged(const QStringList& ids);
 protected:
@@ -113,6 +143,11 @@ protected:
     bool eventFilter(QObject*, QEvent*) override;
 private:
     friend struct ConstructionSessionTest;
+    friend struct SketchSessionTest;
+    friend struct SketchDrawingTest;
+    friend struct SketchOverdrawSessionTest;
+    friend struct SketchConstructionSessionTest;
+    friend struct SketchReleaseSessionTest;
     friend struct CadViewportPullTest;
     friend struct NativeDocumentSessionTest;
     friend struct BooleanOperationsTest;
@@ -122,11 +157,11 @@ private:
     friend struct DeleteFaceTest;
     struct SelectedFace { size_t partIndex; TopoDS_Face face; };
     struct SelectionContext {
-        enum class Kind { None, Parts, Faces, Constructions };
+        enum class Kind { None, Parts, Faces, Constructions, Sketches };
         Kind kind = Kind::None;
         std::vector<size_t> parts;
         std::vector<SelectedFace> faces;
-        QStringList constructions;
+        QStringList constructions, sketches;
     };
     QAction* undoAction_ = nullptr;
     QAction* redoAction_ = nullptr;
@@ -182,7 +217,39 @@ private:
         QJsonObject debugOperation;
     };
     struct FaceChange { CadPart before, after; };
-    struct ConstructionChange { std::vector<Construction::Object> before, after; };
+    struct SketchDrawingState {
+        Sketch::DrawTool tool = Sketch::DrawTool::Segment;
+        Sketch::Entity candidate;
+        std::vector<Sketch::Point> points;
+        std::optional<Sketch::Point> cursor;
+        std::optional<Sketch::SnapTarget> snap;
+        std::vector<Sketch::SnapTarget> intersections;
+        std::optional<double> radius, startAngle, sweep;
+        bool complete=false;
+    };
+    struct SketchChange { std::vector<Sketch::Entity> before, after; };
+    struct SketchConstructionState {
+        Sketch::ConstructionTool tool=Sketch::ConstructionTool::OffsetLine;
+        Sketch::Entity candidate;
+        std::vector<Sketch::CommonTangent> solutions;
+        std::vector<Sketch::Geometry> lines;
+        QStringList referenceHits;
+        std::vector<size_t> solutionHits;
+        int pickRole=0,selected=-1;
+        QString error,notice;
+    };
+    struct SketchOverdrawState {
+        struct Pick {size_t piece,from,to;Sketch::Entity profile;};
+        Sketch::OverdrawGraph graph;
+        std::vector<Pick> picks;
+        std::vector<size_t> hits;
+        std::optional<size_t> currentNode,nodeHover,hover;
+        QString error,feedback;
+    };
+    struct ConstructionChange {
+        std::vector<Construction::Object> before, after;
+        std::vector<Sketch::Entity> sketchesBefore, sketchesAfter;
+    };
     struct ConstructionChoice { QString key, label, objectId; Construction::Reference reference; };
     struct ConstructionSessionState {
         Construction::Request request;
@@ -205,6 +272,7 @@ private:
         ConeParameters beforeCone, afterCone;
         std::vector<PullChange> groupedChanges;
         std::shared_ptr<ConstructionChange> constructionChange;
+        std::shared_ptr<SketchChange> sketchChange;
         std::shared_ptr<BooleanChange> booleanChange;
         std::shared_ptr<FaceChange> faceChange;
         QJsonObject debugOperation;
@@ -212,8 +280,12 @@ private:
     // Transaction state only: confirmed changes use the existing modeling history.
     struct CommandSession {
         enum class State { Selection, Parameters, Preview, Confirmed, Cancelled };
-        enum class Kind { Move, Rotate, MoveFace, RotateFace, AlignFace, Boolean, Pull, DeleteFace, Construction };
+        enum class Kind { Move, Rotate, MoveFace, RotateFace, AlignFace, Boolean, Pull, DeleteFace, Construction, Sketch };
         std::shared_ptr<ConstructionSessionState> construction;
+        std::shared_ptr<SketchChange> sketch;
+        std::shared_ptr<SketchDrawingState> drawing;
+        std::shared_ptr<SketchOverdrawState> overdraw;
+        std::shared_ptr<SketchConstructionState> lineConstruction;
         State state = State::Selection;
         Kind kind = Kind::Move;
         std::vector<PullChange> changes;
@@ -244,6 +316,52 @@ private:
         bool keepTools = false, chooseTarget = false;
         std::shared_ptr<BooleanChange> booleanChange;
     };
+    QString activeSketchWorkplaneId_;
+    int sketchSnapPixels_ = 10;
+    bool sketchSnapping_ = true;
+    SketchDrawingPanel* sketchDrawingPanel_ = nullptr;
+    SketchOverdrawPanel* sketchOverdrawPanel_ = nullptr;
+    SketchConstructionPanel* sketchConstructionPanel_ = nullptr;
+    std::vector<Handle(AIS_Shape)> constructionLineAlternatives_;
+    void refreshSketchConstruction(bool recompute=true);
+    void closeSketchConstructionPanel();
+    bool acceptSketchConstructionReference(const QString& id);
+    bool sketchConstructionMove(const QPoint& pixel);
+    bool sketchConstructionClick(const QPoint& pixel);
+    Handle(AIS_Shape) overdrawHover_;
+    bool overdrawMove(const QPoint& pixel);
+    bool overdrawClick(const QPoint& pixel);
+    void chooseOverdrawPiece();
+    void backOverdrawPiece();
+    void newOverdrawStart();
+    void refreshOverdraw();
+    void closeOverdrawPanel();
+    void showSketchMarker(Handle(AIS_Shape)& presentation,Sketch::Point point,const Quantity_Color& color);
+    Handle(AIS_Shape) sketchSnapMarker_, sketchAnchorMarker_;
+    Handle(AIS_TextLabel) sketchCursorLabel_;
+    void refreshSketchPicking(bool restore3D=false);
+    void stabilizeViewCamera();
+    void validateActiveSketchContext();
+    std::optional<Sketch::Point> sketchPlanePoint(const QPoint& pixel) const;
+    bool sketchDrawingMove(const QPoint& pixel, Qt::KeyboardModifiers modifiers);
+    bool sketchDrawingClick(const QPoint& pixel, Qt::KeyboardModifiers modifiers);
+    void acceptSketchPoint(Sketch::Point point);
+    void useSketchNumeric(bool polar);
+    void backSketchPoint();
+    void refreshSketchDrawing();
+    void updateSketchFeedback();
+    void clearSketchFeedback();
+    void closeSketchDrawingPanel();
+    std::vector<Sketch::Entity> sketchEntities_;
+    QStringList selectedSketchIds_;
+    std::map<QString,Handle(AIS_Shape)> sketchPresentations_, sketchPreviews_;
+    Handle(AIS_Shape) sketchPresentation(const Sketch::Entity& entity, const Construction::Object& owner, bool preview=false) const;
+    void displaySketchPresentation(const Sketch::Entity& entity, const Construction::Object& owner, const Handle(AIS_Shape)& presentation, bool preview=false);
+    void rebuildSketchPresentations();
+    void restoreSketchEntities(const std::vector<Sketch::Entity>& entities);
+    bool sketchMousePress(const QPoint& point, Qt::KeyboardModifiers modifiers);
+    bool sketchPickable(const Sketch::Entity& entity) const;
+    void clearSketchSelection();
     std::vector<Construction::Object> constructions_;
     std::map<QString,Handle(AIS_Shape)> constructionPresentations_;
     std::map<QString,Handle(AIS_TextLabel)> constructionLabels_;

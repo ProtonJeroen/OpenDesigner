@@ -94,6 +94,7 @@ Fit Selected is also available in the construction context menu.
 | Edge/axis and angle | Plane through that line, rotated from the orientation of an explicit zero plane. The line must be parallel to the zero plane. Its origin is the line origin; the zero plane need not contain the line. |
 | Parallel through point | Reference orientation, selected point as origin. |
 | XYZ and orientation | World origin and world X/Y/Z rotation angles. |
+| XY / XZ / YZ presets (v0.4.1) | Explicit right-handed frames through world origin, with an optional signed offset along the displayed normal. No reference geometry required. |
 | Move / Rotate | Rigid edit of the existing Workplane's own frame. |
 
 | Axis method | Meaning |

@@ -2,15 +2,34 @@
 
 OpenDesigner is an open-source cross-platform 3D direct-modeling application inspired by classic CoCreate SolidDesigner.
 
-**Status:** v0.4.0 construction geometry prototype in development; not a packaged release.
+**Status:** v0.4.1 2D Modeling release candidate; not a packaged distribution.
 The supplied Delete Face and Unite seam cases were manually confirmed by the user
 on 2026-10-20. Native Save/Open and the cone/hole Pull fixes were tested and
 confirmed by the user on Fedora KDE on 2026-10-21. Automated regression coverage
 and remaining scope limits are documented below.
 
 Construction geometry adds independent Workplanes, Axes and Points with shared
-command sessions, Undo/Redo and native storage. Its new Fedora KDE workflow
-validation is pending; see [construction geometry](docs/CONSTRUCTION_GEOMETRY.md).
+command sessions, Undo/Redo and native storage. Its Fedora KDE workflow
+was manually tested by the user; see [construction geometry](docs/CONSTRUCTION_GEOMETRY.md).
+
+2D Modeling adds exact local geometry and schema-v3 storage, Workplane editing,
+interactive/numeric lines, circles and arcs, analytic snapping, browser management
+and shared history. Start with **Edit Sketch** or the Workplane chooser in the
+2D Modeling toolbar. Overdraw converts explicitly chosen bounded Construction
+portions into independent Profile geometry. Construction Axes creates real local
+X/Y infinite lines for snapping and Overdraw; XY/XZ/YZ Workplane presets support
+normal offsets, including in an empty document. Arcs support explicit CW/CCW;
+Offset and Common Tangent Construction Line support Infinite/Finite output.
+See [Sketch Editor](docs/SKETCH_EDITOR.md).
+The user confirmed 18/18 GUI regressions on Fedora KDE on 2026-10-23:
+the earlier nine and all nine additional checks, including axes and presets.
+
+Native writes use `.odc` schema v3 and read v1/v2 documents. General Project 3D
+Geometry (vertices, edges and faces to 2D) is scheduled for v0.4.2. The existing
+Point → Project onto workplane creates an independent 3D construction Point;
+it does not populate a Workplane’s 2D collection. Overdraw currently requires
+bounded pieces, excludes unbounded tails and 0/1-cut circles, refuses overlapping
+Construction sources, and does not validate closed/extrudable profiles.
 
 ## Prototype features
 - Qt 6 desktop window with dockable Structure Browser
@@ -54,6 +73,8 @@ See [Boolean Operations](docs/BOOLEAN_OPERATIONS.md) for selection, target/tool
 choice, error handling, Undo/Redo and known limits. Enable the optional
 integration tests with `-DOPENDESIGNER_BUILD_TESTS=ON`, build, then run
 `ctest --test-dir build --output-on-failure` with an X11/OpenGL display.
+GitHub Actions enables the test targets for its Release build and runs all CTests
+under Xvfb with software OpenGL before uploading the Linux executable.
 
 Rotation behavior, regression coverage and manual checks: [Consistent rotation pivot](docs/ROTATION_PIVOT.md).
 The repository also includes an original [SolidDesigner 16 workflow analysis](docs/SOLIDDESIGNER16_WORKFLOWS.md), without proprietary manual assets.
@@ -70,7 +91,7 @@ Selection shortcuts, explicit context actions and eligibility: [Selection and co
 Face removal, conservative reconstruction limits and shared geometry error
 popups: [Delete Face](docs/DELETE_FACE.md).
 
-Native document storage, `.odc` schemas v1/v2, transaction-safe Save/Open and
+Native document storage, `.odc` schema v3 with v1/v2 read compatibility, transaction-safe Save/Open and
 round-trip tests: [Native documents](docs/NATIVE_DOCUMENTS.md).
 
 The v0.3.6 interaction workflow retains passive selection: click Faces, Alt+click Parts,
