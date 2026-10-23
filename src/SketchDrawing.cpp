@@ -112,7 +112,7 @@ void CadViewport::startSketchDrawing(Sketch::DrawTool tool,Sketch::Role role) {
         // arc between them, not the same signed amount with a moved endpoint.
         commandSession_->drawing->sweep.reset();refreshSketchDrawing();
     };
-    sketchDrawingPanel_->show();refreshSketchDrawing();setFocus();
+    showCommandPanel(sketchDrawingPanel_);refreshSketchDrawing();setFocus();
 }
 bool CadViewport::sketchDrawingMove(const QPoint& pixel,Qt::KeyboardModifiers modifiers) {
     if(!commandSession_ || !commandSession_->drawing) return false;

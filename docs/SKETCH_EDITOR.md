@@ -1,4 +1,4 @@
-# 2D Modeling / Sketch Editor — v0.4.1
+# 2D Modeling / Sketch Editor — v0.4.1 and v0.4.2 foundations
 
 Phase 1 supplies document values, native storage, presentation, browser management
 and shared history. Phase 2 adds explicit Workplane editing, interactive and
@@ -24,6 +24,12 @@ have positive radii; arcs store a start angle and signed sweep in radians
 Circle. The discriminated representation permits additional curve types later;
 schema-v3 type tags 0–3 are fixed and must never be reassigned.
 
+v0.4.2 phase 1 appends `ConstructionPoint { position }` as tag 4, with exact local
+XY and the same identity, Workplane ownership and flags. It is an independent
+Construction entity, never a Profile curve. Its finite coordinates are validated;
+assigning the Profile role is refused. The lightweight `Sketch::Point` coordinate
+pair used by analytic helpers remains distinct from this persistent entity type.
+
 The document's entity collection is partitioned by owning Workplane ID, giving
 one collection per Workplane and any number of contours. There is no separate
 Sketch feature, constraint graph, source geometry reference or feature history.
@@ -41,11 +47,18 @@ history step. Creation references for the Workplane remain evaluated once.
 
 ## Viewport, browser and transactions
 
-`SketchTools.cpp` adapts the values to exact OCCT edges. Profile curves are white
+`SketchTools.cpp` adapts curves to exact OCCT edges. Profile curves are white
 and solid; Construction curves are pink and dashed. Infinite lines are clipped
 only for display, using the Workplane extent, and excluded from automatic OCCT
 infinite-object fitting. Construction-only Fit All additionally considers finite
 display bounds and the drawn curves. Labels and rendering are never storage data.
+
+Local Construction Points use exact OCCT vertices and pink circle-plus markers
+with a fixed screen size; temporary point previews are blue. Their analytic
+positions follow the owner frame, independent of its display offset. Browser,
+viewport selection, visibility, selection locks, owner deletion and mixed 2D/3D
+history reuse the same entity path as curves. Hidden/locked owners suppress
+point picking; hiding an owner also suppresses its markers.
 
 2D browser rows are children of their owning Workplane, keyed by entity UUID.
 They support rename, an eye control, Show/Hide, selection lock, Delete and Fit
@@ -360,12 +373,41 @@ ellipse, persistent constraint or feature-history dependency is introduced.
 
 ## Native schema v3
 
+This section describes the v0.4.1 curve format. The v0.4.2 point extension below
+retains it for documents without points and adds schema v4 when necessary.
+
 The single BinXCAF `.odc` file uses `OpenDesigner.RootAssembly.v3` and schema
 integer 3, preserving the previous exact Part geometry, camera and construction
 records. A required `OpenDesigner.Sketch.v1` metadata group contains one collection
 per owning Workplane, with per-entity IDs, names, flags, fixed curve type tags,
 original collection order and exact double parameters in OCAF attributes.
 No viewport tessellation or feature history is stored.
+
+### Schema v4 and point isolation (v0.4.2 phase 1)
+
+Current snapshots support v4 in memory. Native Save writes v4 if any local
+Construction Point exists, otherwise v3. Readers accept v1/v2/v3/v4 and upgrade
+the snapshot capability without changing coordinates. Tag 4 stores exactly two
+double values (X/Y) in the existing sketch metadata layout under a v4 root.
+Tags 0–3, ownership and flags are unchanged. Explicit v3-with-points saves, tag-4
+records in v3 files, Profile points, non-finite coordinates and future schemas
+are refused before file/document replacement. See [Native documents](NATIVE_DOCUMENTS.md).
+
+Visible, selectable points on the active Workplane supply exact strong snap
+targets labelled **Construction point**, using the existing screen-pixel radius.
+Existing endpoint/midpoint/center/intersection/tangent tie priorities are retained;
+nearest-curve targets remain weaker. Owner visibility/locking is enforced by the
+editing context, and entity visibility/locking by snap acquisition. A line snapped
+to a point stores independent exact coordinates; deleting the point does not
+delete or drive that line.
+
+Points do not become curve intersections, tangent/offset references, Overdraw
+sources or cuts. Overdraw skips them; Offset/Common Tangent refuse them. They
+cannot be Profile geometry or close a contour. This phase exposes point values
+through the existing candidate/SketchChange API and native files; no interactive
+point-creation tool or Project 3D Geometry command is added yet. Projection and its
+selection/session UI remain later phases. These are OpenDesigner design choices,
+not additional claims about SolidDesigner v16 behavior.
 
 ### Camera capture without Parts
 
@@ -639,3 +681,58 @@ The user subsequently confirmed all nine additional GUI tests on Fedora KDE,
 including axes and presets: 18/18 GUI regressions passed in total. The hosted
 GitHub CI run is checked separately on the PR. General 3D-to-2D projection is
 outside this release by the approved scope decision.
+
+## v0.4.2 phase-1 verification
+
+The subsequent phase-2 `SketchProjection` module computes exact orthogonal vertex
+and bounded analytic straight-edge projections. It returns independent local
+Construction Points/segments and per-source diagnostics, without changing model
+or command state. Invalid input/overlap blocks the entire batch; duplicates give
+a no-op when no new geometry remains. Storage remains v3/v4 and no interactive
+Project command is added. See [projection API and policies](SKETCH_PROJECTION.md).
+Existing 3D Point projection remains a separate world-space construction operation.
+
+Validation on 2026-10-23: the complete CMake Release build succeeded and all
+32 CTests passed (185.87 seconds), including both new point suites, legacy
+schema migration and existing 2D/3D modeling regressions. Tracked/new-file
+whitespace checks passed; no binary, conflict-marker or recognizable-secret
+findings occurred in changed files. Native Fedora KDE checks below remain pending.
+
+`sketch-construction-points` verifies exact local/world point values on translated
+and rotated frames, invalid Profile/non-finite points, pixel-radius snapping and
+existing snap tie priorities, hidden/locked/other-owner filtering, curve-only
+rejection and unchanged Overdraw graphs even for points lying on curves. Real
+BinXCAF tests check v4 point roundtrips, actual v3 output without points, explicit
+legacy downgrade refusal, v1/v2/v3 migration and malformed/future-record refusal
+without replacing an existing document.
+
+`sketch-point-sessions` drives point creation through the existing preview API,
+Cancel/OK, point selection by mouse/browser, rename, visibility/locks and owner
+transforms/deletion. Rendered markers keep their pixel size at three zoom levels.
+Drawing snaps to exact point values; removing the point leaves the line
+independent. Save/Save As preserve selection and both history stacks, pending
+points are excluded, and Open/New reset the session and rebuild the browser.
+Existing 3D Move Undo/Redo is exercised in the same document.
+
+There is no interactive point-creation button in this foundation phase. Generate
+a repeatable manual fixture in the ignored build directory with:
+
+```sh
+build/OpenDesignerSketchPointTests --fixture build/construction-points-demo.odc
+```
+
+Fedora KDE recheck:
+
+1. Open that fixture with the new executable, select WP1 and Edit Sketch/Look
+   Normal. Check pink point markers and browser rows; zoom in/out and change KDE
+   scaling. Markers should retain screen size and remain selectable.
+2. Select a point by click/Ctrl-click and via the browser. Rename, hide/show and
+   toggle selection lock; repeat with its owning Workplane. Move/rotate WP1 and
+   verify points follow it. Use Undo/Redo and verify selection is cleared.
+3. Draw a line starting near a point at different zoom levels. Check the orange
+   **Construction point** snap feedback and exact acquisition; hidden/locked
+   points must not snap. Cancel must leave no line; OK adds one history step.
+4. Save/Save As/Open, then delete/Undo a point and delete/Undo its owner. Accepted
+   lines stay independent, while owner deletion includes its points. Check
+   Offset/Common Tangent and Overdraw still operate on curves, then Finish 2D
+   and recheck ordinary solid editing. No Project 3D Geometry command is expected.

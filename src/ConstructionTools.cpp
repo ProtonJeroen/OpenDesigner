@@ -279,8 +279,7 @@ void CadViewport::startConstruction(Method method,const QString& targetId) {
     constructionPanel_->changed=[this]{previewConstruction();};
     constructionPanel_->confirmed=[this]{confirmCommandSession();};constructionPanel_->cancelled=[this]{cancelCommandSession();};
     constructionPanel_->pickRequested=[this](size_t role){chooseConstructionRole(role);};
-    constructionPanel_->move(mapToGlobal(QPoint(std::max(0,width()-constructionPanel_->sizeHint().width()-20),20)));
-    constructionPanel_->show();previewConstruction();
+    showCommandPanel(constructionPanel_);previewConstruction();
 }
 bool CadViewport::acceptConstructionChoice(size_t role,const QString& key) {
     if(!constructionPanel_ || role>=constructionPanel_->roles.size()) return false;

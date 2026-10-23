@@ -85,13 +85,13 @@ int main() {
         const auto path=dir.filePath("sketch.odc");NativeDocumentSnapshot loaded;
         check(NativeDocumentStorage::save(path,snapshot,error),qPrintable(error));
         check(NativeDocumentStorage::load(path,loaded,error),qPrintable(error));
-        check(loaded.schemaVersion==3 && loaded.sketchEntities==entities,"2D values, IDs, flags or order changed in roundtrip");
+        check(loaded.schemaVersion==NativeDocumentStorage::CurrentSchemaVersion && loaded.sketchEntities==entities,"2D values, IDs, flags or order changed in roundtrip");
         for(int version:{1,2}) {
             NativeDocumentSnapshot legacy;legacy.schemaVersion=version;
             if(version==2) legacy.constructions=owners;
             const auto legacyPath=dir.filePath(QString("v%1.odc").arg(version));
             check(NativeDocumentStorage::save(legacyPath,legacy,error),qPrintable(error));
-            check(NativeDocumentStorage::load(legacyPath,loaded,error) && loaded.schemaVersion==3
+            check(NativeDocumentStorage::load(legacyPath,loaded,error) && loaded.schemaVersion==NativeDocumentStorage::CurrentSchemaVersion
                 && loaded.sketchEntities.empty() && loaded.constructions.size()==(version==2?2:0),"legacy migration failed");
             legacy.sketchEntities=entities;
             check(!NativeDocumentStorage::save(legacyPath,legacy,error),"legacy writer silently discarded sketches");

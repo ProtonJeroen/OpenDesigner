@@ -55,6 +55,7 @@ std::vector<std::pair<double,double>> intervals(const Geometry& curve) {
 }
 bool contains(const Geometry& curve,Point p,double tolerance) {
     if(!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(tolerance) || tolerance<=0) return false;
+    if(const auto* point=std::get_if<ConstructionPoint>(&curve)) return length(sub(point->position,p))<=tolerance;
     if(const auto l=line(curve)) {
         const auto d=sub(p,l->origin);const double t=dot(d,l->direction);
         return std::abs(cross(d,l->direction))<=tolerance && (!l->finite || (t>=-tolerance && t<=l->end+tolerance));
@@ -68,6 +69,8 @@ bool contains(const Geometry& curve,Point p,double tolerance) {
 }
 Intersections intersect(const Geometry& a,const Geometry& b,double tolerance) {
     Intersections result;if(!std::isfinite(tolerance) || tolerance<=0) return result;
+    // Standalone points supply snaps, not curve cuts or Overdraw boundaries.
+    if(std::holds_alternative<ConstructionPoint>(a) || std::holds_alternative<ConstructionPoint>(b)) return result;
     const auto la=line(a),lb=line(b);const auto ca=circle(a),cb=circle(b);
     const auto take=[&](Point p) {if(contains(a,p,tolerance) && contains(b,p,tolerance)) unique(result.points,p,tolerance);};
     if(la && lb) {
@@ -126,6 +129,10 @@ std::vector<Point> tangentPoints(Point anchor,const Geometry& curve,double toler
 }
 std::optional<Point> nearestPoint(const Geometry& curve,Point point) {
     if(!std::isfinite(point.x) || !std::isfinite(point.y)) return {};
+    if(const auto* p=std::get_if<ConstructionPoint>(&curve)) {
+        if(std::isfinite(p->position.x) && std::isfinite(p->position.y)) return p->position;
+        return {};
+    }
     if(const auto l=line(curve)) {
         double t=dot(sub(point,l->origin),l->direction);if(l->finite) t=std::clamp(t,0.0,l->end);
         return add(l->origin,mul(l->direction,t));
@@ -144,6 +151,10 @@ std::vector<SnapTarget> snapTargets(const std::vector<Entity>& entities,const QS
     std::vector<SnapTarget> targets;std::vector<const Entity*> eligible;
     const auto addTarget=[&](Point p,SnapKind kind,const char* label){targets.push_back({p,kind,QString::fromLatin1(label)});};
     for(const auto& e:entities) if(e.workplaneId==workplaneId && e.visible && e.selectable) {
+        if(const auto* point=std::get_if<ConstructionPoint>(&e.geometry)) {
+            if(std::isfinite(point->position.x) && std::isfinite(point->position.y)) addTarget(point->position,SnapKind::ConstructionPoint,"Construction point");
+            continue;
+        }
         eligible.push_back(&e);
         if(const auto* s=std::get_if<Segment>(&e.geometry)) {
             addTarget(s->start,SnapKind::Endpoint,"Endpoint");addTarget(s->end,SnapKind::Endpoint,"Endpoint");

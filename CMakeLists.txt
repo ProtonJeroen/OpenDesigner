@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(OpenDesigner VERSION 0.4.1 LANGUAGES CXX)
+project(OpenDesigner VERSION 0.4.2 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -13,6 +13,10 @@ find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets)
 find_package(VTK QUIET COMPONENTS CommonCore IOImage)
 find_package(OpenCASCADE REQUIRED)
 find_package(LibArchive REQUIRED)
+
+add_library(OpenDesignerCommandPanels STATIC src/CommandPanelPositioner.cpp src/CommandPanelPositioner.h)
+target_include_directories(OpenDesignerCommandPanels PUBLIC src)
+target_link_libraries(OpenDesignerCommandPanels PUBLIC Qt6::Widgets)
 
 add_executable(OpenDesigner
     src/main.cpp
@@ -50,7 +54,7 @@ set(OPENDESIGNER_LIBRARIES
     TKMath
     TKernel
 )
-add_library(OpenDesignerConstruction STATIC src/ConstructionGeometry.cpp src/ConstructionGeometry.h src/SketchGeometry.cpp src/SketchGeometry.h src/SketchSnapping.cpp src/SketchSnapping.h src/SketchOverdraw.cpp src/SketchOverdraw.h src/SketchConstruction.cpp src/SketchConstruction.h)
+add_library(OpenDesignerConstruction STATIC src/ConstructionGeometry.cpp src/ConstructionGeometry.h src/SketchGeometry.cpp src/SketchGeometry.h src/SketchSnapping.cpp src/SketchSnapping.h src/SketchOverdraw.cpp src/SketchOverdraw.h src/SketchConstruction.cpp src/SketchConstruction.h src/SketchProjection.cpp src/SketchProjection.h)
 target_include_directories(OpenDesignerConstruction PUBLIC src ${OpenCASCADE_INCLUDE_DIR})
 target_link_libraries(OpenDesignerConstruction PUBLIC ${OPENDESIGNER_LIBRARIES})
 add_library(OpenDesignerDeleteFaceGeometry STATIC src/DeleteFaceGeometry.cpp src/DeleteFaceGeometry.h
@@ -72,6 +76,17 @@ install(TARGETS OpenDesigner RUNTIME DESTINATION bin)
 option(OPENDESIGNER_BUILD_TESTS "Build viewport pull regression tests" OFF)
 if(OPENDESIGNER_BUILD_TESTS)
     enable_testing()
+    add_executable(OpenDesignerCommandPanelTests tests/CommandPanelPositionerTest.cpp)
+    target_link_libraries(OpenDesignerCommandPanelTests PRIVATE OpenDesignerCommandPanels)
+    add_test(NAME command-panel-positioning COMMAND OpenDesignerCommandPanelTests)
+    add_test(NAME command-panel-positioning-hidpi COMMAND OpenDesignerCommandPanelTests)
+    set_tests_properties(command-panel-positioning-hidpi PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=2")
+    add_executable(OpenDesignerSketchProjectionTests tests/SketchProjectionTest.cpp src/NativeDocument.cpp)
+    target_link_libraries(OpenDesignerSketchProjectionTests PRIVATE OpenDesignerConstruction)
+    add_test(NAME sketch-projection-geometry COMMAND OpenDesignerSketchProjectionTests)
+    add_executable(OpenDesignerSketchPointTests tests/SketchPointTest.cpp src/NativeDocument.cpp)
+    target_link_libraries(OpenDesignerSketchPointTests PRIVATE OpenDesignerConstruction)
+    add_test(NAME sketch-construction-points COMMAND OpenDesignerSketchPointTests)
     add_executable(OpenDesignerSketchConstructionTests tests/SketchConstructionTest.cpp src/NativeDocument.cpp)
     target_link_libraries(OpenDesignerSketchConstructionTests PRIVATE OpenDesignerConstruction)
     add_test(NAME sketch-construction-geometry COMMAND OpenDesignerSketchConstructionTests)
@@ -131,7 +146,7 @@ if(OPENDESIGNER_BUILD_TESTS)
     target_link_libraries(OpenDesignerMoveFaceTests PRIVATE ${OPENDESIGNER_LIBRARIES})
     add_test(NAME move-face COMMAND OpenDesignerMoveFaceTests)
     add_executable(OpenDesignerSelectionContextTests
-        tests/SelectionContextTest.cpp tests/NativeDocumentSessionTest.cpp tests/ConstructionSessionTest.cpp tests/SketchSessionTest.cpp tests/SketchDrawingTest.cpp tests/SketchOverdrawSessionTest.cpp tests/SketchConstructionSessionTest.cpp tests/SketchReleaseSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
+        tests/SelectionContextTest.cpp tests/NativeDocumentSessionTest.cpp tests/ConstructionSessionTest.cpp tests/SketchSessionTest.cpp tests/SketchDrawingTest.cpp tests/SketchOverdrawSessionTest.cpp tests/SketchConstructionSessionTest.cpp tests/SketchReleaseSessionTest.cpp tests/SketchPointSessionTest.cpp tests/CommandPanelSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
         src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
         src/MoveFace.cpp src/FaceOperations.cpp src/FaceTransformGeometry.cpp
         src/FaceTransformGeometry.h src/SelectionContext.cpp src/MoveFaceGeometry.h src/BRepReconstruction.cpp src/MoveFaceGeometry.cpp)
@@ -142,6 +157,10 @@ if(OPENDESIGNER_BUILD_TESTS)
     add_test(NAME native-partless-documents COMMAND OpenDesignerSelectionContextTests --partless)
     set_tests_properties(native-partless-documents PROPERTIES TIMEOUT 120)
     add_test(NAME sketch-sessions COMMAND OpenDesignerSelectionContextTests --sketch)
+    add_test(NAME sketch-point-sessions COMMAND OpenDesignerSelectionContextTests --sketch-points)
+    add_test(NAME command-panel-sessions COMMAND OpenDesignerSelectionContextTests --command-panels)
+    set_tests_properties(command-panel-sessions PROPERTIES TIMEOUT 120)
+    set_tests_properties(sketch-point-sessions PROPERTIES TIMEOUT 120)
     add_test(NAME sketch-drawing COMMAND OpenDesignerSelectionContextTests --drawing)
     add_test(NAME sketch-arc-direction COMMAND OpenDesignerSelectionContextTests --arc-direction)
     add_test(NAME sketch-overdraw-traversal COMMAND OpenDesignerSelectionContextTests --overdraw-traversal)
@@ -192,7 +211,7 @@ endif()
 foreach(viewport_target OpenDesigner OpenDesignerPullTests OpenDesignerBooleanTests OpenDesignerMoveFaceTests OpenDesignerSelectionContextTests OpenDesignerDebugModelTests OpenDesignerDeleteFaceTests)
     if(TARGET ${viewport_target})
         target_sources(${viewport_target} PRIVATE src/DebugExport.cpp src/DeleteFace.cpp src/ModelingErrors.cpp src/NativeDocument.cpp src/ConstructionTools.cpp src/ConstructionPanel.cpp src/SketchTools.cpp src/SketchDrawing.cpp src/SketchDrawingPanel.cpp src/SketchOverdrawTools.cpp src/SketchOverdrawPanel.cpp src/SketchConstructionTools.cpp src/SketchConstructionPanel.cpp)
-        target_link_libraries(${viewport_target} PRIVATE OpenDesignerDeleteFaceGeometry OpenDesignerDebug OpenDesignerConstruction)
+        target_link_libraries(${viewport_target} PRIVATE OpenDesignerDeleteFaceGeometry OpenDesignerDebug OpenDesignerConstruction OpenDesignerCommandPanels)
     endif()
 endforeach()
 install(TARGETS OpenDesignerDebugModel RUNTIME DESTINATION bin)

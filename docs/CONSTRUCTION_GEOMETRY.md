@@ -6,6 +6,12 @@ analytic frame is retained. Moving, editing or deleting a source Part, Face,
 Edge, Vertex or construction object never recomputes the result. There is no
 persistent feature history or dependency graph.
 
+These 3D construction Points are distinct from v0.4.2 local 2D Construction
+Points. A 2D point belongs to a Workplane, stores exact local XY, follows its
+frame and supplies sketch snaps; its entity is shown beneath that Workplane.
+The existing world-space Point projection is unchanged. See
+[Sketch Editor](SKETCH_EDITOR.md) for the local point model and schema v4.
+
 ## Workflow
 
 Use **Modeling → Construction Geometry → Workplane / Axis / Point**. All creation

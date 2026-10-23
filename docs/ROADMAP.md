@@ -14,12 +14,69 @@
 - STEP, IGES, STL
 - GLB/glTF and FBX import/export
 
-## v0.4.2 — planned Project 3D Geometry
+## v0.4.2 — Project 3D Geometry foundations
+
+- [x] Phase 1: independent local 2D Construction Points with stable UUIDs,
+  Workplane ownership, exact XY, names, visibility and selection locks. Points
+  cannot be Profile curves or enter curve-only tools.
+- [x] Fixed-screen-size markers, typed viewport/browser selection, exact point
+  snapping and shared SketchChange OK/Cancel/Undo/Redo. Owner transforms carry
+  markers without rewriting local coordinates; owner deletion includes points.
+- [x] Single-file native schema v4 for documents containing points; current
+  documents without points retain v3 output. Readers accept v1/v2/v3/v4;
+  incompatible downgrade requests and malformed/future records fail safely.
+- [x] Analytic/storage and GUI/session regressions cover point values, zoom,
+  selection/locks, curve isolation, history, file lifecycle and legacy migration.
+- [x] Phase-1 validation (2026-10-23): complete Release build, 32/32 CTests
+  (185.87 seconds), existing 2D/3D regressions and diff/whitespace checks pass.
+- [ ] Native Fedora KDE visual/focus verification of the new point markers and
+  snapping. Existing v0.4.1 user confirmations do not cover this addition.
+
+- [x] Phase 2: standalone exact vertex/analytic-straight-edge projection core,
+  independent Construction results and source diagnostics, one-time nested
+  subshape/Part placements and arbitrary valid Workplane frames.
+- [x] Atomic batch refusal, orientation-independent deduplication, no-op batches
+  and explicit finite/infinite Construction-line overlap refusal without trimming.
+  No interactive Project command or popup-positioning changes are introduced.
+  See [projection API, policies and tests](SKETCH_PROJECTION.md).
+- [x] Phase-2 validation (2026-10-23): complete Release build, 33/33 CTests
+  (207.21 seconds), headless projection tests, v1–v4 compatibility and existing
+  2D/3D regressions pass; diff/new-file whitespace and safety checks pass.
 
 - [ ] Project 3D vertices, edges and face boundaries into independent local 2D
   references on a Workplane, with explicit supported curve types and safe refusal.
   This is outside the approved v0.4.1 release scope. Existing 3D Point projection
   remains available and does not create 2D sketch entities or dependencies.
+  Phases 1–2 add no interactive point-creation or Project 3D Geometry command.
+  Circular/arc edge and face-boundary projection are not in the phase-2 core.
+
+### UI: Command Pop-up Positioning
+
+- [x] Separate UI helper after the phase-2 geometric projection core, without
+  coupling to projection math, document schemas or history changes.
+- [x] Default nonmodal command/parameter panels to the CAD viewport's upper-right
+  corner with approximately 12 logical pixels of margin. Use viewport coordinates,
+  not the application window or screen; keep the central modeling/picking area free.
+- [x] Keep panels draggable. Preserve a user's moved position during the command;
+  clamp to viewport bounds on viewport resize, panel content-size changes and
+  viewport/window movement. Keep controls reachable on small viewports.
+- [x] Centralize placement for 2D and 3D command panels, retaining selection,
+  previews, numeric focus, OK/Cancel and Undo/Redo. Exclude genuine modal dialogs
+  and ordinary cursor context menus from this placement policy.
+- [x] Automated placement, drag/resize/scrolling, HiDPI and actual CAD-panel
+  integration regressions accompany the helper.
+- [x] Measure natural content dimensions independently of cached outer window
+  hints and viewport constraints. Regress complete Move Face, 2D Drawing and
+  From planar face forms, dynamic prompts, font changes and shrink/restore;
+  enable scrolling only when the natural form genuinely exceeds the viewport.
+- [x] Validation (2026-10-23): complete Release build and 36/36 CTests pass
+  (192.77 seconds), including strengthened panel-sizing tests and existing
+  2D/3D/document regressions; diff and file checks pass.
+- [ ] Complete the native Fedora KDE GUI checklist in
+  [Command sessions: popup positioning](COMMAND_SESSIONS.md#command-panel-positioning).
+
+The implementation and repeatable manual checks are recorded there. Native KDE
+decoration/focus and mixed-monitor scaling verification remain manual checks.
 
 ## v0.4.1 — 2D Modeling / Sketch Editor
 

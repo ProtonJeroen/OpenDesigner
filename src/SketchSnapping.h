@@ -11,7 +11,7 @@ bool contains(const Geometry& curve, Point point, double tolerance=1.e-7);
 Intersections intersect(const Geometry& a, const Geometry& b, double tolerance=1.e-7);
 std::vector<Point> tangentPoints(Point anchor, const Geometry& curve, double tolerance=1.e-7);
 std::optional<Point> nearestPoint(const Geometry& curve, Point point);
-enum class SnapKind { Endpoint, Midpoint, Center, Intersection, Tangent, Nearest };
+enum class SnapKind { Endpoint, Midpoint, Center, Intersection, Tangent, Nearest, ConstructionPoint };
 struct SnapTarget { Point point; SnapKind kind; QString label; };
 std::vector<SnapTarget> snapTargets(const std::vector<Entity>& entities, const QString& workplaneId,
                                   Point cursor, std::optional<Point> anchor = {}, bool intersections = true);

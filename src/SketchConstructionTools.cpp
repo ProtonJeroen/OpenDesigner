@@ -46,7 +46,7 @@ void CadViewport::startSketchConstruction(Sketch::ConstructionTool tool) {
     panel->parametersChanged=[this]{refreshSketchConstruction();};
     panel->solutionChanged=[this](int index) {commandSession_->lineConstruction->selected=index;refreshSketchConstruction(false);};
     panel->confirmed=[this]{confirmCommandSession();};panel->cancelled=[this]{cancelCommandSession();};
-    panel->show();nextRole();setFocus();
+    showCommandPanel(panel);nextRole();setFocus();
 }
 bool CadViewport::acceptSketchConstructionReference(const QString& id) {
     if(!commandSession_ || !commandSession_->lineConstruction || !sketchConstructionPanel_) return false;

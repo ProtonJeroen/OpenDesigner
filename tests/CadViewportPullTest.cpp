@@ -108,9 +108,9 @@ struct CadViewportPullTest {
         const QPoint screen = project(v,point);
         require(v.beginArrowDrag(screen), "pull arrow could not be grabbed");
         require(v.dragDimension_->isVisible(), "pull dimension editor is not visible");
-        require(v.dragDimension_->parentWidget() == v.commandPanel_,
+        require(v.commandPanel_->isAncestorOf(v.dragDimension_),
                 "pull dimension editor is outside the command panel");
-        require(v.commandPanel_->rect().contains(v.dragDimension_->geometry().center()),
+        require(v.commandPanel_->rect().contains(v.dragDimension_->mapTo(v.commandPanel_,v.dragDimension_->rect().center())),
                 "pull dimension editor is outside the command panel geometry");
         return screen;
     }

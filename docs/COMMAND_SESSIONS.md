@@ -264,3 +264,133 @@ Enter interprets pending numeric fields before confirmation. OK adds one existin
 `SketchChange`; Cancel and central cleanup remove the panel, alternatives and
 markers. Save snapshots exclude pending results. No extra geometry store, history
 manager or persistent source relation is introduced.
+
+## Command panel positioning
+
+Implemented as a separate UI change after the v0.4.2 phase-2 projection core.
+`CommandPanelPositioner.h/.cpp` owns placement calculations, frame clamping and
+scroll adaptation. Each CadViewport owns one helper; explicit registrations use
+QPointer references. Only registered nonmodal Qt::Tool command windows are managed.
+The helper watches those windows, their content and the viewport/ancestor layout
+chain directly; it does not consume application keyboard or viewport mouse input.
+
+`CadViewport::showCommandPanel` routes the generic Pull/Move/Rotate/Face/Boolean/
+Construction Axes panel and ConstructionPanel, SketchDrawingPanel,
+SketchOverdrawPanel and SketchConstructionPanel through that helper. The old
+cursor/upper-left/per-tool offsets and unused standalone dimension-positioning
+function are removed. The existing dialogs, fields, callbacks and command-session
+objects are retained. Layout contents move into a scroll area; the generic panel
+retains a pointer to its original content layout for numeric/Boolean controls.
+
+Initial placement is upper-right in the CAD viewport with 12 Qt logical pixels
+of margin, using the complete native frame geometry. All calculations use Qt
+logical coordinates without manually multiplying device-pixel ratios. Viewport
+coordinates are mapped to global only to move Tool windows, never to anchor them
+against a screen or the application window. The generic frameless panel has a
+labelled drag handle; titled panels retain native title-bar dragging.
+
+A manual move switches from the default anchor to a viewport-relative position.
+Preview/parameter updates do not reset it. Deferred/coalesced checks handle panel
+layout/content changes, viewport resize, docking, main-window moves and screen/
+font/style changes. A visible manual position can use the viewport border and is
+clamped only when needed to keep its complete frame visible. New commands start
+at the default anchor again. Temporary native hide/show events do not themselves
+reset a command's manual position.
+
+Oversized content remains accessible through horizontal/vertical scrolling instead
+of extending the window outside the viewport. Existing fields and OK/Cancel remain
+in their original command window's descendant tree, so focus, Enter/Escape and
+Undo/Redo routing continue through the existing session adapter. Placement does
+not touch selection, snapping, model geometry, camera, dirty state or history.
+No position is persisted in .odc. The phase-1/2 geometry and storage are unchanged.
+
+Sizing correction (2026-10-23): the outer window layout could cache the scroll
+area's old size hint, including a hint measured while the generic preview controls
+were hidden. Adding/showing controls or changing a wrapped drawing prompt updated
+the content's hint without updating that outer cached hint. SetNoConstraint and a
+zero scroll-area minimum allowed the undersized window, and widgetResizable then
+adapted the content to that window. Measurements reproduced a 186x110 window
+remaining unchanged while its content needed 201x122, with both scrollbars visible.
+There was no fixed width/height cap beyond the available viewport.
+
+The helper now activates the content layout and measures sizeHint,
+minimumSizeHint, explicit minimum size and height-for-width directly. It sizes
+the scroll content explicitly (widgetResizable=false), keeps that natural size
+independent of the viewport limit, and invalidates the outer hint when the
+natural size changes. The drag handle and native frame are accounted for
+separately; the viewport limit still includes the 12-logical-pixel margins.
+Only genuinely oversized content scrolls. Space for a necessary scrollbar is
+reserved before calculating overflow in the other dimension. Growing a viewport
+restores the natural dimensions; repeated resize/preview events cannot ratchet
+the form down. Original field/layout policies and command callbacks are retained.
+
+True modal dialogs (File Open/Save, unsaved-change prompts and modal parameter or
+error dialogs) are not registered and retain their existing positioning/modality.
+Ordinary cursor context menus are excluded. Native compositor window decorations,
+mixed-monitor scaling and window-manager constraints still require Fedora KDE
+verification; a viewport smaller than the native frame itself cannot physically
+hold that complete frame. These are OpenDesigner UI choices, not new claims about
+SolidDesigner v16 behavior.
+
+Fedora KDE GUI checklist:
+
+1. Start Workplane creation, 2D Line/Arc, Overdraw, Offset/Common Tangent, Pull,
+   Move/Rotate Face, Align Face, Delete Face and Boolean commands. Check initial
+   upper-right placement relative to the viewport, approximately 12 pixels of
+   margin and unobstructed central picking, including on a secondary monitor.
+2. Drag each panel away from its initial location. Edit numeric values, pick
+   references and manipulate geometry; the panel must stay where placed, with
+   correct focus and preview. Check dragging of the frameless generic panel too.
+3. Resize/maximize/restore the application, resize/toggle docks and move the
+   application between monitors at different KDE scaling settings. Check panel
+   frame bounds, dynamic error/solution-list sizes and very small viewports;
+   all controls must remain reachable.
+4. Confirm with OK/Enter, Cancel/Esc, switch tools and use Undo/Redo. Verify
+   existing transaction counts, selection cleanup, preview/manipulator cleanup
+   and normal 3D navigation. Placement/dragging must not dirty the document.
+5. Open real File dialogs and unsaved/error prompts; check unchanged modality
+   and interaction. Right-click context menus must still open at the cursor.
+
+Focused Fedora KDE sizing recheck:
+
+1. From planar face: select a face and change references; retain the previously
+   working complete form, native title bar and upper-right position.
+2. Move Face Preview as the first command after startup: the numeric field,
+   complete OK/Cancel buttons and drag handle must be visible without scrolling
+   in a normal-size viewport. Drag the panel, change the preview, confirm/cancel
+   with Enter/Escape and check Undo/Redo.
+3. 2D Drawing on WP2: test Line/Circle/Arc, both arc directions and each drawing
+   step (including the longer sweep prompt). All numeric fields and buttons
+   must fit without scrollbars when there is sufficient viewport space.
+4. Repeat after resizing/toggling docks and with KDE scaling/font changes.
+   In a genuinely small viewport scroll to every field and OK/Cancel; enlarge
+   it again and verify the full form returns. A dragged panel retains its
+   position unless clamping is required for visibility.
+
+Automated coverage: `command-panel-positioning` and
+`command-panel-positioning-hidpi` exercise frame calculations, 12-pixel margins,
+dragging, retained positions/focus, content growth, parent/dock changes, small
+viewport scrolling, lifecycle cleanup and modal/context-menu exclusions. The
+HiDPI run sets QT_SCALE_FACTOR=2 and verifies device scaling is active.
+`command-panel-sessions` exercises actual CAD command panels, numeric Enter/Escape,
+preview/history/dirty-state preservation, drawing/navigation/Cancel, Workplane,
+Construction Axes, Overdraw, Offset/Common Tangent and Boolean integration.
+Sizing regressions explicitly check full control rectangles, natural numeric
+input widths and absent scrollbars for actual From planar face, Move Face
+Preview and 2D Drawing forms, including dynamic prompt/field changes. The generic
+panel's initially hidden hint is queried before starting Move Face. Wrapper tests
+also cover font changes, content hide/show, repeated shrink/restore, and vertical
+overflow without an unnecessary horizontal bar.
+Tests synchronize native Qt window events before inspecting frame positions;
+they do not replace the native Fedora KDE visual/focus checklist above.
+
+Validation on 2026-10-23: complete CMake Release build PASS; all 36 CTests PASS
+(192.77 seconds), including the strengthened sizing tests, existing 2D/3D
+selection, previews, Undo/Redo and native v1–v4 document regressions. Before
+the sizing correction, the strengthened actual-panel assertion failed on the
+cached generic form with unexpected horizontal/vertical scroll ranges. All
+three panel suites pass with the correction, including the HiDPI run. Tests
+wait for asynchronous native frame positions. Tracked/new-file whitespace and
+artifact/secret-pattern checks passed, excluding hole.zip before file access.
+Native Fedora KDE sizing re-verification is pending; the user's previous
+From planar face check passed, while Move Face and 2D Drawing revealed this bug.

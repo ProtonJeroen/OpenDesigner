@@ -194,11 +194,10 @@ void CadViewport::beginBooleanSession(BooleanOperation operation) {
     connect(keep,&QCheckBox::toggled,this,[this](bool checked) { commandSession_->keepTools=checked; updateBooleanControls(); });
     auto* preview=new QPushButton(tr("Preview"),booleanControls_); preview->setObjectName("booleanPreview"); layout->addWidget(preview);
     connect(preview,&QPushButton::clicked,this,[this]() { previewBooleanSession(); });
-    static_cast<QVBoxLayout*>(commandPanel_->layout())->insertWidget(0,booleanControls_);
+    commandLayout_->insertWidget(0,booleanControls_);
     commandPanel_->setWindowTitle(operation==BooleanOperation::Unite ? tr("Boolean — Unite") : operation==BooleanOperation::Subtract ? tr("Boolean — Subtract") : tr("Boolean — Intersect"));
     updateBooleanControls();
-    commandPanel_->adjustSize();
-    commandPanel_->move(mapToGlobal(QPoint(16,16)));
+    showCommandPanel(commandPanel_);
     emit statusMessage(tr("Boolean: select Target, then click Tool Parts to add/remove; Preview, OK/Enter or Cancel/Esc."));
 }
 void CadViewport::selectBooleanParts(const std::vector<size_t>& indices,bool toggle) {
