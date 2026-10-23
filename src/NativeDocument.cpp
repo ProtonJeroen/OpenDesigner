@@ -38,7 +38,8 @@
 #include <type_traits>
 
 namespace {
-constexpr char kRootMarker[] = "OpenDesigner.RootAssembly.v3";
+constexpr char kRootMarker[] = "OpenDesigner.RootAssembly.v4";
+constexpr char kV3RootMarker[] = "OpenDesigner.RootAssembly.v3";
 constexpr char kV2RootMarker[] = "OpenDesigner.RootAssembly.v2";
 constexpr char kSketchMarker[] = "OpenDesigner.Sketch.v1";
 constexpr char kLegacyRootMarker[] = "OpenDesigner.RootAssembly.v1";
@@ -255,13 +256,14 @@ void putSketches(const TDF_Label& root,const std::vector<Sketch::Entity>& entiti
             if constexpr(std::is_same_v<T,Sketch::Segment>) data={g.start.x,g.start.y,g.end.x,g.end.y};
             else if constexpr(std::is_same_v<T,Sketch::InfiniteLine>) data={g.origin.x,g.origin.y,g.direction.x,g.direction.y};
             else if constexpr(std::is_same_v<T,Sketch::Circle>) data={g.center.x,g.center.y,g.radius};
+            else if constexpr(std::is_same_v<T,Sketch::ConstructionPoint>) data={g.position.x,g.position.y};
             else data={g.center.x,g.center.y,g.radius,g.startAngle,g.sweepAngle};
         },entity.geometry);
         auto values=TDataStd_RealArray::Set(label,0,int(data.size())-1);
         for(int i=0;i<int(data.size());++i) values->SetValue(i,data[size_t(i)]);
     }
 }
-void readSketches(const TDF_Label& root,std::vector<Sketch::Entity>& entities,const std::vector<Construction::Object>& constructions) {
+void readSketches(const TDF_Label& root,std::vector<Sketch::Entity>& entities,const std::vector<Construction::Object>& constructions,int schema) {
     bool found=false;QSet<QString> owners;
     std::map<int,Sketch::Entity> ordered;
     for(TDF_ChildIterator group(root);group.More();group.Next()) {
@@ -287,8 +289,8 @@ void readSketches(const TDF_Label& root,std::vector<Sketch::Entity>& entities,co
                    || !label.FindAttribute(TDataStd_IntegerArray::GetID(),flags) || flags->Lower()!=0 || flags->Upper()!=3
                    || !label.FindAttribute(TDataStd_RealArray::GetID(),values) || values->Lower()!=0)
                     throw std::runtime_error("Invalid 2D geometry metadata.");
-                const int kind=flags->Value(0);const int sizes[]={4,4,3,5};
-                if(kind<0 || kind>3 || values->Upper()!=sizes[kind]-1) throw std::runtime_error("Unsupported 2D geometry type or data size.");
+                const int kind=flags->Value(0);const int sizes[]={4,4,3,5,2};
+                if(kind<0 || kind>(schema>=4?4:3) || values->Upper()!=sizes[kind]-1) throw std::runtime_error("Unsupported 2D geometry type or data size.");
                 for(int i=1;i<=3;++i) if(flags->Value(i)<0 || flags->Value(i)>1) throw std::runtime_error("Invalid 2D flags.");
                 for(int i=0;i<sizes[kind];++i) if(!std::isfinite(values->Value(i))) throw std::runtime_error("Non-finite 2D geometry.");
                 Sketch::Entity entity;entity.id=QString::fromUtf8(id->Get().ToCString());entity.workplaneId=ownerId;
@@ -299,6 +301,7 @@ void readSketches(const TDF_Label& root,std::vector<Sketch::Entity>& entities,co
                 if(kind==1) entity.geometry=Sketch::InfiniteLine{point,{values->Value(2),values->Value(3)}};
                 if(kind==2) entity.geometry=Sketch::Circle{point,values->Value(2)};
                 if(kind==3) entity.geometry=Sketch::Arc{point,values->Value(2),values->Value(3),values->Value(4)};
+                if(kind==4) entity.geometry=Sketch::ConstructionPoint{point};
                 ordered.emplace(order->Get(),std::move(entity));
             }
         }
@@ -333,6 +336,8 @@ void validateSnapshot(const NativeDocumentSnapshot& snapshot) {
         throw std::runtime_error("Schema v1 cannot store construction geometry.");
     if(snapshot.schemaVersion<3 && !snapshot.sketchEntities.empty())
         throw std::runtime_error("Schema v1/v2 cannot store 2D geometry.");
+    if(snapshot.schemaVersion<4 && Sketch::hasConstructionPoints(snapshot.sketchEntities))
+        throw std::runtime_error("Schema v3 cannot store 2D Construction Points. Use schema v4.");
     QSet<QString> ids;
     for(int counter:snapshot.constructionNameCounters) if(counter<0) throw std::runtime_error("Invalid construction name counters.");
     for(const auto& object:snapshot.constructions) {
@@ -361,6 +366,7 @@ bool NativeDocumentStorage::save(const QString& path, const NativeDocumentSnapsh
     Handle(TDocStd_Document) document;
     try {
         validateSnapshot(snapshot);
+        const int schema=snapshot.schemaVersion==4 && !Sketch::hasConstructionPoints(snapshot.sketchEntities)?3:snapshot.schemaVersion;
         const QFileInfo targetInfo(path);
         QDir dir = targetInfo.absoluteDir();
         if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) throw std::runtime_error("Cannot create document directory.");
@@ -375,8 +381,8 @@ bool NativeDocumentStorage::save(const QString& path, const NativeDocumentSnapsh
             builder.Add(compound, part.shape.Moved(TopLoc_Location(part.transform)));
         const auto root = shapeTool->AddShape(compound, Standard_True, Standard_True);
         TDataStd_Name::Set(root, TCollection_ExtendedString("Assembly 1"));
-        TDataStd_AsciiString::Set(root, TCollection_AsciiString(snapshot.schemaVersion==1?kLegacyRootMarker:snapshot.schemaVersion==2?kV2RootMarker:kRootMarker));
-        if(snapshot.schemaVersion>=2) TDataStd_Integer::Set(root,snapshot.schemaVersion);
+        TDataStd_AsciiString::Set(root, TCollection_AsciiString(schema==1?kLegacyRootMarker:schema==2?kV2RootMarker:schema==3?kV3RootMarker:kRootMarker));
+        if(schema>=2) TDataStd_Integer::Set(root,schema);
         TDF_LabelSequence components;
         if (!XCAFDoc_ShapeTool::GetComponents(root, components, Standard_False) || components.Length() != int(snapshot.parts.size()))
             throw std::runtime_error("Failed to create the document assembly.");
@@ -451,13 +457,14 @@ bool NativeDocumentStorage::load(const QString& path, NativeDocumentSnapshot& sn
             if (!freeShapes.Value(i).FindAttribute(TDataStd_AsciiString::GetID(), marker)) continue;
             const bool legacy=marker->Get().IsEqual(TCollection_AsciiString(kLegacyRootMarker));
             const bool v2=marker->Get().IsEqual(TCollection_AsciiString(kV2RootMarker));
-            if(!legacy && !v2 && !marker->Get().IsEqual(TCollection_AsciiString(kRootMarker))) {
+            const bool v3=marker->Get().IsEqual(TCollection_AsciiString(kV3RootMarker));
+            if(!legacy && !v2 && !v3 && !marker->Get().IsEqual(TCollection_AsciiString(kRootMarker))) {
                 if(marker->Get().Search("OpenDesigner.RootAssembly.")==1)
                     throw std::runtime_error("Unsupported OpenDesigner document schema.");
                 continue;
             }
             if(!root.IsNull()) throw std::runtime_error("Multiple OpenDesigner root assemblies.");
-            root=freeShapes.Value(i);schema=legacy?1:v2?2:3;
+            root=freeShapes.Value(i);schema=legacy?1:v2?2:v3?3:4;
             Handle(TDataStd_Integer) version;
             if(!legacy && (!root.FindAttribute(TDataStd_Integer::GetID(),version) || version->Get()!=schema))
                 throw std::runtime_error("Unsupported OpenDesigner document schema.");
@@ -475,7 +482,7 @@ bool NativeDocumentStorage::load(const QString& path, NativeDocumentSnapshot& sn
             loaded.parts.push_back(std::move(part));
         }
         if(schema>=2) readConstructions(root,loaded.constructions,loaded.constructionNameCounters);
-        if(schema>=3) readSketches(root,loaded.sketchEntities,loaded.constructions);
+        if(schema>=3) readSketches(root,loaded.sketchEntities,loaded.constructions,schema);
         validateSnapshot(loaded);
         app->Close(document);
         snapshot = std::move(loaded); error.clear(); return true;

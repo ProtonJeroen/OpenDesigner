@@ -2,7 +2,7 @@
 
 OpenDesigner is an open-source cross-platform 3D direct-modeling application inspired by classic CoCreate SolidDesigner.
 
-**Status:** v0.4.1 2D Modeling release candidate; not a packaged distribution.
+**Status:** v0.4.2 phases 1–2 — 2D points and exact projection core; not a packaged distribution.
 The supplied Delete Face and Unite seam cases were manually confirmed by the user
 on 2026-10-20. Native Save/Open and the cone/hole Pull fixes were tested and
 confirmed by the user on Fedora KDE on 2026-10-21. Automated regression coverage
@@ -21,11 +21,19 @@ X/Y infinite lines for snapping and Overdraw; XY/XZ/YZ Workplane presets support
 normal offsets, including in an empty document. Arcs support explicit CW/CCW;
 Offset and Common Tangent Construction Line support Infinite/Finite output.
 See [Sketch Editor](docs/SKETCH_EDITOR.md).
+Nonmodal 2D/3D command panels share viewport-relative upper-right placement,
+12-logical-pixel margins, drag positioning and scrollable content for small
+viewports. See [command panels](docs/COMMAND_SESSIONS.md#command-panel-positioning).
 The user confirmed 18/18 GUI regressions on Fedora KDE on 2026-10-23:
 the earlier nine and all nine additional checks, including axes and presets.
 
-Native writes use `.odc` schema v3 and read v1/v2 documents. General Project 3D
-Geometry (vertices, edges and faces to 2D) is scheduled for v0.4.2. The existing
+Native writes use `.odc` schema v4 when local 2D Construction Points are present,
+and v3 otherwise; readers accept v1/v2/v3/v4. Points have exact local coordinates,
+fixed-screen-size markers, typed selection, snapping and shared history. This
+foundation has no interactive point-creation or Project 3D Geometry command yet.
+General Project 3D Geometry (vertices, edges and faces to 2D) remains scheduled
+for later v0.4.2 phases. A standalone exact vertex/straight-edge computation core
+is implemented; see [projection module](docs/SKETCH_PROJECTION.md). The existing
 Point → Project onto workplane creates an independent 3D construction Point;
 it does not populate a Workplane’s 2D collection. Overdraw currently requires
 bounded pieces, excludes unbounded tails and 0/1-cut circles, refuses overlapping
@@ -91,7 +99,7 @@ Selection shortcuts, explicit context actions and eligibility: [Selection and co
 Face removal, conservative reconstruction limits and shared geometry error
 popups: [Delete Face](docs/DELETE_FACE.md).
 
-Native document storage, `.odc` schema v3 with v1/v2 read compatibility, transaction-safe Save/Open and
+Native document storage, `.odc` schema v3/v4 with v1/v2/v3/v4 read compatibility, transaction-safe Save/Open and
 round-trip tests: [Native documents](docs/NATIVE_DOCUMENTS.md).
 
 The v0.3.6 interaction workflow retains passive selection: click Faces, Alt+click Parts,

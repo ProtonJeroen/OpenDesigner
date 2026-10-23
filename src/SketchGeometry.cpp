@@ -1,9 +1,11 @@
 #include "SketchGeometry.h"
 #include <QSet>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
 #include <gp_Circ.hxx>
 #include <cmath>
 #include <type_traits>
+#include <algorithm>
 
 namespace Sketch {
 namespace {
@@ -16,12 +18,16 @@ double directedArcSweep(double start,double end,bool clockwise) {
     return clockwise?-sweep:sweep;
 }
 Arc reversedArc(const Arc& arc) {return {arc.center,arc.radius,arc.startAngle+arc.sweepAngle,-arc.sweepAngle};}
+bool hasConstructionPoints(const std::vector<Entity>& entities) {
+    return std::any_of(entities.begin(),entities.end(),[](const auto& e){return std::holds_alternative<ConstructionPoint>(e.geometry);});
+}
 QString typeName(const Geometry& geometry) {
     return std::visit([](const auto& g)->QString {
         using T=std::decay_t<decltype(g)>;
         if constexpr(std::is_same_v<T,Segment>) return QStringLiteral("Line");
         if constexpr(std::is_same_v<T,InfiniteLine>) return QStringLiteral("Infinite Line");
         if constexpr(std::is_same_v<T,Circle>) return QStringLiteral("Circle");
+        if constexpr(std::is_same_v<T,ConstructionPoint>) return QStringLiteral("Construction Point");
         return QStringLiteral("Arc");
     },geometry);
 }
@@ -38,6 +44,8 @@ bool valid(const Entity& entity,QString& error) {
         } else if constexpr(std::is_same_v<T,InfiniteLine>) {
             return entity.role==Role::Construction && finite(g.origin) && finite(g.direction)
                 && std::abs(std::hypot(g.direction.x,g.direction.y)-1)<1.e-12;
+        } else if constexpr(std::is_same_v<T,ConstructionPoint>) {
+            return entity.role==Role::Construction && finite(g.position);
         } else {
             bool result=finite(g.center) && std::isfinite(g.radius) && g.radius>1.e-9;
             if constexpr(std::is_same_v<T,Arc>) result=result && std::isfinite(g.startAngle)
@@ -45,7 +53,7 @@ bool valid(const Entity& entity,QString& error) {
             return result;
         }
     },entity.geometry);
-    if(!ok) {error=QStringLiteral("Invalid or degenerate 2D geometry (infinite lines must be Construction).");return false;}
+    if(!ok) {error=QStringLiteral("Invalid or degenerate 2D geometry (infinite lines and points must be Construction).");return false;}
     error.clear();return true;
 }
 bool validate(const std::vector<Entity>& entities,const std::vector<Construction::Object>& owners,
@@ -71,6 +79,8 @@ TopoDS_Shape shape(const Entity& entity,const gp_Ax3& frame,double displayExtent
             const Point a{g.origin.x-displayExtent*g.direction.x,g.origin.y-displayExtent*g.direction.y};
             const Point b{g.origin.x+displayExtent*g.direction.x,g.origin.y+displayExtent*g.direction.y};
             return BRepBuilderAPI_MakeEdge(worldPoint(a,frame),worldPoint(b,frame)).Shape();
+        } else if constexpr(std::is_same_v<T,ConstructionPoint>) {
+            return BRepBuilderAPI_MakeVertex(worldPoint(g.position,frame)).Shape();
         } else {
             gp_Circ circle(gp_Ax2(worldPoint(g.center,frame),frame.Direction(),frame.XDirection()),g.radius);
             if constexpr(std::is_same_v<T,Circle>) return BRepBuilderAPI_MakeEdge(circle).Shape();

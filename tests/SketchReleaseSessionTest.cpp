@@ -100,7 +100,7 @@ struct SketchReleaseSessionTest {
         QTemporaryDir dir;const auto path=dir.filePath("presets-axes.odc");w.documentPath_=path;
         NativeDocumentSnapshot saved,loaded;v.exportDocumentSnapshot(saved);
         const auto undo=v.undoStack_.size();check(w.saveDocument() && v.undoStack_.size()==undo,"axes Save cleared history");
-        check(NativeDocumentStorage::load(path,loaded,error) && loaded.schemaVersion==3 && loaded.sketchEntities==saved.sketchEntities,"axes roundtrip changed exact values");
+        check(NativeDocumentStorage::load(path,loaded,error) && loaded.schemaVersion==NativeDocumentStorage::CurrentSchemaVersion && loaded.sketchEntities==saved.sketchEntities,"axes roundtrip changed exact values");
         for(size_t i=0;i<saved.constructions.size();++i) check(Construction::equivalent(saved.constructions[i],loaded.constructions[i]),"preset/rotated frame roundtrip changed");
         chooseFile(path);w.openDocument();
         check(v.sketchEntities_==saved.sketchEntities && v.undoStack_.empty() && v.redoStack_.empty() && v.activeSketchWorkplaneId_.isEmpty() && w.constructionRoot_->childCount()==3,"Open did not restore axes/reset editing context");

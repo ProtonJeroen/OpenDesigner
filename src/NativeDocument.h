@@ -40,7 +40,7 @@ struct NativePartState {
 };
 
 struct NativeDocumentSnapshot {
-    int schemaVersion = 3;
+    int schemaVersion = 4; // In-memory capability; current saves use v3 without points.
     std::vector<NativePartState> parts;
     std::vector<Construction::Object> constructions;
     std::array<int,3> constructionNameCounters{};
@@ -50,7 +50,7 @@ struct NativeDocumentSnapshot {
 
 class NativeDocumentStorage final {
 public:
-    static constexpr int CurrentSchemaVersion = 3;
+    static constexpr int CurrentSchemaVersion = 4;
     static bool save(const QString& path, const NativeDocumentSnapshot& snapshot, QString& error);
     static bool load(const QString& path, NativeDocumentSnapshot& snapshot, QString& error);
 };

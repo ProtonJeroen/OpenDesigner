@@ -19,6 +19,8 @@ private:
     friend struct SketchOverdrawSessionTest;
     friend struct SketchConstructionSessionTest;
     friend struct SketchReleaseSessionTest;
+    friend struct SketchPointSessionTest;
+    friend struct CommandPanelSessionTest;
     bool maybeSave();
     bool saveDocument();
     bool saveDocumentAs();

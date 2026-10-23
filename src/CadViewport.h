@@ -7,6 +7,8 @@
 #include <memory>
 #include <optional>
 class QLineEdit;
+class QVBoxLayout;
+class CommandPanelPositioner;
 class QDialogButtonBox;
 class QShortcut;
 class QAction;
@@ -148,6 +150,8 @@ private:
     friend struct SketchOverdrawSessionTest;
     friend struct SketchConstructionSessionTest;
     friend struct SketchReleaseSessionTest;
+    friend struct SketchPointSessionTest;
+    friend struct CommandPanelSessionTest;
     friend struct CadViewportPullTest;
     friend struct NativeDocumentSessionTest;
     friend struct BooleanOperationsTest;
@@ -398,6 +402,8 @@ private:
     QJsonObject debugCommand(const CommandSession& session) const;
     std::optional<CommandSession> commandSession_;
     QWidget* commandPanel_ = nullptr;
+    QVBoxLayout* commandLayout_ = nullptr;
+    CommandPanelPositioner* commandPanelPositioner_ = nullptr;
     QDialogButtonBox* commandButtons_ = nullptr;
     QShortcut* cancelDimension_ = nullptr;
     void beginCommandSession(CommandSession::Kind kind, const std::vector<size_t>& indices,
@@ -441,6 +447,7 @@ private:
     void cancelCommandSession();
     void closeCommandSession(bool confirm);
     void showCommandControls(const QPoint& position);
+    void showCommandPanel(QWidget* panel);
     void announcePartCreated(const QString& name);
     std::vector<size_t> selectedBooleanParts() const;
     void restoreBooleanChange(const BooleanChange& change, bool after);
@@ -482,7 +489,6 @@ private:
     double primitivePullStartDimension() const;
     bool primitivePullIsDiameter() const;
     QString primitivePullDimensionText() const;
-    void showDragDimension(const QPoint& position);
     void initializeViewer();
     void updateRotationRings();
     void updateMoveAxes();

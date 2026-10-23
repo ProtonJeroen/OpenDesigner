@@ -89,7 +89,7 @@ camera state; no AIS objects or screen positions are serialized.
 
 ## v0.4.1 2D extension
 
-Current writes use schema v3. Readers accept v1/v2/v3; earlier schemas initialize
+The v0.4.1 release writes schema v3. Readers accept v1/v2/v3; earlier schemas initialize
 an empty 2D collection. The same single BinXCAF file stores exact analytic local
 2D parameters, stable entity and owning Workplane IDs, role, name, visibility and
 selectability, alongside existing Part B-Reps, constructions and camera.
@@ -122,3 +122,30 @@ Offset/common-tangent Construction tools likewise persist ordinary schema-v3
 segments or infinite lines, with local XY values, Construction role and independent
 UUIDs. Reference IDs, solution alternatives and preview state are not serialized.
 Save during either command keeps the session but includes only confirmed values.
+
+## v0.4.2 phase 1: local 2D Construction Points
+
+The current in-memory snapshot capability is schema v4. Saving a current snapshot
+with any 2D Construction Point writes `OpenDesigner.RootAssembly.v4` and version
+integer 4; without points it writes v3, retaining compatibility with v0.4.1 readers.
+Removing the final point allows the next Save to use v3 again. Explicit legacy
+schema requests are validated before writing: a v3 snapshot containing points
+is refused, rather than omitting them. Existing v1/v2 unsupported-content checks
+also remain in force.
+
+Readers accept v1–v4 and normalize loaded snapshots to in-memory v4. Original
+type tags 0–3 retain their schema-v3 meanings. Tag 4 is ConstructionPoint with
+exact local X/Y doubles, the usual stable ID, owner, name, visibility and
+selectability attributes, and a mandatory Construction role. The existing
+`OpenDesigner.Sketch.v1` group layout is extended under the versioned v4 root;
+there is no second geometry store. A tag-4 record under a v3 root is refused.
+Older applications refuse a v4 root safely instead of silently losing points.
+Unknown future versions, invalid roles, non-finite coordinates, wrong record
+sizes, unknown types and duplicate IDs are refused before document replacement.
+
+Markers are reconstructed from exact point values and Workplane frames; screen
+size, AIS objects and Undo/Redo history are not serialized. Atomic replacement,
+confirmed-only snapshots, Save/Save As history/selection preservation and New/Open
+cleanup are unchanged. `sketch-construction-points` inspects real BinXCAF root
+versions, verifies exact point roundtrips, legacy migration and malformed-file
+refusal; `sketch-point-sessions` exercises the document lifecycle through the GUI.

@@ -1,4 +1,5 @@
 #include "CadViewport.h"
+#include "CommandPanelPositioner.h"
 #include "ConstructionPanel.h"
 #include "BRepReconstruction.h"
 #include <QMouseEvent>
@@ -135,7 +136,8 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     commandPanel_ = new QWidget(this, Qt::Tool | Qt::FramelessWindowHint);
     commandPanel_->setAttribute(Qt::WA_ShowWithoutActivating);
     commandPanel_->installEventFilter(this);
-    auto* commandLayout = new QVBoxLayout(commandPanel_);
+    commandPanelPositioner_=new CommandPanelPositioner(this);
+    auto* commandLayout = commandLayout_ = new QVBoxLayout(commandPanel_);
     faceAxisSelector_=new QComboBox(commandPanel_);
     faceAxisSelector_->setObjectName(QStringLiteral("rotateFaceAxisSelector"));
     faceAxisSelector_->addItems({tr("Choose a straight edge…"),tr("World X axis"),tr("World Y axis"),tr("World Z axis")});
@@ -168,6 +170,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     connect(dragDimension_, &QLineEdit::returnPressed, this, &CadViewport::confirmCommandSession);
     cancelDimension_ = new QShortcut(QKeySequence(Qt::Key_Escape), this);
     connect(cancelDimension_, &QShortcut::activated, this, &CadViewport::cancelCommandSession);
+    commandPanelPositioner_->manage(commandPanel_,true);
 }
 void CadViewport::beginCommandSession(CommandSession::Kind kind,
         const std::vector<size_t>& indices, const gp_Dir& direction, const gp_Pnt& pivot) {
@@ -194,7 +197,7 @@ void CadViewport::beginCommandSession(CommandSession::Kind kind,
         : kind==CommandSession::Kind::AlignFace ? tr("Align Face Preview") : tr("Modeling Preview");
     commandPanel_->setWindowTitle(title);
     dragDimension_->setParent(commandPanel_);
-    static_cast<QVBoxLayout*>(commandPanel_->layout())->insertWidget(0,dragDimension_);
+    commandLayout_->insertWidget(0,dragDimension_);
     dragDimension_->setToolTip(kind==CommandSession::Kind::Rotate || kind==CommandSession::Kind::RotateFace
         ? tr("Angle in degrees") : tr("Distance in mm"));
     dragDimension_->setText(QLocale().toString(0.0,'f',2));
@@ -209,15 +212,11 @@ void CadViewport::beginCommandSession(CommandSession::Kind kind,
     }
     showCommandControls(dragStart_);
 }
-void CadViewport::showCommandControls(const QPoint& position) {
+void CadViewport::showCommandControls(const QPoint&) {
     dragDimension_->show(); commandButtons_->show();
-    commandPanel_->adjustSize();
-    const QPoint local(std::clamp(position.x()+16,0,std::max(0,width()-commandPanel_->width())),
-                       std::clamp(position.y()-36,0,std::max(0,height()-commandPanel_->height())));
-    commandPanel_->move(mapToGlobal(local));
-    commandPanel_->show();
-    commandPanel_->raise();
+    showCommandPanel(commandPanel_);
 }
+void CadViewport::showCommandPanel(QWidget* panel) {commandPanelPositioner_->show(panel);}
 bool CadViewport::previewCommand(double value) {
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::DeleteFace) return commandSession_->valid;
     if (!commandSession_ || !std::isfinite(value)) return false;
@@ -305,7 +304,7 @@ void CadViewport::closeCommandSession(bool confirm) {
         if(!session.preview.IsNull()) context_->Remove(session.preview,Standard_False);
         delete booleanControls_; booleanControls_=nullptr;
         commandPanel_->hide(); commandButtons_->hide(); dragDimension_->hide();
-        commandPanel_->layout()->removeWidget(dragDimension_);
+        commandLayout_->removeWidget(dragDimension_);
         dragDimension_->setParent(this);
         selectedPartIndices_=session.selection;
         context_->ClearSelected(Standard_False);
@@ -364,7 +363,7 @@ void CadViewport::closeCommandSession(bool confirm) {
     groupRotationDragging_ = false;
     dragDimension_->hide(); commandButtons_->hide(); commandPanel_->hide();
     faceAxisSelector_->hide(); faceAlignSelector_->hide();
-    commandPanel_->layout()->removeWidget(dragDimension_);
+    commandLayout_->removeWidget(dragDimension_);
     dragDimension_->setParent(this);
     resetModelingTools();
     if(faceCommand) redrawFacePreview();
@@ -1341,6 +1340,7 @@ bool CadViewport::importDocumentSnapshot(const NativeDocumentSnapshot& snapshot,
         }
     }
     if(snapshot.schemaVersion<3 && !snapshot.sketchEntities.empty()) {error=tr("Schema v1/v2 cannot contain 2D geometry.");return false;}
+    if(snapshot.schemaVersion<4 && Sketch::hasConstructionPoints(snapshot.sketchEntities)) {error=tr("Schema v3 cannot contain 2D Construction Points.");return false;}
     if(!Sketch::validate(snapshot.sketchEntities,snapshot.constructions,documentIds,error)) return false;
     if (!std::isfinite(snapshot.camera.scale) || snapshot.camera.scale <= 0.0) {
         error = tr("The document contains an invalid camera state.");
@@ -1820,17 +1820,6 @@ QString CadViewport::primitivePullDimensionText() const {
     const QString number = QLocale().toString(dimension,'f',2);
     return diameter ? QStringLiteral("Ø %1 mm").arg(number)
                     : QStringLiteral("%1 mm").arg(number);
-}
-
-void CadViewport::showDragDimension(const QPoint& position) {
-    if (!dragDimension_) return;
-    dragDimension_->setText(primitivePullDragging_ || primitivePullEditing_
-        ? primitivePullDimensionText() : QLocale().toString(dragDistance_, 'f', 2));
-    dragDimension_->move(
-        std::clamp(position.x() + 16, 0, std::max(0, width() - dragDimension_->width())),
-        std::clamp(position.y() - 36, 0, std::max(0, height() - dragDimension_->height())));
-    dragDimension_->show();
-    dragDimension_->raise();
 }
 
 void CadViewport::hideMoveAxes() {

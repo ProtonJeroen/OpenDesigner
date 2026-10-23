@@ -6,6 +6,7 @@
 #include <QDialogButtonBox>
 #include <Prs3d_LineAspect.hxx>
 #include <Prs3d_Drawer.hxx>
+#include <Prs3d_PointAspect.hxx>
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
 #include <SelectMgr_Selection.hxx>
@@ -20,6 +21,8 @@ Handle(AIS_Shape) CadViewport::sketchPresentation(const Sketch::Entity& entity,c
         :construction?Quantity_Color(1,0.4,0.8,Quantity_TOC_RGB):Quantity_Color(Quantity_NOC_WHITE);
     presentation->SetColor(color);presentation->SetWidth(construction?1.5:2.5);
     presentation->Attributes()->SetWireAspect(new Prs3d_LineAspect(color,construction?Aspect_TOL_DASH:Aspect_TOL_SOLID,construction?1.5:2.5));
+    if(std::holds_alternative<Sketch::ConstructionPoint>(entity.geometry))
+        presentation->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_PLUS,color,7.0));
     if(std::holds_alternative<Sketch::InfiniteLine>(entity.geometry)) presentation->SetInfiniteState(true);
     return presentation;
 }
@@ -79,7 +82,6 @@ void CadViewport::startSketchAxes(bool localX,bool localY) {
     auto candidate=sketchEntities_;candidate.insert(candidate.end(),missing.begin(),missing.end());QString error;
     if(!previewSketchEntities(candidate,error)) {emit statusMessage(error);return;}
     commandPanel_->setWindowTitle(tr("Construction Axes"));
-    commandPanel_->move(mapToGlobal(QPoint(std::max(0,width()-commandPanel_->width()-20),20)));
     emit statusMessage(tr("Blue Construction axes are temporary. OK confirms one operation; Cancel discards them."));setFocus();
 }
 void CadViewport::populateSketchAxesMenu(QMenu& menu) {
@@ -112,7 +114,7 @@ bool CadViewport::previewSketchEntities(const std::vector<Sketch::Entity>& entit
     commandSession_->state=CommandSession::State::Preview;
     if(showControls) {
         commandPanel_->setWindowTitle(tr("2D Geometry Preview"));commandButtons_->show();
-        commandPanel_->adjustSize();commandPanel_->show();
+        showCommandPanel(commandPanel_);
     }
     view_->Redraw();error.clear();return true;
 }

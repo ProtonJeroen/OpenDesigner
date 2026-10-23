@@ -13,7 +13,9 @@ struct InfiniteLine { Point origin, direction{1,0}; bool operator==(const Infini
 struct Circle { Point center; double radius=1; bool operator==(const Circle&) const = default; };
 // Radians, signed sweep: positive is counterclockwise in Workplane XY.
 struct Arc { Point center; double radius=1, startAngle=0, sweepAngle=1; bool operator==(const Arc&) const = default; };
-using Geometry = std::variant<Segment, InfiniteLine, Circle, Arc>;
+// Append new alternatives: persisted tags 0–3 must keep their existing meaning.
+struct ConstructionPoint { Point position; bool operator==(const ConstructionPoint&) const = default; };
+using Geometry = std::variant<Segment, InfiniteLine, Circle, Arc, ConstructionPoint>;
 double directedArcSweep(double start,double end,bool clockwise);
 Arc reversedArc(const Arc& arc);
 struct Entity {
@@ -24,6 +26,7 @@ struct Entity {
     bool visible=true, selectable=true;
     bool operator==(const Entity&) const = default;
 };
+bool hasConstructionPoints(const std::vector<Entity>& entities);
 QString typeName(const Geometry& geometry);
 bool valid(const Entity& entity, QString& error);
 bool validate(const std::vector<Entity>& entities, const std::vector<Construction::Object>& owners,

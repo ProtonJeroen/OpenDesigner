@@ -29,7 +29,7 @@ void CadViewport::startSketchOverdraw() {
         if(index>=0 && size_t(index)<d.hits.size()) selected=d.hits[size_t(index)];
         refreshOverdraw();
     };
-    sketchOverdrawPanel_->show();refreshOverdraw();setFocus();
+    showCommandPanel(sketchOverdrawPanel_);refreshOverdraw();setFocus();
 }
 bool CadViewport::overdrawMove(const QPoint& pixel) {
     if(!commandSession_ || !commandSession_->overdraw) return false;

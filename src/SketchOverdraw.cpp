@@ -16,6 +16,7 @@ bool overdrawCandidates(const std::vector<Entity>& entities,const QString& workp
     if(workplaneId.isEmpty() || !std::isfinite(tolerance) || tolerance<=0) {error="Invalid Overdraw Workplane or tolerance.";return false;}
     std::vector<const Entity*> sources;std::vector<std::vector<Point>> cuts;
     for(const auto& e:entities) if(e.workplaneId==workplaneId && e.role==Role::Construction && e.visible && e.selectable) {
+        if(std::holds_alternative<ConstructionPoint>(e.geometry)) continue;
         if(!valid(e,error)) {error="Overdraw: invalid construction source. "+error;return false;}
         if(std::any_of(sources.begin(),sources.end(),[&](const auto* s){return s->id==e.id;})) {error="Overdraw: duplicate source identity.";return false;}
         sources.push_back(&e);cuts.emplace_back();
@@ -100,10 +101,13 @@ bool overdrawCandidates(const std::vector<Entity>& entities,const QString& workp
     result=std::move(graph);return true;
 }
 Geometry directedPiece(const OverdrawPiece& piece,size_t from) {
+    if(!std::holds_alternative<Segment>(piece.geometry) && !std::holds_alternative<Arc>(piece.geometry))
+        throw std::invalid_argument("Overdraw requires a bounded segment or arc.");
     if(from!=piece.start && from!=piece.end) throw std::invalid_argument("Overdraw piece is not incident to the current endpoint.");
     if(from==piece.start) return piece.geometry;
     if(const auto* s=std::get_if<Segment>(&piece.geometry)) return Segment{s->end,s->start};
-    return reversedArc(std::get<Arc>(piece.geometry));
+    if(const auto* arc=std::get_if<Arc>(&piece.geometry)) return reversedArc(*arc);
+    throw std::invalid_argument("Overdraw requires a bounded segment or arc.");
 }
 std::vector<size_t> overdrawHits(const OverdrawGraph& graph,size_t from,const std::vector<size_t>& selected,Point cursor,Point screenCursor,double pixelRadius,const Projector& project) {
     std::vector<size_t> hits;
