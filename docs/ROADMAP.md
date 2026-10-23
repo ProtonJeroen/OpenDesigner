@@ -14,6 +14,100 @@
 - STEP, IGES, STL
 - GLB/glTF and FBX import/export
 
+## v0.4.2 — planned Project 3D Geometry
+
+- [ ] Project 3D vertices, edges and face boundaries into independent local 2D
+  references on a Workplane, with explicit supported curve types and safe refusal.
+  This is outside the approved v0.4.1 release scope. Existing 3D Point projection
+  remains available and does not create 2D sketch entities or dependencies.
+
+## v0.4.1 — 2D Modeling / Sketch Editor
+
+- [x] Exact local-XY segments, infinite Construction lines, circles and signed
+  circular arcs; stable UUIDs, Workplane ownership, Construction/Profile roles,
+  names, visibility and selection locks. Extensible curve representation.
+- [x] One 2D collection per Workplane, independently editable document values
+  without persistent constraints or source/feature history.
+- [x] Native schema v3 stores every 2D value in the same BinXCAF `.odc`; v1/v2
+  documents load with an empty 2D collection. Unsupported schemas/types and
+  malformed ownership/geometry are rejected transactionally.
+- [x] Exact OCCT edge presentation distinguishes dashed Construction from solid
+  Profile geometry; browser child rows and typed viewport selection preserve
+  existing 3D picking, including Alt Part selection.
+- [x] Workplane frames carry confirmed and previewed 2D geometry without rewriting
+  local coordinates. Workplane deletion includes contents in one history entry.
+- [x] Programmatic create/edit/delete candidates use the existing OK/Cancel
+  session and chronological 3D Undo/Redo history; only confirmed values are saved.
+- [x] Geometry/storage and GUI/session regressions cover precision, migration,
+  transforms, selection, mixed history, Save/Open/New and failure preservation.
+- [x] Explicit active Workplane, Look Normal and Finish 2D; visible toolbar and
+  Workplane switching with isolated 2D picking.
+- [x] Interactive/numeric finite lines, infinite Construction lines, circles and
+  center/start/end arcs in Construction/Profile roles, live preview, one-element
+  OK/Cancel transactions and shared Undo/Redo.
+- [x] Analytic endpoint/midpoint/center/intersection and line-to-circle/arc tangent
+  snapping, nearest-curve projection, screen-pixel radius and Shift bypass.
+- [x] Full Release build and 22/22 CTests pass (2026-10-21), including numeric and
+  mouse-driven drawing, zoom-independent snap acquisition, cancellation, mixed
+  history, native roundtrips and existing 3D regressions. The user subsequently
+  confirmed all eight phase-2 practice tests on Fedora KDE.
+- [x] Explicit Overdraw from bounded Construction line/circle/arc portions into
+  independent Profile segments/arcs, retaining sources, green/blue feedback,
+  explicit ambiguity choices, Back/New start, shared transactions and schema v3.
+- [x] Safe boundaries/refusal: no unbounded tails or Workplane-border cuts,
+  no fabricated full-turn arcs from 0/1-cut circles; overlapping sources refuse
+  the command. Tangencies and signed/trimmed arcs use phase-2 analytic geometry.
+- [x] Phase-3 full Release build and 24/24 CTests pass (2026-10-23, 189.49 seconds),
+  including analytic Overdraw, real GUI events/rendering, transactions, native
+  roundtrips and existing 2D/3D regressions; diff/whitespace checks pass.
+- [x] The user confirmed the nine latest Fedora KDE GUI regressions on
+  2026-10-23, including the reported storage/Arc/Overdraw fixes.
+- [x] Offset Construction Line from finite Construction/Profile and infinite
+  Construction references; signed exact distance, numeric/mouse side choice,
+  Infinite/Finite output and explicit finite positioning for infinite sources.
+- [x] Analytic external/internal common tangent Construction lines for circles
+  and domain-valid arcs; explicit solution choice, contact previews, finite
+  contact-to-contact spans, infinite shared-contact solutions and safe refusal.
+- [x] Both tools reuse Sketch sessions, shared Undo/Redo, schema v3,
+  browser/viewport references, snapping and ordinary Overdraw sources. Sources
+  remain independent; reference evidence and OpenDesigner choices are separated.
+- [x] Construction-line extension: full Release build and 26/26 CTests pass
+  (2026-10-23, 168.68 seconds), including analytic offset/tangent cases,
+  transactions/rendering, native roundtrips, Overdraw and existing 2D/3D tests.
+  Diff and new-file whitespace checks pass.
+- [x] The latest user-confirmed GUI regressions cover the Construction-line
+  additions; the earlier checklist is retained as a repeatable test procedure.
+- [x] Storage/Arc/Overdraw bugfixes: planar orthographic camera capture without
+  Parts; explicit CW/CCW mouse/numeric arcs; directed forward/reverse previews,
+  labels and Profile traversal; no legacy 3D editor on 2D mouse releases.
+  Full Release build and 29/29 CTests pass (2026-10-23, 195.20 seconds), including
+  the new partless-document, arc-direction and Overdraw-traversal regressions.
+- [x] Fedora KDE recheck of the three reported bugs passed, per the user’s
+  nine-test confirmation.
+- [x] Construction Axes: real local-X/local-Y infinite Construction lines, single
+  or Both, duplicate prevention, shared OK/Cancel/Undo/Redo and schema-v3 storage.
+- [x] Explicit XY/XZ/YZ Workplane presets with right-handed frames and optional
+  signed normal offset, reusing Workplane creation even without Parts.
+- [x] GitHub Actions builds Release with tests enabled and runs CTests under
+  Xvfb/software OpenGL before uploading the executable.
+- [x] Final release validation (2026-10-23): full CMake Release build, all
+  30/30 CTests (214.47 seconds), tracked/new-file whitespace checks, backward
+  compatibility and existing 3D regressions pass. No artifact/secret findings.
+- [x] The user confirmed all nine additional Fedora KDE GUI tests, including
+  axes and presets: 18/18 GUI regressions passed in total. The repeatable
+  procedures remain in `SKETCH_EDITOR.md`.
+- [ ] Closed-profile analysis and later 3D profile operations. Splines, ellipses
+  and other curves remain future work.
+
+Phases 1–3 and the release axes/presets are implemented. Full 3D-to-2D projection
+is deferred to v0.4.2; existing Point projection only creates a 3D construction
+Point. Overdraw does not certify closed/extrudable profiles
+or detect overlaps with existing Profiles; those remain future work.
+Dedicated tangent-circle construction and circle-extreme snaps are
+also not implemented. Read the [model, GUI, storage and scope](SKETCH_EDITOR.md).
+No proprietary reference files
+or copied implementation are included.
+
 ## v0.4.0 — Workplanes, Axes & Points
 
 - [x] Context-menu Fit All without selection and Fit Selected for Faces, Parts and
