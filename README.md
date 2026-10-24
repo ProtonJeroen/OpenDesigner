@@ -2,7 +2,7 @@
 
 OpenDesigner is an open-source cross-platform 3D direct-modeling application inspired by classic CoCreate SolidDesigner.
 
-**Status:** v0.4.2 phases 1–2 — 2D points and exact projection core; not a packaged distribution.
+**Status:** v0.4.2 phases 1–3 — 2D points and exact projection core; not a packaged distribution.
 The supplied Delete Face and Unite seam cases were manually confirmed by the user
 on 2026-10-20. Native Save/Open and the cone/hole Pull fixes were tested and
 confirmed by the user on Fedora KDE on 2026-10-21. Automated regression coverage
@@ -32,8 +32,8 @@ and v3 otherwise; readers accept v1/v2/v3/v4. Points have exact local coordinate
 fixed-screen-size markers, typed selection, snapping and shared history. This
 foundation has no interactive point-creation or Project 3D Geometry command yet.
 General Project 3D Geometry (vertices, edges and faces to 2D) remains scheduled
-for later v0.4.2 phases. A standalone exact vertex/straight-edge computation core
-is implemented; see [projection module](docs/SKETCH_PROJECTION.md). The existing
+for later v0.4.2 phases. A standalone exact vertex/straight-edge and parallel
+circle/arc computation core is implemented; see [projection module](docs/SKETCH_PROJECTION.md). The existing
 Point → Project onto workplane creates an independent 3D construction Point;
 it does not populate a Workplane’s 2D collection. Overdraw currently requires
 bounded pieces, excludes unbounded tails and 0/1-cut circles, refuses overlapping
