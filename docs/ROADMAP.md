@@ -48,14 +48,27 @@
   This is outside the approved v0.4.1 release scope. Existing 3D Point projection
   remains available and does not create 2D sketch entities or dependencies.
   Phases 1–2 add no interactive point-creation or Project 3D Geometry command.
-  Phase 3 adds circular/arc edge computation; face-boundary projection and the
-  interactive selection/session UI remain unimplemented.
+  Phases 3–4 add circular/arc edges and actual face boundaries to the computation
+  core. The interactive selection/session UI remains phase-5 work.
 
 - [x] Phase 3: analytic circular edges parallel to the target Workplane project
   to independent Construction Circles/Arcs. Preserve signed traversal, reversed
   edges/normals and composed placements; refuse oblique elliptical projections.
   Circular duplicate/domain-overlap checks retain all-or-nothing batch behavior.
   See [circular projection rules and tests](SKETCH_PROJECTION.md#phase-3-exact-circles-and-circular-arcs).
+
+- [x] Phase 4: project every actual outer/inner wire of a valid bounded face,
+  including multiple holes and mixed straight/circular boundaries. Verify full
+  wire traversal and projected closure before shared/reversed/seam deduplication.
+  Certify spherical/conical collapsed pole edges before omitting them; refuse
+  unsupported, unverified or collapsed ordinary edges atomically. Preserve
+  independent Construction values, Part/subshape placements and schemas v1–v4.
+  This is boundary geometry, not a silhouette or a convex hull, and adds no UI.
+  See [face-boundary rules and limitations](SKETCH_PROJECTION.md#phase-4-actual-face-boundaries).
+- [x] Phase-4 validation: complete Release build and 38/38 CTests pass
+  (85.43 seconds), including existing 2D/3D/history and v1–v4 storage regressions.
+  All three projection suites also pass without a display; diff and reviewed-file
+  safety checks pass. Interactive projection remains phase-5 work.
 
 ### UI: Command Pop-up Positioning
 

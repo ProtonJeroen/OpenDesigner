@@ -164,13 +164,14 @@ void failures() {
     Source circle{BRepBuilderAPI_MakeEdge(gp_Elips(gp_Ax2(gp_Pnt(),gp_Dir(0,0,1)),10,5)).Shape(),{},"unsupported ellipse source"};
     Source unbounded{BRepBuilderAPI_MakeEdge(gp_Lin(gp_Pnt(),gp_Dir(1,0,0))).Shape(),{},"infinite source"};
     Source half{BRepBuilderAPI_MakeEdge(gp_Lin(gp_Pnt(),gp_Dir(1,0,0)),0,Precision::Infinite()).Shape(),{},"half-infinite source"};
-    Source face{BRepBuilderAPI_MakeFace(gp_Pln(),-10,10,-10,10).Shape(),{},"face source"};
-    BRep_Builder builder;TopoDS_Edge empty;builder.MakeEdge(empty);Source missing{empty,{},"missing 3D curve"};
+    BRep_Builder builder;TopoDS_Compound compound;builder.MakeCompound(compound);
+    Source unsupported{compound,{},"compound source"};
+    TopoDS_Edge empty;builder.MakeEdge(empty);Source missing{empty,{},"missing 3D curve"};
     auto degenerate=edge({0,0,0},{10,0,0});builder.Degenerated(TopoDS::Edge(degenerate.shape),true);
     auto oriented=edge({0,0,0},{10,0,0});oriented.shape.Orientation(TopAbs_INTERNAL);
     auto malformed=edge({0,0,0},{10,0,0});builder.UpdateVertex(TopExp::FirstVertex(TopoDS::Edge(malformed.shape)),gp_Pnt(3,4,5),1.e-7);
     auto transform=valid;transform.partPlacement.SetTranslation(gp_Vec(std::numeric_limits<double>::quiet_NaN(),0,0));
-    std::vector<Source> inputs{valid,{},circle,unbounded,half,face,missing,degenerate,oriented,malformed,transform};
+    std::vector<Source> inputs{valid,{},circle,unbounded,half,unsupported,missing,degenerate,oriented,malformed,transform};
     const auto result=project(inputs,wp);refused(result,Code::NullSource,1);refused(result,Code::NonlinearEdge,2);
     refused(result,Code::UnboundedEdge,3);refused(result,Code::UnboundedEdge,4);refused(result,Code::UnsupportedShape,5);
     refused(result,Code::MissingCurve,6);refused(result,Code::DegenerateEdge,7);refused(result,Code::InvalidOrientation,8);

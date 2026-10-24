@@ -1,11 +1,22 @@
 #include "SketchProjection.h"
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepCheck_Wire.hxx>
+#include <BRepTools.hxx>
+#include <BRepTools_WireExplorer.hxx>
 #include <BRep_Tool.hxx>
+#include <Geom2dAdaptor_Curve.hxx>
+#include <GeomAdaptor_Surface.hxx>
 #include <Precision.hxx>
 #include <QSet>
 #include <Standard_Failure.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Iterator.hxx>
+#include <TopoDS_Wire.hxx>
+#include <gp_Cone.hxx>
+#include <gp_Lin2d.hxx>
+#include <gp_Pln.hxx>
+#include <gp_Sphere.hxx>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -97,14 +108,17 @@ Sketch::Geometry circularGeometry(const Source& source,const BRepAdaptor_Curve& 
             "Projected arc endpoints cannot be represented within the geometric tolerance.");
     return arc;
 }
-Sketch::Geometry geometry(const Source& source,const gp_Ax3& frame,double tolerance) {
+void validateSource(const Source& source) {
     require(!source.shape.IsNull(),Code::NullSource,"The source shape is null.");
-    require(source.shape.ShapeType()==TopAbs_VERTEX || source.shape.ShapeType()==TopAbs_EDGE,
-            Code::UnsupportedShape,"Only vertices and analytic straight or circular edges are supported.");
+    require(source.shape.ShapeType()==TopAbs_VERTEX || source.shape.ShapeType()==TopAbs_EDGE || source.shape.ShapeType()==TopAbs_FACE,
+            Code::UnsupportedShape,"Only vertices, analytic straight/circular edges and face boundaries are supported.");
     require(finite(source.partPlacement) && finite(source.shape.Location().Transformation()),
             Code::InvalidPlacement,"Source Part or subshape placement is invalid.");
     require(source.shape.Orientation()==TopAbs_FORWARD || source.shape.Orientation()==TopAbs_REVERSED,
             Code::InvalidOrientation,"Internal/external source orientations are not supported.");
+}
+Sketch::Geometry geometry(const Source& source,const gp_Ax3& frame,double tolerance) {
+    validateSource(source);
     if(source.shape.ShapeType()==TopAbs_VERTEX) {
         require(BRepCheck_Analyzer(source.shape).IsValid(),Code::InvalidBRep,"The source vertex is not valid B-Rep geometry.");
         return ConstructionPoint{local(BRep_Tool::Pnt(TopoDS::Vertex(source.shape)),source.partPlacement,frame,tolerance)};
@@ -136,6 +150,109 @@ Sketch::Geometry geometry(const Source& source,const gp_Ax3& frame,double tolera
     return result;
 }
 bool near(Point a,Point b,double tolerance) {return std::hypot(a.x-b.x,a.y-b.y)<=tolerance;}
+struct Piece {Sketch::Geometry geometry;QString context;};
+
+// A degenerated flag or coincident endpoint vertices alone cannot prove that
+// an edge has no extent (a full circle also has coincident endpoints). Certify
+// the entire p-curve's image on a supported analytic surface, without sampling.
+Point collapsedPole(const Source& source,const TopoDS_Face& face,const gp_Ax3& frame,double tolerance) {
+    const auto edge=TopoDS::Edge(source.shape);
+    TopLoc_Location curveLocation,surfaceLocation;double first,last;
+    require(BRep_Tool::Curve(edge,curveLocation,first,last).IsNull(),Code::DegenerateEdge,
+            "The degenerated edge has a 3D curve; it cannot safely be omitted.");
+    const auto pcurve=BRep_Tool::CurveOnSurface(edge,face,first,last);
+    const auto rawSurface=BRep_Tool::Surface(face,surfaceLocation);
+    require(!pcurve.IsNull() && !rawSurface.IsNull() && finite(surfaceLocation.Transformation())
+            && std::isfinite(first) && std::isfinite(last) && !Precision::IsInfinite(first) && !Precision::IsInfinite(last) && last>first,
+            Code::DegenerateEdge,"The degenerated edge lacks a finite, verifiable surface p-curve.");
+    Geom2dAdaptor_Curve uv(pcurve,first,last);GeomAdaptor_Surface surface(rawSurface);
+    require(uv.GetType()==GeomAbs_Line && uv.Line().Direction().Y()==0,Code::DegenerateEdge,
+            "Only constant-V spherical/conical pole p-curves can safely be omitted.");
+    const auto start=uv.Value(first);const long double v=start.Y();
+    long double residual=0,reference=1;
+    if(surface.GetType()==GeomAbs_Sphere) {
+        residual=std::abs(std::cos(v))*surface.Sphere().Radius();reference=surface.Sphere().Radius();
+    } else if(surface.GetType()==GeomAbs_Cone) {
+        const auto cone=surface.Cone();const long double r=cone.RefRadius(),offset=v*std::sin(static_cast<long double>(cone.SemiAngle()));
+        residual=std::abs(r+offset);reference=std::max({1.L,std::abs(r),std::abs(offset)});
+    } else require(false,Code::DegenerateEdge,"The degenerated edge's surface cannot be certified as a collapsed analytic pole.");
+    const long double scale=std::abs(static_cast<long double>(surfaceLocation.Transformation().ScaleFactor())*source.partPlacement.ScaleFactor());
+    require(std::isfinite(residual) && residual<=angularRoundoff*reference && 2*residual*scale<=tolerance,
+            Code::DegenerateEdge,"The degenerated edge's p-curve does not collapse within the projection tolerance.");
+    const auto pole=surface.Value(start.X(),start.Y()).Transformed(surfaceLocation.Transformation());
+    require(finite(pole),Code::NumericalFailure,"The degenerated edge's pole is not finite.");
+    size_t vertices=0;
+    for(TopoDS_Iterator it(edge);it.More();it.Next()) {
+        require(it.Value().ShapeType()==TopAbs_VERTEX,Code::DegenerateEdge,"Unexpected topology on a degenerated edge.");
+        const auto p=BRep_Tool::Pnt(TopoDS::Vertex(it.Value()));
+        require(finite(p) && static_cast<long double>(p.Distance(pole))*std::abs(source.partPlacement.ScaleFactor())<=tolerance,
+                Code::DegenerateEdge,"The degenerated edge's vertices do not agree with its analytic pole.");++vertices;
+    }
+    require(vertices==2,Code::DegenerateEdge,"The degenerated edge does not have two verifiable endpoint occurrences.");
+    return local(pole,source.partPlacement,frame,tolerance);
+}
+std::vector<Piece> faceGeometry(const Source& source,const gp_Ax3& frame,double tolerance,std::vector<QString>& skipped) {
+    // Face reversal changes surface orientation, not the boundary's geometric
+    // set. Keep each wire's own traversal, with all cumulative locations.
+    const auto face=TopoDS::Face(source.shape.Oriented(TopAbs_FORWARD));
+    require(BRepCheck_Analyzer(face).IsValid(),Code::InvalidBRep,"The source face is not valid B-Rep geometry.");
+    require(!BRepTools::OuterWire(face).IsNull(),Code::InvalidFaceBoundary,"The face has no bounded outer wire.");
+    TopLoc_Location surfaceLocation;const auto surface=BRep_Tool::Surface(face,surfaceLocation);
+    require(!surface.IsNull() && finite(surfaceLocation.Transformation()),Code::InvalidPlacement,"The face surface placement is invalid.");
+    GeomAdaptor_Surface adaptor(surface);
+    if(adaptor.GetType()==GeomAbs_Plane) {
+        auto normal=adaptor.Plane().Axis().Direction();normal.Transform(surfaceLocation.Transformation());
+        require(std::abs(localDirection(normal,source.partPlacement,frame)[2])>angularRoundoff,
+                Code::CollapsedProjection,"The planar face projects edge-on to a line; no contour was created.");
+    }
+    std::vector<Piece> result;size_t wireIndex=0;
+    for(TopoDS_Iterator wires(face);wires.More();wires.Next()) {
+        ++wireIndex;const auto wireContext=QString("Face wire %1: ").arg(wireIndex);
+        require(wires.Value().ShapeType()==TopAbs_WIRE,Code::InvalidFaceBoundary,"A face boundary contains a non-wire subshape.");
+        const auto wire=TopoDS::Wire(wires.Value());
+        require(wire.Orientation()==TopAbs_FORWARD || wire.Orientation()==TopAbs_REVERSED,Code::InvalidOrientation,"Internal/external face wires are not supported.");
+        BRepCheck_Wire check(wire);
+        require(check.Closed()==BRepCheck_NoError,Code::InvalidFaceBoundary,"A face boundary wire is not topologically closed.");
+        std::vector<TopoDS_Shape> remaining;
+        for(TopoDS_Iterator edges(wire);edges.More();edges.Next()) {
+            require(edges.Value().ShapeType()==TopAbs_EDGE,Code::InvalidFaceBoundary,"A boundary wire contains a non-edge subshape.");
+            remaining.push_back(edges.Value());
+        }
+        std::optional<Point> beginning,previous;size_t edgeIndex=0,curves=0;
+        for(BRepTools_WireExplorer edges(wire,face);edges.More();edges.Next()) {
+            ++edgeIndex;const auto context=QString("Face wire %1, edge %2: ").arg(wireIndex).arg(edgeIndex);
+            try {
+                const auto edge=edges.Current();
+                const auto occurrence=std::find_if(remaining.begin(),remaining.end(),[&](const auto& s){return s.IsEqual(edge);});
+                require(occurrence!=remaining.end(),Code::InvalidFaceBoundary,"Wire traversal repeated or lost an edge occurrence.");
+                remaining.erase(occurrence);
+                Source child{edge,source.partPlacement,source.label};validateSource(child);
+                Point a,b;
+                if(BRep_Tool::Degenerated(edge)) {
+                    a=b=collapsedPole(child,face,frame,tolerance);skipped.push_back(context+"Certified collapsed pole edge omitted; no endpoint point was added.");
+                } else {
+                    auto g=geometry(child,frame,tolerance);BRepAdaptor_Curve curve(edge);
+                    a=local(curve.Value(edge.Orientation()==TopAbs_REVERSED?curve.LastParameter():curve.FirstParameter()),source.partPlacement,frame,tolerance);
+                    b=local(curve.Value(edge.Orientation()==TopAbs_REVERSED?curve.FirstParameter():curve.LastParameter()),source.partPlacement,frame,tolerance);
+                    // Check the persisted Arc endpoints too, not just the B-Rep
+                    // walk, so precision loss cannot open a previously closed wire.
+                    if(const auto* arc=std::get_if<Sketch::Arc>(&g)) {
+                        a={arc->center.x+arc->radius*std::cos(arc->startAngle),arc->center.y+arc->radius*std::sin(arc->startAngle)};
+                        b={arc->center.x+arc->radius*std::cos(arc->startAngle+arc->sweepAngle),arc->center.y+arc->radius*std::sin(arc->startAngle+arc->sweepAngle)};
+                    }
+                    result.push_back({std::move(g),context});++curves;
+                }
+                require(!previous || near(*previous,a,tolerance),Code::InvalidFaceBoundary,"Projected neighboring edges do not meet within tolerance.");
+                if(!beginning) beginning=a;previous=b;
+            } catch(const Failure& f) {throw Failure{f.code,context+f.message};}
+            catch(const Standard_Failure& f) {throw Failure{Code::KernelFailure,context+QString::fromUtf8(f.GetMessageString())};}
+        }
+        if(!remaining.empty() || !beginning || !curves) throw Failure{Code::InvalidFaceBoundary,wireContext+"No complete, nonempty boundary traversal is available."};
+        if(!near(*previous,*beginning,tolerance)) throw Failure{Code::InvalidFaceBoundary,wireContext+"The projected wire is not closed within tolerance."};
+    }
+    require(wireIndex>0,Code::InvalidFaceBoundary,"The face has no boundary wires.");
+    return result;
+}
 std::optional<Sketch::Circle> support(const Sketch::Geometry& geometry) {
     if(const auto* circle=std::get_if<Sketch::Circle>(&geometry)) return *circle;
     if(const auto* arc=std::get_if<Sketch::Arc>(&geometry)) return Sketch::Circle{arc->center,arc->radius};
@@ -219,10 +336,18 @@ Result project(const std::vector<Source>& sources,const Construction::Object& wo
         }
         ids.insert(e.id);
     }
-    struct Candidate {size_t source;Sketch::Geometry geometry;};
+    struct Candidate {size_t source;Sketch::Geometry geometry;QString context;};
     std::vector<Candidate> candidates;
     for(size_t i=0;i<sources.size();++i) {
-        try {candidates.push_back({i,geometry(sources[i],workplane.frame,tolerance)});}
+        try {
+            validateSource(sources[i]);
+            if(sources[i].shape.ShapeType()==TopAbs_FACE) {
+                std::vector<QString> skipped;
+                const auto pieces=faceGeometry(sources[i],workplane.frame,tolerance,skipped);
+                for(const auto& message:skipped) report(Code::DegenerateSkipped,message,i);
+                for(const auto& p:pieces) candidates.push_back({i,p.geometry,p.context});
+            } else candidates.push_back({i,geometry(sources[i],workplane.frame,tolerance),{}});
+        }
         catch(const Failure& f) {report(f.code,f.message,i);}
         catch(const Standard_Failure& f) {report(Code::KernelFailure,QString("OCCT could not evaluate this source: %1").arg(QString::fromUtf8(f.GetMessageString())),i);}
         catch(const std::exception& f) {report(Code::KernelFailure,QString("Could not evaluate this source: %1").arg(QString::fromUtf8(f.what())),i);}
@@ -234,17 +359,17 @@ Result project(const std::vector<Source>& sources,const Construction::Object& wo
         const auto old=std::find_if(existing.begin(),existing.end(),[&](const auto& e) {
             return e.workplaneId==workplane.id && e.role==Sketch::Role::Construction && duplicate(c.geometry,e.geometry,tolerance);
         });
-        if(old!=existing.end()) {report(Code::Duplicate,"Duplicate Construction geometry already exists; source skipped.",c.source,{},old->id);continue;}
+        if(old!=existing.end()) {report(Code::Duplicate,c.context+"Duplicate Construction geometry already exists; boundary piece skipped.",c.source,{},old->id);continue;}
         const auto earlier=std::find_if(unique.begin(),unique.end(),[&](const auto& p){return duplicate(c.geometry,p.geometry,tolerance);});
-        if(earlier!=unique.end()) {report(Code::Duplicate,"Duplicate projected geometry in this batch; source skipped.",c.source,earlier->source);continue;}
+        if(earlier!=unique.end()) {report(Code::Duplicate,c.context+"Duplicate projected geometry in this batch; boundary piece skipped.",c.source,earlier->source);continue;}
         unique.push_back(c);
     }
     for(size_t i=0;i<unique.size();++i) {
         const auto& c=unique[i];
         for(const auto& e:existing) if(e.workplaneId==workplane.id && e.role==Sketch::Role::Construction && overlap(c.geometry,e.geometry,tolerance))
-            report(Code::PartialOverlap,"The projected geometry overlaps existing Construction geometry; no automatic trimming is performed.",c.source,{},e.id);
+            report(Code::PartialOverlap,c.context+"The projected geometry overlaps existing Construction geometry; no automatic trimming is performed.",c.source,{},e.id);
         for(size_t j=0;j<i;++j) if(overlap(c.geometry,unique[j].geometry,tolerance))
-            report(Code::PartialOverlap,"Projected curves overlap over a nonzero interval; no automatic trimming is performed.",c.source,unique[j].source);
+            report(Code::PartialOverlap,c.context+"Projected curves overlap over a nonzero interval; no automatic trimming is performed. "+unique[j].context,c.source,unique[j].source);
     }
     if(std::any_of(result.diagnostics.begin(),result.diagnostics.end(),[](const auto& d){return d.isError();})) return result;
     for(const auto& c:unique) {
