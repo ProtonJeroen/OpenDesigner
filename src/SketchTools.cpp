@@ -120,6 +120,7 @@ bool CadViewport::previewSketchEntities(const std::vector<Sketch::Entity>& entit
 }
 void CadViewport::finishSketchEdit(bool confirm) {
     if(!commandSession_ || commandSession_->kind!=CommandSession::Kind::Sketch) return;
+    if(confirm && commandSession_->projection && !confirmSketchProjection()) return;
     if(confirm && sketchConstructionPanel_) sketchConstructionPanel_->finishEditing();
     if(confirm && commandSession_->lineConstruction && !commandSession_->valid) {
         emit statusMessage(tr("Choose valid construction references, parameters and an explicit tangent solution before OK."));return;
@@ -131,6 +132,8 @@ void CadViewport::finishSketchEdit(bool confirm) {
         emit statusMessage(tr("Choose at least one valid Overdraw piece before OK."));return;
     }
     const auto change=commandSession_->sketch;
+    const auto projection=commandSession_->projection;
+    closeSketchProjectionPanel();
     closeSketchDrawingPanel();closeOverdrawPanel();closeSketchConstructionPanel();clearSketchFeedback();
     commandSession_.reset();
     for(const auto& [id,p]:sketchPreviews_) context_->Remove(p,Standard_False);
@@ -139,10 +142,19 @@ void CadViewport::finishSketchEdit(bool confirm) {
         clearHistorySelection();
         PullChange operation{};operation.sketchChange=change;
         restoreSketchEntities(change->after);undoStack_.push_back(operation);redoStack_.clear();updateHistoryActions();
-    } else rebuildSketchPresentations();
-    refreshSketchPicking();view_->Redraw();
+    } else {
+        if(projection) {
+            selectedSketchIds_.clear();
+            for(const auto& e:sketchEntities_) if(projection->previousSketchSelection.contains(e.id) && sketchPickable(e)) selectedSketchIds_<<e.id;
+        }
+        rebuildSketchPresentations();
+    }
+    refreshSketchPicking(activeSketchWorkplaneId_.isEmpty());view_->Redraw();
 }
 void CadViewport::selectSketchEntities(const QStringList& ids) {
+    if(commandSession_ && commandSession_->projection) {
+        emit statusMessage(tr("Project 3D Geometry accepts 3D subshapes in the viewport; 2D objects are not projection sources."));return;
+    }
     if(commandSession_ && commandSession_->lineConstruction && commandSession_->lineConstruction->pickRole>=0) {
         if(ids.size()!=1 || !acceptSketchConstructionReference(ids.front())) emit statusMessage(tr("Choose one eligible 2D reference on the active Workplane."));
         return;

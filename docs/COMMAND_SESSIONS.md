@@ -1,4 +1,29 @@
-# Command sessions and preview (v0.3.2–v0.4.1)
+# Command sessions and preview (v0.3.2–v0.4.2)
+
+## Interactive 3D projection into Sketch
+
+**Project 3D Geometry** is a `Kind::Sketch` session with a `SketchChange`, not a
+new history or command subsystem. `SketchProjectionTools.cpp` temporarily enables
+OCCT Vertex/Edge/Face/Mixed picking while the active Workplane remains the target.
+The nonmodal `SketchProjectionPanel` uses CommandPanelPositioner, exposes source
+selection/counts and live diagnostics, and uses the existing blue preview path.
+Only `SketchProjection::project(...)` computes geometry.
+
+OK/Enter validates sources and recomputes the same batch before committing one
+history entry. Unchanged preview UUIDs are retained. Empty/duplicate-only results
+make no document change. Invalid batches keep the correction workflow open with
+no partial preview. Cancel/Escape/panel close, invalidated sources/target and
+document replacement remove the preview and source highlighting. Cancel restores
+safely valid prior Sketch selection; confirmation/history clear selection. Save
+retains the session and writes only confirmed data. Accepted application close
+ends Sketch editing after the unsaved-document decision; refusing close keeps
+the session. Source/target changes and another command cannot leave a stale
+projection session behind.
+
+See [projection lifecycle, selection and limits](SKETCH_PROJECTION.md#phase-5-interactive-project-3d-geometry)
+and [native Fedora KDE tests](GUI_TEST_PLAN.md). The v16 reference confirms general
+group selection/Preview/OK/Workplane concepts; this specific pane and Ctrl/mode
+policy are OpenDesigner choices.
 
 Interactive Move Part (axis gizmo and orange face-normal arrow) and Rotate Part
 now have a temporary preview. Select geometry and explicitly choose its Modeling/context action to show a gizmo.
@@ -70,8 +95,9 @@ The small nested `CommandSession` is a transaction record. Its lifecycle is:
    Nothing needs to be undone in the document. Discard the session record.
 
 The numeric editor and OK/Cancel buttons use this same transaction lifecycle.
-During a session they occupy a small raster tool window positioned near the
-gizmo, avoiding Qt control painting on the OCCT paint-on-screen surface.
+During a session they occupy a raster tool window managed at the viewport's
+upper-right by CommandPanelPositioner, avoiding Qt control painting on the OCCT
+paint-on-screen surface. User drag positions are retained and clamped as needed.
 Closing this tool window also cancels the session. Each Move/Rotate drag starts
 a session; refine its preview with the numeric field before confirming. Move
 Face starts a session at face selection and allows repeated arrow drags.

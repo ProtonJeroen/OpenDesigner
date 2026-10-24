@@ -1,4 +1,4 @@
-# Selection and explicit modeling commands (v0.3.3–v0.4.0)
+# Selection and explicit modeling commands (v0.3.3–v0.4.2)
 
 Selection is passive. There is no Faces/Parts dropdown.
 
@@ -190,3 +190,20 @@ named list. Green tangent alternatives are nonselectable overlays; an explicit
 list choice or unique candidate click chooses blue output. Neither previews nor
 markers become Part/Face operands or browser rows before OK. Mouse offset-side
 choice changes only the exact distance's sign.
+
+## Temporary Project 3D Geometry selection (v0.4.2)
+
+During an active Sketch projection session, visible Parts temporarily expose
+OCCT Vertex, Edge, Face or Mixed subshape selection. The existing OCCT owners and
+cyan highlights are authoritative; captured Part-local subshapes, stable Part
+IDs and separate placements are transient validation operands, not document
+dependencies. Whole Parts, construction objects, 2D entities and blue previews
+cannot be acquired as sources. Click replaces and Ctrl+click toggles; mode changes
+retain only eligible types. Repeated/reversed instances of the same Part subshape
+are canonicalized before the kernel's geometric duplicate checks.
+
+Normal 2D selection is restored on close. Cancel restores safely pickable prior
+Sketch selection; commit and Undo/Redo clear selection. The projection context
+menu has Clear/Cancel/Fit All and does not turn the session into a normal 3D face
+edit. No new persistent selection system or browser subshape hierarchy is added.
+See [the full workflow](SKETCH_PROJECTION.md#phase-5-interactive-project-3d-geometry).

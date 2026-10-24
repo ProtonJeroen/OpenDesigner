@@ -127,6 +127,12 @@ QMenu* CadViewport::createSelectionMenu(const QPoint& anchor) {
     const auto selection=selectionContext();
     auto* menu=new QMenu(this);
     menu->setObjectName(QStringLiteral("viewportContextMenu"));
+    if(commandSession_ && commandSession_->projection) {
+        connect(menu->addAction(tr("Clear projection sources")),&QAction::triggered,this,&CadViewport::clearSketchProjectionSources);
+        connect(menu->addAction(tr("Cancel Project 3D Geometry")),&QAction::triggered,this,&CadViewport::cancelCommandSession);
+        menu->addSeparator();connect(menu->addAction(tr("Fit All")),&QAction::triggered,this,&CadViewport::fitAll);
+        return menu;
+    }
     if(selection.kind==SelectionContext::Kind::None) {
         updateHistoryActions();
         menu->addAction(undoAction_); menu->addAction(redoAction_);
@@ -152,6 +158,8 @@ QMenu* CadViewport::createSelectionMenu(const QPoint& anchor) {
     }
     if(!activeSketchWorkplaneId_.isEmpty()) {
         menu->addSeparator();auto* drawing=menu->addMenu(tr("2D Drawing"));
+        auto* project=drawing->addAction(tr("Project 3D Geometry"));project->setObjectName("context.project_3d");
+        connect(project,&QAction::triggered,this,&CadViewport::startSketchProjection);
         auto* axes=drawing->addMenu(tr("Construction Axes"));populateSketchAxesMenu(*axes);
         auto* overdraw=drawing->addAction(tr("Overdraw"));overdraw->setObjectName("context.overdraw");
         connect(overdraw,&QAction::triggered,this,&CadViewport::startSketchOverdraw);
@@ -255,6 +263,9 @@ void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection
 }
 void CadViewport::contextMenuEvent(QContextMenuEvent* event) {
     event->accept();
+    if(commandSession_ && commandSession_->projection && !context_.IsNull()) {
+        std::unique_ptr<QMenu> menu(createSelectionMenu(event->pos()));menu->exec(event->globalPos());return;
+    }
     if(context_.IsNull() || commandSession_ || moveFacePicking_ || draggingFace_ || draggingRotation_ || draggingFaceRotation_ || rotating_ || panning_) return;
     auto selection=selectionContext();
     if(selection.kind==SelectionContext::Kind::None && event->reason()==QContextMenuEvent::Mouse) {

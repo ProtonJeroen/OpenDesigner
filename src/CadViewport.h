@@ -38,6 +38,8 @@ class ConstructionPanel;
 #include "SketchOverdraw.h"
 #include "SketchOverdrawPanel.h"
 #include "SketchConstructionPanel.h"
+#include "SketchProjectionPanel.h"
+#include "SketchProjection.h"
 
 class CadViewport final : public QWidget {
     Q_OBJECT
@@ -54,6 +56,7 @@ public:
     void startSketchDrawing(Sketch::DrawTool tool, Sketch::Role role = Sketch::Role::Profile);
     void startSketchOverdraw();
     void startSketchConstruction(Sketch::ConstructionTool tool);
+    void startSketchProjection();
     void startSketchAxes(bool localX,bool localY);
     void populateSketchAxesMenu(QMenu& menu);
     void setSketchSnapPixels(int pixels);
@@ -152,6 +155,7 @@ private:
     friend struct SketchReleaseSessionTest;
     friend struct SketchPointSessionTest;
     friend struct CommandPanelSessionTest;
+    friend struct SketchProjectionSessionTest;
     friend struct CadViewportPullTest;
     friend struct NativeDocumentSessionTest;
     friend struct BooleanOperationsTest;
@@ -232,6 +236,20 @@ private:
         bool complete=false;
     };
     struct SketchChange { std::vector<Sketch::Entity> before, after; };
+    struct SketchProjectionState {
+        struct Reference {
+            size_t partIndex;
+            QString partId;
+            TopoDS_Shape root,shape;
+            gp_Trsf placement;
+            Handle(SelectMgr_EntityOwner) owner;
+        };
+        Construction::Object workplane;
+        SketchProjectionPanel::Mode mode=SketchProjectionPanel::Mode::Mixed;
+        std::vector<Reference> sources;
+        QStringList previousSketchSelection;
+        SketchProjection::Result result;
+    };
     struct SketchConstructionState {
         Sketch::ConstructionTool tool=Sketch::ConstructionTool::OffsetLine;
         Sketch::Entity candidate;
@@ -290,6 +308,7 @@ private:
         std::shared_ptr<SketchDrawingState> drawing;
         std::shared_ptr<SketchOverdrawState> overdraw;
         std::shared_ptr<SketchConstructionState> lineConstruction;
+        std::shared_ptr<SketchProjectionState> projection;
         State state = State::Selection;
         Kind kind = Kind::Move;
         std::vector<PullChange> changes;
@@ -326,6 +345,17 @@ private:
     SketchDrawingPanel* sketchDrawingPanel_ = nullptr;
     SketchOverdrawPanel* sketchOverdrawPanel_ = nullptr;
     SketchConstructionPanel* sketchConstructionPanel_ = nullptr;
+    SketchProjectionPanel* sketchProjectionPanel_ = nullptr;
+    void configureSketchProjectionPicking();
+    void changeSketchProjectionMode();
+    bool sketchProjectionClick(const QPoint& pixel,Qt::KeyboardModifiers modifiers);
+    bool captureSketchProjectionSelection();
+    bool projectionReference(const Handle(SelectMgr_EntityOwner)& owner,SketchProjectionState::Reference& result) const;
+    bool validateSketchProjectionSources();
+    void refreshSketchProjection();
+    bool confirmSketchProjection();
+    void clearSketchProjectionSources();
+    void closeSketchProjectionPanel();
     std::vector<Handle(AIS_Shape)> constructionLineAlternatives_;
     void refreshSketchConstruction(bool recompute=true);
     void closeSketchConstructionPanel();

@@ -122,9 +122,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(offset2D,&QAction::triggered,viewport_,[this]{viewport_->startSketchConstruction(Sketch::ConstructionTool::OffsetLine);});
     auto* tangent2D=sketchMenu->addAction(tr("Common Tangent Construction Line"));tangent2D->setObjectName("sketch.common_tangent");tangent2D->setEnabled(false);
     connect(tangent2D,&QAction::triggered,viewport_,[this]{viewport_->startSketchConstruction(Sketch::ConstructionTool::CommonTangent);});
+    auto* projection2D=sketchMenu->addAction(tr("Project 3D Geometry"));projection2D->setObjectName("sketch.project_3d");projection2D->setEnabled(false);
+    connect(projection2D,&QAction::triggered,viewport_,&CadViewport::startSketchProjection);
     auto* snap2D=sketchMenu->addAction(tr("Snapping"));snap2D->setObjectName("sketch.snapping");snap2D->setCheckable(true);snap2D->setChecked(true);
     connect(snap2D,&QAction::toggled,viewport_,&CadViewport::setSketchSnapping);
-    connect(viewport_,&CadViewport::activeSketchWorkplaneChanged,this,[this,finishSketch,normalSketch,overdraw,offset2D,tangent2D,axes2D](const QString& id) {
+    connect(viewport_,&CadViewport::activeSketchWorkplaneChanged,this,[this,finishSketch,normalSketch,overdraw,offset2D,tangent2D,axes2D,projection2D](const QString& id) {
+        projection2D->setEnabled(!id.isEmpty());
         axes2D->setEnabled(!id.isEmpty());
         finishSketch->setEnabled(!id.isEmpty());normalSketch->setEnabled(!id.isEmpty());overdraw->setEnabled(!id.isEmpty());
         offset2D->setEnabled(!id.isEmpty());tangent2D->setEnabled(!id.isEmpty());rebuildConstructionBrowser();rebuildSketchControls();
@@ -241,7 +244,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     sketchToolbar->addAction(construction2D);sketchToolbar->addAction(line2D);sketchToolbar->addAction(infinite2D);
     sketchToolbar->addAction(circle2D);sketchToolbar->addAction(arc2D);sketchToolbar->addAction(overdraw);
     sketchToolbar->addAction(axes2D->menuAction());
-    sketchToolbar->addAction(offset2D);sketchToolbar->addAction(tangent2D);sketchToolbar->addSeparator();sketchToolbar->addAction(snap2D);
+    sketchToolbar->addAction(offset2D);sketchToolbar->addAction(tangent2D);sketchToolbar->addAction(projection2D);sketchToolbar->addSeparator();sketchToolbar->addAction(snap2D);
     auto* pixels=new QSpinBox(sketchToolbar);pixels->setObjectName("sketchSnapPixels");pixels->setRange(1,100);pixels->setValue(viewport_->sketchSnapPixels());pixels->setSuffix(tr(" px"));
     pixels->setToolTip(tr("2D snap radius in screen pixels; Shift temporarily bypasses snapping"));sketchToolbar->addWidget(pixels);
     connect(pixels,qOverload<int>(&QSpinBox::valueChanged),viewport_,&CadViewport::setSketchSnapPixels);rebuildSketchControls();
@@ -609,5 +612,5 @@ void MainWindow::rebuildSketchControls() {
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
-    if (maybeSave()) event->accept(); else event->ignore();
+    if (maybeSave()) {viewport_->endSketchEditing();event->accept();} else event->ignore();
 }
