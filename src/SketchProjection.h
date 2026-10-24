@@ -20,7 +20,7 @@ enum class Code {
     MissingCurve, NonlinearEdge, UnboundedEdge, DegenerateEdge,
     InvalidBRep, CollapsedProjection, NumericalFailure, KernelFailure,
     Duplicate, PartialOverlap, NonCircularProjection, UnsupportedCircularSpan,
-    InvalidFaceBoundary, DegenerateSkipped
+    InvalidFaceBoundary, DegenerateSkipped, UnsupportedConicComparison
 };
 struct Diagnostic {
     Code code;
@@ -43,8 +43,12 @@ struct Result {
 // on this Workplane, including hidden/locked entities. Profile geometry and
 // other owners are not duplicate Construction references. Point/curve contacts
 // and crossings are allowed; nonzero collinear/cocircular overlaps are refused.
-// Circular edges must lie parallel to the target plane. Tilted projections are
-// refused rather than approximated as circles, arcs, ellipses or polylines.
+// Parallel circular edges retain Circle/Arc. Oblique circles and analytic
+// ellipses use exact Ellipse/EllipticalArc coefficients and signed phase mapping.
+// Rank loss/unstable conversion fails; no tessellation/fitting. Until 6A.3b,
+// ellipse-vs-conic comparisons are refused, including within a batch; existing
+// target Construction ellipses retain the conservative request guard.
+// Elliptical face boundaries remain explicitly unsupported in this phase.
 // Faces expand all actual outer/inner wires into those same analytic curves.
 // Validate complete closed wire walks before deduplication; no endpoint points,
 // silhouette or contour reconstruction. Proven spherical/conical pole edges

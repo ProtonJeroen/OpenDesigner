@@ -14,6 +14,7 @@
 #include <TopoDS_Iterator.hxx>
 #include <TopoDS_Wire.hxx>
 #include <gp_Cone.hxx>
+#include <gp_Elips.hxx>
 #include <gp_Lin2d.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Sphere.hxx>
@@ -108,10 +109,71 @@ Sketch::Geometry circularGeometry(const Source& source,const BRepAdaptor_Curve& 
             "Projected arc endpoints cannot be represented within the geometric tolerance.");
     return arc;
 }
+// Project the analytic cosine/sine coefficients, not sampled curve points.
+// A = [p q] = B Q, where B is a direct principal-axis frame and Q is
+// orthogonal. Thus tLocal = handedness*tSource + phase for the whole curve.
+Sketch::Geometry ellipticalGeometry(const Source& source,const BRepAdaptor_Curve& curve,const gp_Ax3& frame,double tolerance) {
+    const bool circular=curve.GetType()==GeomAbs_Circle;
+    const auto axes=circular?curve.Circle().Position():curve.Ellipse().Position();
+    const auto center=local(axes.Location(),source.partPlacement,frame,tolerance);
+    const auto u=localDirection(axes.XDirection(),source.partPlacement,frame);
+    const auto v=localDirection(axes.YDirection(),source.partPlacement,frame);
+    const long double scale=std::abs(source.partPlacement.ScaleFactor());
+    const long double r1=scale*(circular?curve.Circle().Radius():curve.Ellipse().MajorRadius());
+    const long double r2=scale*(circular?curve.Circle().Radius():curve.Ellipse().MinorRadius());
+    require(std::isfinite(r1) && std::isfinite(r2),Code::NumericalFailure,"Placed conic radii are not finite.");
+    require(r2>tolerance,Code::DegenerateEdge,"The placed conic has a zero or tolerance-sized radius.");
+    const long double px=r1*u[0],py=r1*u[1],qx=r2*v[0],qy=r2*v[1];
+    const long double magnitude=std::max({std::abs(px),std::abs(py),std::abs(qx),std::abs(qy)});
+    require(std::isfinite(magnitude),Code::NumericalFailure,"Projected conic coefficients are not finite.");
+    require(magnitude>tolerance,Code::CollapsedProjection,"The conic projection collapses within tolerance.");
+    const long double x=px/magnitude,y=py/magnitude,z=qx/magnitude,w=qy/magnitude;
+    const long double xx=x*x+z*z,yy=y*y+w*w,xy=x*y+z*w,det=x*w-y*z;
+    const long double largest=std::sqrt((xx+yy+std::hypot(xx-yy,2*xy))/2);
+    const long double a=magnitude*largest,b=magnitude*std::abs(det)/largest;
+    require(b>tolerance,Code::CollapsedProjection,"The conic projects edge-on or has a tolerance-sized minor radius; no line approximation was created.");
+    require(a/b<=1/std::sqrt(std::numeric_limits<double>::epsilon()),Code::NumericalFailure,
+            "The projected conic is too ill-conditioned for reliable ellipse parameters.");
+    require(angularRoundoff*std::max({r1,r2,std::abs(static_cast<long double>(center.x)),std::abs(static_cast<long double>(center.y))})<=tolerance,Code::NumericalFailure,
+            "Conic coefficient roundoff exceeds the requested geometric tolerance.");
+    Sketch::Ellipse ellipse{center,double(a),double(b),double(normalized(std::atan2(2*xy,xx-yy)/2))};
+    const long double ca=std::cos(static_cast<long double>(ellipse.axisAngle)),sa=std::sin(static_cast<long double>(ellipse.axisAngle));
+    const long double phase=std::atan2((-sa*px+ca*py)/ellipse.minorRadius,(ca*px+sa*py)/ellipse.majorRadius);
+    const int handedness=det<0?-1:1;
+    // Certify the stored double basis and phase over the entire parameter
+    // domain: ||error(p)|| + ||error(q)|| bounds every curve position error.
+    const auto residual=[&](double storedPhase) {
+        const long double c=std::cos(static_cast<long double>(storedPhase)),s=std::sin(static_cast<long double>(storedPhase));
+        const long double ax=ellipse.majorRadius*ca,ay=ellipse.majorRadius*sa,bx=-ellipse.minorRadius*sa,by=ellipse.minorRadius*ca;
+        return std::hypot(px-(ax*c+bx*s),py-(ay*c+by*s))
+             + std::hypot(qx-handedness*(-ax*s+bx*c),qy-handedness*(-ay*s+by*c));
+    };
+    require(std::isfinite(ellipse.majorRadius) && std::isfinite(ellipse.minorRadius)
+            && residual(double(phase))<=tolerance,Code::NumericalFailure,"Stored ellipse coefficients cannot reproduce the projection within tolerance.");
+    const double first=curve.FirstParameter(),last=curve.LastParameter(),span=last-first;
+    if(last==first+curve.Period()) return ellipse;
+    require(span<turn,Code::UnsupportedCircularSpan,"The conic edge must span less than one turn or exactly one full period.");
+    require(span>1.e-12 && b*span>tolerance,Code::DegenerateEdge,"The projected conic arc has a zero or tolerance-sized span.");
+    const bool reversed=source.shape.Orientation()==TopAbs_REVERSED;
+    const double parameter=reversed?last:first;
+    const double start=double(normalized(handedness*static_cast<long double>(parameter)+phase));
+    // Recheck the phase after storing the normalized start. This additionally
+    // catches large source parameters whose phase reduction loses precision.
+    require(residual(double(static_cast<long double>(start)-handedness*static_cast<long double>(parameter)))<=tolerance,
+            Code::NumericalFailure,"The stored elliptical arc start loses the source parameter phase.");
+    Sketch::EllipticalArc arc{ellipse,start,span*handedness*(reversed?-1:1)};
+    const auto ends=Sketch::ellipticalArcEndpoints(arc);
+    const auto sourceStart=local(curve.Value(parameter),source.partPlacement,frame,tolerance);
+    const auto sourceEnd=local(curve.Value(reversed?first:last),source.partPlacement,frame,tolerance);
+    require(std::hypot(ends[0].x-sourceStart.x,ends[0].y-sourceStart.y)<=tolerance
+            && std::hypot(ends[1].x-sourceEnd.x,ends[1].y-sourceEnd.y)<=tolerance,Code::NumericalFailure,
+            "Stored elliptical arc endpoints cannot reproduce the source traversal within tolerance.");
+    return arc;
+}
 void validateSource(const Source& source) {
     require(!source.shape.IsNull(),Code::NullSource,"The source shape is null.");
     require(source.shape.ShapeType()==TopAbs_VERTEX || source.shape.ShapeType()==TopAbs_EDGE || source.shape.ShapeType()==TopAbs_FACE,
-            Code::UnsupportedShape,"Only vertices, analytic straight/circular edges and face boundaries are supported.");
+            Code::UnsupportedShape,"Only vertices, analytic line/conic edges and supported face boundaries are supported.");
     require(finite(source.partPlacement) && finite(source.shape.Location().Transformation()),
             Code::InvalidPlacement,"Source Part or subshape placement is invalid.");
     require(source.shape.Orientation()==TopAbs_FORWARD || source.shape.Orientation()==TopAbs_REVERSED,
@@ -132,10 +194,17 @@ Sketch::Geometry geometry(const Source& source,const gp_Ax3& frame,double tolera
     require(std::isfinite(first) && std::isfinite(last) && !Precision::IsInfinite(first) && !Precision::IsInfinite(last),
             Code::UnboundedEdge,"An unbounded edge cannot supply bounded Construction geometry.");
     require(last>first,Code::DegenerateEdge,"The edge has an empty or reversed parameter interval.");
-    require(curve.Is3DCurve() && (curve.GetType()==GeomAbs_Line || curve.GetType()==GeomAbs_Circle),Code::NonlinearEdge,
-            "Only exact analytic lines and circles/arcs are supported; other curves are not approximated.");
+    require(curve.Is3DCurve() && (curve.GetType()==GeomAbs_Line || curve.GetType()==GeomAbs_Circle || curve.GetType()==GeomAbs_Ellipse),Code::NonlinearEdge,
+            "Only exact analytic lines, circles and ellipses are supported; other curves are not approximated.");
     require(BRepCheck_Analyzer(edge).IsValid(),Code::InvalidBRep,"The source edge is not valid B-Rep geometry.");
-    if(curve.GetType()==GeomAbs_Circle) return circularGeometry(source,curve,frame,tolerance);
+    if(curve.GetType()==GeomAbs_Circle) {
+        const auto axes=curve.Circle().Position();
+        if(std::abs(localDirection(axes.XDirection(),source.partPlacement,frame)[2])<=angularRoundoff
+           && std::abs(localDirection(axes.YDirection(),source.partPlacement,frame)[2])<=angularRoundoff)
+            return circularGeometry(source,curve,frame,tolerance);
+        return ellipticalGeometry(source,curve,frame,tolerance);
+    }
+    if(curve.GetType()==GeomAbs_Ellipse) return ellipticalGeometry(source,curve,frame,tolerance);
     auto a=curve.Value(first),b=curve.Value(last);
     require(finite(a) && finite(b),Code::NumericalFailure,"Edge coordinates are not finite.");
     std::array<long double,3> direction{};
@@ -231,7 +300,12 @@ std::vector<Piece> faceGeometry(const Source& source,const gp_Ax3& frame,double 
                 if(BRep_Tool::Degenerated(edge)) {
                     a=b=collapsedPole(child,face,frame,tolerance);skipped.push_back(context+"Certified collapsed pole edge omitted; no endpoint point was added.");
                 } else {
-                    auto g=geometry(child,frame,tolerance);BRepAdaptor_Curve curve(edge);
+                    BRepAdaptor_Curve curve(edge);
+                    require(curve.GetType()!=GeomAbs_Ellipse,Code::NonlinearEdge,
+                            "Elliptical face boundaries require phase 6A.3b; contours are not approximated.");
+                    auto g=geometry(child,frame,tolerance);
+                    require(!Sketch::isElliptical(g),Code::NonCircularProjection,
+                            "Oblique conic face boundaries require phase 6A.3b; contours are not approximated.");
                     a=local(curve.Value(edge.Orientation()==TopAbs_REVERSED?curve.LastParameter():curve.FirstParameter()),source.partPlacement,frame,tolerance);
                     b=local(curve.Value(edge.Orientation()==TopAbs_REVERSED?curve.FirstParameter():curve.LastParameter()),source.partPlacement,frame,tolerance);
                     // Check the persisted Arc endpoints too, not just the B-Rep
@@ -335,12 +409,12 @@ Result project(const std::vector<Source>& sources,const Construction::Object& wo
             report(Code::InvalidExistingGeometry,"Invalid existing 2D collection: "+(error.isEmpty()?QString("duplicate identity."):error),{},{},e.id);return result;
         }
         ids.insert(e.id);
-        // Conic support/domain comparison is not implemented in phase 6A.1.
+        // Conic support/domain comparison is deferred to phase 6A.3b.
         // Fail conservatively rather than silently accepting duplicate or
         // overlapping circular/elliptical supports. Other owners/Profile values
         // do not participate in Construction deduplication.
         if(!sources.empty() && e.workplaneId==workplane.id && e.role==Sketch::Role::Construction && Sketch::isElliptical(e.geometry)) {
-            report(Code::InvalidExistingGeometry,"Projection against existing Construction ellipses requires elliptic support comparison, which is not available in phase 6A.1.",{},{},e.id);return result;
+            report(Code::InvalidExistingGeometry,"Projection against existing Construction ellipses requires elliptic support comparison, which is deferred to phase 6A.3b.",{},{},e.id);return result;
         }
     }
     struct Candidate {size_t source;Sketch::Geometry geometry;QString context;};
@@ -373,10 +447,23 @@ Result project(const std::vector<Source>& sources,const Construction::Object& wo
     }
     for(size_t i=0;i<unique.size();++i) {
         const auto& c=unique[i];
-        for(const auto& e:existing) if(e.workplaneId==workplane.id && e.role==Sketch::Role::Construction && overlap(c.geometry,e.geometry,tolerance))
-            report(Code::PartialOverlap,c.context+"The projected geometry overlaps existing Construction geometry; no automatic trimming is performed.",c.source,{},e.id);
-        for(size_t j=0;j<i;++j) if(overlap(c.geometry,unique[j].geometry,tolerance))
-            report(Code::PartialOverlap,c.context+"Projected curves overlap over a nonzero interval; no automatic trimming is performed. "+unique[j].context,c.source,unique[j].source);
+        // Until 6A.3b can certify equivalent supports/domains, never silently
+        // accept a pair that might share a conic interval (including Circle vs
+        // equal-radius Ellipse). Lines/points cannot share a conic interval.
+        const auto unchecked=[](const Sketch::Geometry& a,const Sketch::Geometry& b) {
+            return (Sketch::isElliptical(a) && (Sketch::isElliptical(b) || support(b)))
+                || (Sketch::isElliptical(b) && support(a));
+        };
+        for(const auto& e:existing) if(e.workplaneId==workplane.id && e.role==Sketch::Role::Construction) {
+            if(unchecked(c.geometry,e.geometry)) report(Code::UnsupportedConicComparison,
+                "Conic overlap comparison requires phase 6A.3b; unchecked curves are not approximated or accepted.",c.source,{},e.id);
+            else if(overlap(c.geometry,e.geometry,tolerance)) report(Code::PartialOverlap,c.context+"The projected geometry overlaps existing Construction geometry; no automatic trimming is performed.",c.source,{},e.id);
+        }
+        for(size_t j=0;j<i;++j) {
+            if(unchecked(c.geometry,unique[j].geometry)) report(Code::UnsupportedConicComparison,
+                "Conic overlap comparison requires phase 6A.3b; unchecked curves are not approximated or accepted.",c.source,unique[j].source);
+            else if(overlap(c.geometry,unique[j].geometry,tolerance)) report(Code::PartialOverlap,c.context+"Projected curves overlap over a nonzero interval; no automatic trimming is performed. "+unique[j].context,c.source,unique[j].source);
+        }
     }
     if(std::any_of(result.diagnostics.begin(),result.diagnostics.end(),[](const auto& d){return d.isError();})) return result;
     for(const auto& c:unique) {

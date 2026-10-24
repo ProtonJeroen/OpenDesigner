@@ -164,12 +164,11 @@ void duplicateAndOverlap() {
     auto small=arc(0,1.e-6),large=arc(1.e-6,turn-1.e-6);ok(project({small,large},wp),2);
 }
 void failuresAndTransactions() {
-    const auto wp=plane();auto tilted=full(circle({0,0,0},10,gp_Dir(0,1,1)));
-    for(auto bad:{tilted,arc(0,pi/2,circle({0,0,0},10,gp_Dir(0,1,1))),full(circle({0,0,0},10,gp_Dir(0,1,0))),full(circle({0,0,0},10,gp_Dir(0,1.e-10,1)))}) {
-        refused(project({bad},wp),Code::NonCircularProjection); // Including near-parallel but genuinely oblique.
-        Source vertex{BRepBuilderAPI_MakeVertex(gp_Pnt(1,2,3)).Shape(),{},"vertex"};
-        refused(project({vertex,full(),bad},wp),Code::NonCircularProjection);
-    }
+    const auto wp=plane();
+    auto collapsed=full(circle({0,0,0},10,gp_Dir(0,1,0)));
+    refused(project({collapsed},wp),Code::CollapsedProjection);
+    Source goodVertex{BRepBuilderAPI_MakeVertex(gp_Pnt(1,2,3)).Shape(),{},"vertex"};
+    refused(project({goodVertex,full(),collapsed},wp),Code::CollapsedProjection);
     auto flagged=arc(0,pi/2);BRep_Builder builder;builder.Degenerated(TopoDS::Edge(flagged.shape),true);refused(project({flagged},wp),Code::DegenerateEdge);
     refused(project({full(circle({},1.e25,gp_Dir(0,1.e-15,1)))},wp),Code::NumericalFailure);
     auto malformed=arc(0,pi/2);builder.UpdateVertex(TopExp::FirstVertex(TopoDS::Edge(malformed.shape)),gp_Pnt(100,200,300),1.e-7);
@@ -178,7 +177,7 @@ void failuresAndTransactions() {
     refused(project({arc(0,1.e-6)},wp,{},1.e-4),Code::DegenerateEdge);
     auto invalid=full();invalid.partPlacement.SetTranslation(gp_Vec(std::numeric_limits<double>::quiet_NaN(),0,0));refused(project({invalid},wp),Code::InvalidPlacement);
     auto internal=full();internal.shape.Orientation(TopAbs_INTERNAL);refused(project({internal},wp),Code::InvalidOrientation);
-    auto noncircle=Source{BRepBuilderAPI_MakeEdge(gp_Elips(gp_Ax2(),10,5)).Shape(),{},"ellipse"};refused(project({noncircle},wp),Code::NonlinearEdge);
+    auto nativeEllipse=Source{BRepBuilderAPI_MakeEdge(gp_Elips(gp_Ax2(),10,5)).Shape(),{},"ellipse"};ok(project({nativeEllipse},wp),1);
     Source vertex{BRepBuilderAPI_MakeVertex(gp_Pnt(2,4,8)).Shape(),{},"Part A / vertex"};
     Source line{BRepBuilderAPI_MakeEdge(gp_Pnt(-20,-20,8),gp_Pnt(20,-20,10)).Shape(),{},"Part B / line"};
     auto a=arc(0,pi/2,circle({40,0,5}));auto c=full();

@@ -8,6 +8,21 @@ same API. Popup placement and natural panel
 sizing are implemented separately in CommandPanelPositioner; this computation
 module does not reposition anything.
 
+## Phase 6A.3a edge extension
+
+Standalone oblique Circle/Arc and analytic OCCT Ellipse/elliptical-arc edges now
+produce exact Ellipse/EllipticalArc values through the same API. A scaled analytic
+coefficient decomposition preserves the signed parameter map, endpoints and
+short/long traversal. Edge-on, tolerance-sized or ill-conditioned projections
+fail explicitly; parallel circles keep the established Circle/Arc path.
+
+Elliptical face-boundaries and complete conic duplicate/overlap comparison are
+reserved for 6A.3b. Existing Construction ellipses conservatively block nonempty
+requests, and new ellipse–conic pairs are refused atomically with
+`UnsupportedConicComparison`, including disjoint pairs. A single ellipse may
+accompany points/lines. No UI/session or schema changes are introduced. The
+older phase-specific restrictions below describe those earlier milestones.
+
 ## API and transaction boundary
 
 `SketchProjection.h/.cpp` exposes:
@@ -66,8 +81,8 @@ geometry, curve fitting or geometric approximation. B-Rep validity, 3D curve
 availability, placement, finite parameters/coordinates and source length are
 checked. An infinite/half-infinite, standalone flagged degenerated, invalid or
 unsupported curve is refused. Face-contained certified poles have the explicit
-exception described in phase 4 below. Only analytic lines and circles are accepted; a circular edge must
-meet the parallel-plane rules below. A perpendicular or nearly perpendicular edge whose projected length
+exception described in phase 4 below. Analytic lines, circles and ellipses are
+accepted, subject to the phase 6A.3a gates above. A perpendicular or nearly perpendicular edge whose projected length
 is no greater than tolerance is refused as CollapsedProjection, rather than
 silently converted into a point.
 

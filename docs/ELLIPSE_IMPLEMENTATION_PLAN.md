@@ -3,6 +3,8 @@
 Status: phase 6A.1 merged; phase 6A.2 interactive drawing and basic snapping
 implemented, 2026-10-24. The baseline analysis below is historical. The latest
 approved scope separates drawing (6A.2) from oblique 3D projection (6A.3).
+Phase 6A.3a now implements the standalone edge conversion below; face/conic
+overlap integration remains phase 6A.3b.
 
 ## 1. Investigation baseline and scope
 
@@ -521,3 +523,39 @@ not claimed. Existing line/circle snapping and priorities/Shift bypass remain.
 against existing Construction ellipses in the projection target. Full elliptic
 Overdraw, ellipse Offset/Common Tangent commands, dynamic Workplane bounds,
 associative constraints and SpaceNavigator are outside this delivery.
+
+## 14. Phase 6A.3a — exact edge projection core
+
+The existing `SketchProjection::project` API now converts oblique analytic
+Circle edges and native OCCT Ellipse edges into exact Ellipse/EllipticalArc
+values. Projected cosine/sine coefficients use a scaled 2×2 principal-axis
+factorization. The small radius comes from determinant/large singular value,
+not subtraction of almost equal eigenvalues. A direct local basis gives an
+orthogonal signed phase map; source trim length and reversed traversal are
+preserved, including seam crossings and major arcs. Existing certified parallel
+Circle/Arc projection is unchanged. No UI, drawing, model or schema is added.
+
+Long-double coefficient arithmetic, stored-double reconstruction bounds over
+the full curve, arc endpoint checks and conditioning/roundoff limits refuse
+collapsed or unreliable results explicitly. Existing Part/subshape placement and
+large common translation handling are reused. Results remain independent
+Construction values with new stable IDs and use existing schema v5.
+
+**6A.3b gate:** existing target Construction ellipses still conservatively block
+nonempty requests. A new ellipse paired with any circular/elliptical support in
+one batch or the target collection reports `UnsupportedConicComparison` and
+leaves all additions empty, even for disjoint pairs. Points/straight lines can
+accompany a single ellipse. Profile/other-owner curves do not participate.
+Elliptical face-boundaries remain explicitly refused, retaining the old face
+contract. This avoids accepting unchecked overlaps through the existing GUI.
+
+Phase 6A.3b must add certified support equivalence (including circular-limit and
+axis-frame equivalence), common parameter-domain mapping, duplicate-only no-ops,
+nonzero overlap refusal and actual outer/inner face-wire endpoint/closure
+validation before removing those gates. Elliptic Overdraw and dynamic Workplane
+bounds remain outside this core milestone.
+
+Validation for this core milestone: targeted Release targets build successfully;
+5/5 geometry/storage tests and both existing projection-session tests (normal and
+HiDPI, isolated Xvfb/xcb/software OpenGL) pass. `git diff --check` passes. No full
+application build or full regression-suite claim is made for this phase.

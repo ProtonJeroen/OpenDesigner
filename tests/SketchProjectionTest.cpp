@@ -18,7 +18,7 @@
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Iterator.hxx>
 #include <gp_Circ.hxx>
-#include <gp_Elips.hxx>
+#include <gp_Hypr.hxx>
 #include <gp_Lin.hxx>
 #include <gp_Pln.hxx>
 #include <algorithm>
@@ -161,7 +161,7 @@ void duplicatesAndOverlaps() {
 }
 void failures() {
     const auto wp=plane();auto valid=vertex(1,2,3);
-    Source circle{BRepBuilderAPI_MakeEdge(gp_Elips(gp_Ax2(gp_Pnt(),gp_Dir(0,0,1)),10,5)).Shape(),{},"unsupported ellipse source"};
+    Source circle{BRepBuilderAPI_MakeEdge(gp_Hypr(gp_Ax2(gp_Pnt(),gp_Dir(0,0,1)),10,5),-1,1).Shape(),{},"unsupported hyperbola source"};
     Source unbounded{BRepBuilderAPI_MakeEdge(gp_Lin(gp_Pnt(),gp_Dir(1,0,0))).Shape(),{},"infinite source"};
     Source half{BRepBuilderAPI_MakeEdge(gp_Lin(gp_Pnt(),gp_Dir(1,0,0)),0,Precision::Infinite()).Shape(),{},"half-infinite source"};
     BRep_Builder builder;TopoDS_Compound compound;builder.MakeCompound(compound);
