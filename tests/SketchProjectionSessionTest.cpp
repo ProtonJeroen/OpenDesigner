@@ -203,7 +203,7 @@ struct SketchProjectionSessionTest {
         check(std::hypot(point.x-world.X(),point.y-world.Y())<1.e-9,"UI applied Part placement twice or ignored it");
         v.confirmCommandSession();check(v.undoStack_.size()==savedHistory+1,"single vertex did not make one history step");
         check(v.exportDocumentSnapshot(doc) && NativeDocumentStorage::save(dir.filePath("points.odc"),doc,error) && NativeDocumentStorage::load(dir.filePath("points.odc"),loaded,error),qPrintable(error));
-        check(loaded.schemaVersion==4 && loaded.sketchEntities==v.sketchEntities_,"projected point failed native v4 roundtrip");
+        check(loaded.schemaVersion==NativeDocumentStorage::CurrentSchemaVersion && loaded.sketchEntities==v.sketchEntities_,"projected point failed native v4 roundtrip");
         check(w.saveDocument(),"confirmed point Save failed");v.startSketchProjection();chooseFile(dir.filePath("points.odc"));w.openDocument();
         check(!v.commandSession_ && v.sketchPreviews_.empty() && v.undoStack_.empty() && v.redoStack_.empty() && v.context_->NbSelected()==0 && v.activeSketchWorkplaneId_.isEmpty(),"Open retained projection session/history/pickers");
         w.documentDirty_=false;

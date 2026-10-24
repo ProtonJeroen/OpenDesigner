@@ -99,7 +99,7 @@ int main(int argc,char** argv) {
         check(missingConstructionAxes({p},p.workplaneId,true,true).size()==2,"point suppressed construction axes");
         QTemporaryDir temp;const auto path=temp.filePath("points.odc");NativeDocumentSnapshot loaded;
         check(NativeDocumentStorage::save(path,source,error),qPrintable(error));schema(path,4);
-        check(NativeDocumentStorage::load(path,loaded,error) && loaded.schemaVersion==4 && loaded.sketchEntities==source.sketchEntities,"v4 roundtrip changed point values/identity/flags/order");
+        check(NativeDocumentStorage::load(path,loaded,error) && loaded.schemaVersion==NativeDocumentStorage::CurrentSchemaVersion && loaded.sketchEntities==source.sketchEntities,"v4 roundtrip changed point values/identity/flags/order");
         const auto savedBytes=bytes(path);auto bad=source;bad.schemaVersion=3;
         check(!NativeDocumentStorage::save(path,bad,error) && bytes(path)==savedBytes,"v3 save lost points or damaged existing file");
         bad=source;bad.sketchEntities.front().role=Role::Profile;
@@ -110,7 +110,7 @@ int main(int argc,char** argv) {
             if(version>=3) legacy.sketchEntities=curves;
             const auto file=temp.filePath(QString("legacy-%1.odc").arg(version));
             check(NativeDocumentStorage::save(file,legacy,error),qPrintable(error));schema(file,version);
-            check(NativeDocumentStorage::load(file,loaded,error) && loaded.schemaVersion==4 && !hasConstructionPoints(loaded.sketchEntities)
+            check(NativeDocumentStorage::load(file,loaded,error) && loaded.schemaVersion==NativeDocumentStorage::CurrentSchemaVersion && !hasConstructionPoints(loaded.sketchEntities)
                 && loaded.sketchEntities==legacy.sketchEntities,"v1/v2/v3 migration lost curve data");
         }
         auto curveOnly=source;curveOnly.sketchEntities=curves;

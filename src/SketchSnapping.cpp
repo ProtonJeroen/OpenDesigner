@@ -155,6 +155,9 @@ std::vector<SnapTarget> snapTargets(const std::vector<Entity>& entities,const QS
             if(std::isfinite(point->position.x) && std::isfinite(point->position.y)) addTarget(point->position,SnapKind::ConstructionPoint,"Construction point");
             continue;
         }
+        // Elliptic query/snapping tools are a later phase. Do not invent a
+        // circular or linear interpretation of the exact stored conic.
+        if(!supportedSketchToolCurve(e.geometry)) continue;
         eligible.push_back(&e);
         if(const auto* s=std::get_if<Segment>(&e.geometry)) {
             addTarget(s->start,SnapKind::Endpoint,"Endpoint");addTarget(s->end,SnapKind::Endpoint,"Endpoint");

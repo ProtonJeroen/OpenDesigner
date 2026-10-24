@@ -16,6 +16,33 @@
 
 ## v0.4.2 — Project 3D Geometry foundations
 
+### Phase 6A: exact ellipse extension
+
+- [x] 6A.1: append exact Ellipse/EllipticalArc values without renumbering old
+  types or changing UUIDs. Local evaluation/derivatives, inverse parameter,
+  signed domain/endpoints/reversal, validation and exact OCCT presentation.
+- [x] 6A.1: reuse typed selection, Structure Browser and SketchChange history;
+  safely gate unsupported curve tools and retain existing 2D/3D behavior.
+- [x] 6A.1: schema v5 for ellipses; v1–v4 reading; conditional v3/v4 output for
+  old content; strict malformed/future/downgrade refusal and atomic file lifecycle.
+- [x] 6A.1 validation (2026-10-24): full CMake Release build and 43/43 CTests
+  pass (94.54 seconds) with isolated Xvfb 1280×1024, xcb and software OpenGL,
+  including normal/200% conic sessions and existing 2D/3D regressions. New pure
+  geometry/storage tests also pass without a display; diff/safety checks pass.
+- [ ] 6A.2: exact circle/ellipse and face-boundary projection plus usable elliptic
+  snapping and **independent drawing tools**, not only projected ellipse display.
+  Ellipse: center → major axis → minor axis. Elliptical Arc: center/axes → start
+  → end with explicit CW/CCW. Both roles, numeric input, preview, history and save.
+- [ ] Full elliptic Overdraw remains separately gated pending its graph/domain,
+  reverse traversal and ambiguity tests. Ellipse Offset/Common Tangent commands
+  are outside this foundation.
+
+See [ellipse plan and delivery boundary](ELLIPSE_IMPLEMENTATION_PLAN.md).
+No new Fedora KDE manual approval is implied; automated results are recorded in
+the phase-6A.1 PR. Earlier milestone results below retain their historical scope.
+
+### Completed phases 1–5
+
 - [x] Phase 1: independent local 2D Construction Points with stable UUIDs,
   Workplane ownership, exact XY, names, visibility and selection locks. Points
   cannot be Profile curves or enter curve-only tools.

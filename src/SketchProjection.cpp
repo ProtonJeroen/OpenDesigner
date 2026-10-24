@@ -335,6 +335,13 @@ Result project(const std::vector<Source>& sources,const Construction::Object& wo
             report(Code::InvalidExistingGeometry,"Invalid existing 2D collection: "+(error.isEmpty()?QString("duplicate identity."):error),{},{},e.id);return result;
         }
         ids.insert(e.id);
+        // Conic support/domain comparison is not implemented in phase 6A.1.
+        // Fail conservatively rather than silently accepting duplicate or
+        // overlapping circular/elliptical supports. Other owners/Profile values
+        // do not participate in Construction deduplication.
+        if(!sources.empty() && e.workplaneId==workplane.id && e.role==Sketch::Role::Construction && Sketch::isElliptical(e.geometry)) {
+            report(Code::InvalidExistingGeometry,"Projection against existing Construction ellipses requires elliptic support comparison, which is not available in phase 6A.1.",{},{},e.id);return result;
+        }
     }
     struct Candidate {size_t source;Sketch::Geometry geometry;QString context;};
     std::vector<Candidate> candidates;

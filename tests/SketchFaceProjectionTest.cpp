@@ -260,7 +260,7 @@ void storageAndIndependence() {
         && loaded.sketchEntities==document.sketchEntities,"face+point values failed native v4 roundtrip");
     check(!snapTargets(saved,wp.id,{0,0}).empty(),"boundary geometry is unavailable for snapping");
     OverdrawGraph graph;check(overdrawCandidates(saved,wp.id,graph,error),"face boundary values incompatible with Overdraw");
-    check(NativeDocumentStorage::CurrentSchemaVersion==4,"face projection changed native schema");
+    check(NativeDocumentStorage::sketchSchemaVersion(saved)==3 && NativeDocumentStorage::sketchSchemaVersion(document.sketchEntities)==4,"face projection changed required native schemas");
 }
 }
 int main(int argc,char** argv) {

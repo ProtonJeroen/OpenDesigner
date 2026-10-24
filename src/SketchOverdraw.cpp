@@ -14,10 +14,11 @@ Point onCircle(Point center,double radius,double angle) {return {center.x+radius
 bool overdrawCandidates(const std::vector<Entity>& entities,const QString& workplaneId,OverdrawGraph& result,QString& error,double tolerance) {
     result={};error.clear();
     if(workplaneId.isEmpty() || !std::isfinite(tolerance) || tolerance<=0) {error="Invalid Overdraw Workplane or tolerance.";return false;}
-    std::vector<const Entity*> sources;std::vector<std::vector<Point>> cuts;
+    std::vector<const Entity*> sources;std::vector<std::vector<Point>> cuts;int unsupportedConics=0;
     for(const auto& e:entities) if(e.workplaneId==workplaneId && e.role==Role::Construction && e.visible && e.selectable) {
         if(std::holds_alternative<ConstructionPoint>(e.geometry)) continue;
         if(!valid(e,error)) {error="Overdraw: invalid construction source. "+error;return false;}
+        if(!supportedSketchToolCurve(e.geometry)) {++unsupportedConics;continue;}
         if(std::any_of(sources.begin(),sources.end(),[&](const auto* s){return s->id==e.id;})) {error="Overdraw: duplicate source identity.";return false;}
         sources.push_back(&e);cuts.emplace_back();
         if(const auto* s=std::get_if<Segment>(&e.geometry)) cuts.back()={s->start,s->end};
@@ -86,6 +87,7 @@ bool overdrawCandidates(const std::vector<Entity>& entities,const QString& workp
         }
     }
     QStringList notices;
+    if(unsupportedConics) notices<<QString("%1 ellipse/elliptical arc source(s) excluded: elliptic Overdraw is not supported in phase 6A.1.").arg(unsupportedConics);
     if(unbounded) notices<<QString("%1 unbounded line tails excluded; Workplane borders are not geometric limits.").arg(unbounded);
     if(uncutCircles) notices<<QString("%1 circle(s) need at least two distinct intersection points; full circles are not converted to arcs.").arg(uncutCircles);
     if(small) notices<<QString("%1 tolerance-sized piece(s) excluded.").arg(small);
