@@ -9,6 +9,8 @@
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QFileDialog>
+#include <QFileInfo>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QTimer>
 #include <QAbstractButton>
@@ -30,7 +32,13 @@ void check(bool ok,const char* text) {if(!ok) throw std::runtime_error(text);}
 void chooseFile(const QString& path) {
     QTimer::singleShot(50,[path] {
         for(auto* widget:QApplication::topLevelWidgets()) if(auto* dialog=qobject_cast<QFileDialog*>(widget);dialog && dialog->isVisible()) {
-            dialog->selectFile(path);QTimer::singleShot(50,dialog,[dialog]{QMetaObject::invokeMethod(dialog,"accept",Qt::DirectConnection);});return;
+            // QFileSystemModel loads asynchronously. selectFile(fullPath) can
+            // leave the previous filename selected until after our accept timer,
+            // opening an unattended overwrite prompt during Save As. Match the
+            // explicit filename entry used by the other native-document tests.
+            dialog->setDirectory(QFileInfo(path).absolutePath());dialog->selectFile(QFileInfo(path).fileName());
+            if(auto* edit=dialog->findChild<QLineEdit*>("fileNameEdit")) edit->setText(QFileInfo(path).fileName());
+            QTimer::singleShot(50,dialog,[dialog]{QMetaObject::invokeMethod(dialog,"accept",Qt::DirectConnection);});return;
         }
     });
 }
@@ -251,6 +259,7 @@ struct ConstructionSessionTest {
         check(window.saveDocument(),"native Save with constructions failed");
         check(v.undoStack_.size()==undo && v.redoStack_.size()==redo && v.selectedConstructionIds_==selection,"Save lost construction history/selection");
         chooseFile(temp.filePath("saved-as.odc"));check(window.saveDocumentAs(),"construction Save As failed");
+        check(window.documentPath_==temp.filePath("saved-as.odc"),"construction Save As accepted a stale filename");
         check(v.undoStack_.size()==undo && v.redoStack_.size()==redo && v.selectedConstructionIds_==selection,"Save As lost construction history/selection");
         v.startConstruction(Method::PlaneMove,planeId);v.constructionPanel_->setVector(gp_Vec(100,200,300));
         check(window.saveDocument() && v.commandSession_ && v.constructionPanel_->isVisible(),"Save closed active construction preview");

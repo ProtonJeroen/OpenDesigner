@@ -19,7 +19,7 @@ enum class Code {
     NullSource, UnsupportedShape, InvalidPlacement, InvalidOrientation,
     MissingCurve, NonlinearEdge, UnboundedEdge, DegenerateEdge,
     InvalidBRep, CollapsedProjection, NumericalFailure, KernelFailure,
-    Duplicate, PartialOverlap
+    Duplicate, PartialOverlap, NonCircularProjection, UnsupportedCircularSpan
 };
 struct Diagnostic {
     Code code;
@@ -41,7 +41,9 @@ struct Result {
 // Deduplicate against accepted batch values and existing Construction geometry
 // on this Workplane, including hidden/locked entities. Profile geometry and
 // other owners are not duplicate Construction references. Point/curve contacts
-// and crossings are allowed; nonzero collinear interval overlaps are refused.
+// and crossings are allowed; nonzero collinear/cocircular overlaps are refused.
+// Circular edges must lie parallel to the target plane. Tilted projections are
+// refused rather than approximated as circles, arcs, ellipses or polylines.
 // Empty or fully duplicate requests succeed with no additions. New IDs are
 // allocated once for the returned values, not derived from source topology.
 Result project(const std::vector<Source>& sources,const Construction::Object& workplane,

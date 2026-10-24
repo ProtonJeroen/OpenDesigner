@@ -48,7 +48,14 @@
   This is outside the approved v0.4.1 release scope. Existing 3D Point projection
   remains available and does not create 2D sketch entities or dependencies.
   Phases 1–2 add no interactive point-creation or Project 3D Geometry command.
-  Circular/arc edge and face-boundary projection are not in the phase-2 core.
+  Phase 3 adds circular/arc edge computation; face-boundary projection and the
+  interactive selection/session UI remain unimplemented.
+
+- [x] Phase 3: analytic circular edges parallel to the target Workplane project
+  to independent Construction Circles/Arcs. Preserve signed traversal, reversed
+  edges/normals and composed placements; refuse oblique elliptical projections.
+  Circular duplicate/domain-overlap checks retain all-or-nothing batch behavior.
+  See [circular projection rules and tests](SKETCH_PROJECTION.md#phase-3-exact-circles-and-circular-arcs).
 
 ### UI: Command Pop-up Positioning
 
