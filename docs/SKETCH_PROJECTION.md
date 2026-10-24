@@ -1,9 +1,9 @@
-# Exact sketch projection core — v0.4.2 phases 2–3
+# Exact sketch projection core — v0.4.2 phases 2–4
 
 This phase supplies a computation module, not an interactive command. It projects
-vertices, bounded analytic straight edges, full circles and bounded circular arcs
-onto a chosen Workplane as independent Construction values. Face boundaries and
-a Project 3D Geometry selection/preview session remain later work. Popup placement and natural panel
+vertices, bounded analytic straight edges, full circles, bounded circular arcs
+and actual face boundaries onto a chosen Workplane as independent Construction
+values. A Project 3D Geometry selection/preview session remains phase-5 work. Popup placement and natural panel
 sizing are implemented separately in CommandPanelPositioner; this computation
 module does not reposition anything.
 
@@ -63,8 +63,9 @@ a Segment between its projected parameter endpoints; reversed edge orientation
 reverses those endpoints. There is no polygon sampling, tessellation-derived
 geometry, curve fitting or geometric approximation. B-Rep validity, 3D curve
 availability, placement, finite parameters/coordinates and source length are
-checked. An infinite/half-infinite, flagged degenerated, invalid or unsupported curve
-is refused. Only analytic lines and circles are accepted; a circular edge must
+checked. An infinite/half-infinite, standalone flagged degenerated, invalid or
+unsupported curve is refused. Face-contained certified poles have the explicit
+exception described in phase 4 below. Only analytic lines and circles are accepted; a circular edge must
 meet the parallel-plane rules below. A perpendicular or nearly perpendicular edge whose projected length
 is no greater than tolerance is refused as CollapsedProjection, rather than
 silently converted into a point.
@@ -202,7 +203,7 @@ as its unsupported-curve fixture; circular edges are intentionally supported.
 
 The full regression suite retains v1/v2 migration and v3/v4 storage, selection,
 command sessions, Undo/Redo, panel sizing and existing 3D modeling coverage. There
-is still no interactive Project command, face-boundary projection, ellipse/spline
+is still no interactive Project command or ellipse/spline
 support or associative source relationship. No new SolidDesigner behavior is
 claimed; these are explicit OpenDesigner computation and safety policies.
 
@@ -217,3 +218,123 @@ The construction-session test file chooser now explicitly enters its directory
 and filename: a debugger trace identified a stale Save As name causing an
 unattended overwrite prompt. The test asserts the resulting document path;
 product dialogs and panel behavior are unchanged.
+
+## Phase 4: actual face boundaries
+
+The public `project(...)`, Source and Result transaction contract is retained.
+Source.shape now also accepts a Part-local `TopoDS_Face`. One face can yield
+many independent Segments, Circles and Arcs; ordinary boundary vertices are not
+emitted as extra Construction Points. Explicit vertex sources still create
+points. No persistent wire groups, source references, new curve type or document
+schema are introduced. These are OpenDesigner computation policies; no new
+SolidDesigner workflow or behavior is asserted.
+
+### Complete outer and inner wires
+
+The source face must pass `BRepCheck_Analyzer` and have a bounded outer wire.
+Every actual topological wire is traversed, including every hole, using cumulative
+face/wire/edge locations. `BRepTools::OuterWire` checks that a boundary exists;
+it is not a filter that discards inner wires. No hull, bounding box, silhouette,
+hidden-line result or triangulation participates in the projection.
+
+Face orientation is normalized to forward for traversal: reversing a selected
+face does not change its boundary's geometric set. Each wire keeps its own edge
+traversal, including opposite inner-wire orientation. `BRepCheck_Wire::Closed`
+checks topological closure. `BRepTools_WireExplorer` supplies connection order;
+every visited oriented edge occurrence must match a direct wire child exactly
+once. If the explorer stops early on malformed topology, remaining children
+cause `InvalidFaceBoundary`, rather than a silently incomplete contour.
+
+Each ordinary edge uses the same analytic vertex/edge core from phases 2–3:
+finite straight edges project to Segments, parallel circular edges to Circles or
+signed Arcs, and unsupported/oblique curves fail. The existing separate outer
+Part transform is applied once after OCCT has consumed the cumulative edge and
+curve locations. Surface locations are used only for the face/pole checks; they
+are not reapplied to boundary edges.
+
+Before deduplication, adjacent projected endpoints and final wire closure must
+agree within the caller's linear tolerance (default 1e-7 mm). Persisted Arc
+endpoints are checked too. A valid B-Rep with looser OCCT vertex/edge tolerances
+cannot authorize a larger 2D gap. There is no endpoint snapping, curve extension
+or repair to force a wire shut. A planar face projecting edge-on to a line is
+refused; circular tilt and ordinary point-collapsing edges retain their previous
+refusal rules. Display extent/offset do not limit the analytic projection.
+
+### Seam and degenerated edges
+
+Seam occurrences are real boundary occurrences and are traversed, not mistaken
+for additional unrelated contours. Geometrically identical projected pieces
+(including reversed occurrences) then use the common duplicate rules. For
+example, a conical frustum's two seam occurrences produce one radial segment
+alongside its two projected circles. No silhouette or replacement outer loop is
+invented. Results are independent construction references, not a reconstructed
+profile: on periodic surfaces the boundary walk can retrace a seam, and the
+deduplicated geometric set can contain branches or open seam curves. Closure is
+verified on the complete original wire walk before removing duplicate references.
+
+A degenerated flag or equal endpoint vertices alone is insufficient proof of
+collapse: a full nonzero circle also has coincident endpoints. A flagged edge is
+omitted only when all of these analytic checks pass:
+
+- It has no 3D curve and has a finite line p-curve with exactly constant V.
+- Its raw surface is a supported analytic sphere or cone. The whole constant-V
+  curve is at a spherical pole (`R*cos(V)=0`) or a conical apex
+  (`Rref+V*sin(semiAngle)=0`) within angular/arithmetic roundoff.
+- Twice the residual circle radius, including surface and Part uniform scale,
+  fits the requested linear tolerance. Its two endpoint occurrences coincide
+  with that analytic pole within the same placed tolerance.
+- The pole still connects the neighboring projected boundary pieces and closes
+  the original wire; it does not excuse a missing piece or an empty wire.
+
+The whole p-curve image is certified analytically; samples are not used to infer
+collapse. A successful omission emits non-error `DegenerateSkipped`, with face
+wire/edge context, and creates no extra point. All other flagged edges fail as
+`DegenerateEdge` (or `InvalidBRep` if the source is already invalid). In particular,
+generic surfaces of revolution/freeform poles, degenerated flags on nonzero 3D
+curves and unverifiable p-curves are conservatively refused. Ordinary nonzero
+edges that merely project to points, including cylindrical seam lines viewed
+along the cylinder axis, are refused as `CollapsedProjection`; the pole exception
+does not silently remove them.
+
+### Batches, diagnostics and storage
+
+All face pieces, explicit vertices/edges and other selected faces enter the same
+deduplication/overlap pass. Shared edges, repeated faces, opposite traversal,
+distinct topology with equal projected curves and existing hidden/locked
+Construction geometry cannot create duplicate references. Profile geometry and
+other Workplanes remain distinct. Full duplicates are skipped; nonduplicate
+collinear/cocircular interval overlaps fail without trimming or merging.
+Isolated contacts/crossings remain allowed. Near-equality uses the existing
+linear tolerance, not a new face-size-relative tolerance.
+
+Diagnostics retain the selected input's index/label. Face-piece errors,
+duplicate/overlap diagnostics and certified omissions additionally name the
+one-based wire/edge occurrence in their message. One unsupported inner edge,
+open wire, unsafe degenerate or overlap refuses the entire mixed batch with no
+additions. Entirely duplicate batches remain unchanged successes. Returned
+UUID/Construction/Workplane values can be appended in one future SketchChange;
+Cancel/history/selection/UI are not accessed by this module. They use native v3
+for curves only and v4 when points are present; v1–v4 readers are unchanged.
+
+`sketch-face-projection` exercises rectangles, disks, one/multiple holes, mixed
+line/arc contours, opposite wire/face orientation, periodic arc limits, independent
+Part/Workplane and nested OCCT placements, large common translations, arbitrary
+linear projections, repeated/shared/seam edges, certified and unverified poles,
+unsupported inner curves, point/line collapse and strict projected closure despite
+loose B-Rep tolerances. Mixed atomic requests, source independence, stable
+identities, snapping/Overdraw and exact v3/v4 roundtrips complement the existing
+vertex/line/circle/arc and native v1/v2 migration regressions.
+
+No phase-4 GUI command or panel is added. General ellipses/splines, silhouettes,
+hidden-line removal, mesh/polyline approximations, automatic contour repair and
+associative source history remain unsupported. A curved face is accepted only
+when all its actual boundary occurrences meet these explicit analytic rules;
+support for its surface type does not imply silhouette projection.
+
+Phase-4 validation: complete CMake Release build PASS; all 38 CTests PASS
+(85.43 seconds) on isolated Xvfb with xcb/software OpenGL. All three projection
+suites also pass with DISPLAY and WAYLAND_DISPLAY unset (0.16 seconds). Existing
+native v1–v4, selection/history, command sessions, 2D tools and 3D modeling
+regressions are included. `git diff --check` and explicit reviewed-file
+artifact/secret-pattern checks pass. No production UI or environment-specific
+test workaround was introduced in this phase.
