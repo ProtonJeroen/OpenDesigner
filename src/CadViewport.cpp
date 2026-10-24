@@ -421,8 +421,7 @@ bool CadViewport::eventFilter(QObject* watched, QEvent* event) {
             if (event->type()==QEvent::KeyPress) {
                 if (key->key()==Qt::Key_Escape) cancelCommandSession();
                 else if(commandSession_->drawing && !commandSession_->drawing->complete && sketchDrawingPanel_) {
-                    const bool polar=widget && (widget==sketchDrawingPanel_->distance || sketchDrawingPanel_->distance->isAncestorOf(widget)
-                        || widget==sketchDrawingPanel_->angle || sketchDrawingPanel_->angle->isAncestorOf(widget));
+                    const bool polar=sketchDrawingPanel_->parameterWidget(widget);
                     useSketchNumeric(polar);
                 } else confirmCommandSession();
             }

@@ -2,6 +2,10 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <Geom2d_Ellipse.hxx>
+#include <Geom2dAPI_ProjectPointOnCurve.hxx>
+#include <Standard_Failure.hxx>
+#include <gp_Ax2d.hxx>
 
 namespace Sketch {
 namespace {
@@ -34,6 +38,23 @@ std::optional<Circle> circle(const Geometry& curve) {
     return {};
 }
 Point onCircle(Circle c,double angle) {return {c.center.x+c.radius*std::cos(angle),c.center.y+c.radius*std::sin(angle)};}
+std::optional<Ellipse> ellipse(const Geometry& g) {
+    std::optional<Ellipse> e;
+    if(const auto* support=std::get_if<Ellipse>(&g)) e=*support;
+    if(const auto* arc=std::get_if<EllipticalArc>(&g)) {
+        if(!std::isfinite(arc->startParameter) || !std::isfinite(arc->sweepParameter)
+            || std::abs(arc->sweepParameter)<=1.e-12 || std::abs(arc->sweepParameter)>=turn) return {};
+        e=arc->ellipse;
+    }
+    if(!e || !std::isfinite(e->center.x) || !std::isfinite(e->center.y) || !std::isfinite(e->axisAngle)
+        || !std::isfinite(e->majorRadius) || !std::isfinite(e->minorRadius) || e->minorRadius<=1.e-9 || e->majorRadius<e->minorRadius) return {};
+    return e;
+}
+std::array<long double,2> principal(const Ellipse& e,Point p,bool direction=false) {
+    const long double x=static_cast<long double>(p.x)-(direction?0:e.center.x),y=static_cast<long double>(p.y)-(direction?0:e.center.y);
+    const long double c=std::cos(e.axisAngle),s=std::sin(e.axisAngle);
+    return {c*x+s*y,-s*x+c*y};
+}
 bool onArc(const Arc& a,Point p,double tolerance) {
     const double angle=std::atan2(p.y-a.center.y,p.x-a.center.x);
     const double progress=normalized(a.sweepAngle>0?angle-a.startAngle:a.startAngle-angle);
@@ -56,6 +77,14 @@ std::vector<std::pair<double,double>> intervals(const Geometry& curve) {
 bool contains(const Geometry& curve,Point p,double tolerance) {
     if(!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(tolerance) || tolerance<=0) return false;
     if(const auto* point=std::get_if<ConstructionPoint>(&curve)) return length(sub(point->position,p))<=tolerance;
+    if(const auto e=ellipse(curve)) {
+        const auto t=ellipseParameter(*e,p);if(!t || length(sub(ellipsePoint(*e,*t),p))>tolerance) return false;
+        if(const auto* arc=std::get_if<EllipticalArc>(&curve)) {
+            const auto ends=ellipticalArcEndpoints(*arc);
+            return ellipticalArcContainsParameter(*arc,*t,0) || length(sub(p,ends[0]))<=tolerance || length(sub(p,ends[1]))<=tolerance;
+        }
+        return true;
+    }
     if(const auto l=line(curve)) {
         const auto d=sub(p,l->origin);const double t=dot(d,l->direction);
         return std::abs(cross(d,l->direction))<=tolerance && (!l->finite || (t>=-tolerance && t<=l->end+tolerance));
@@ -73,6 +102,27 @@ Intersections intersect(const Geometry& a,const Geometry& b,double tolerance) {
     if(std::holds_alternative<ConstructionPoint>(a) || std::holds_alternative<ConstructionPoint>(b)) return result;
     const auto la=line(a),lb=line(b);const auto ca=circle(a),cb=circle(b);
     const auto take=[&](Point p) {if(contains(a,p,tolerance) && contains(b,p,tolerance)) unique(result.points,p,tolerance);};
+    if(isElliptical(a) || isElliptical(b)) {
+        const auto e=ellipse(isElliptical(a)?a:b);const auto l=isElliptical(a)?lb:la;
+        if(!e) {result.kind=IntersectionKind::NumericalFailure;return result;}
+        if(!l) {result.kind=IntersectionKind::Unsupported;return result;}
+        const auto o=principal(*e,l->origin),d=principal(*e,l->direction,true);
+        const long double x=o[0]/e->majorRadius,y=o[1]/e->minorRadius,dx=d[0]/e->majorRadius,dy=d[1]/e->minorRadius;
+        const long double metric=std::hypot(dx,dy),perpendicular=(x*dy-y*dx)/metric;
+        if(!std::isfinite(metric) || metric==0 || !std::isfinite(perpendicular)) {result.kind=IntersectionKind::NumericalFailure;return result;}
+        long double h2=(1-std::abs(perpendicular))*(1+std::abs(perpendicular));
+        const long double noise=64*std::numeric_limits<double>::epsilon()*std::max(1.L,std::abs(perpendicular));
+        if(std::abs(h2)<=noise) h2=0;
+        if(h2>=-noise) {
+            const long double middle=-(x*dx+y*dy)/(metric*metric),half=std::sqrt(std::max(0.L,h2))/metric;
+            for(long double t:{middle-half,middle+half}) {
+                const Point p{double(static_cast<long double>(l->origin.x)+t*l->direction.x),double(static_cast<long double>(l->origin.y)+t*l->direction.y)};
+                if(!std::isfinite(p.x) || !std::isfinite(p.y)) {result.points.clear();result.kind=IntersectionKind::NumericalFailure;return result;}
+                take(p);
+            }
+        }
+        result.kind=result.points.empty()?IntersectionKind::None:IntersectionKind::Finite;return result;
+    }
     if(la && lb) {
         const long double denominator=static_cast<long double>(la->direction.x)*lb->direction.y-static_cast<long double>(la->direction.y)*lb->direction.x;const auto delta=sub(lb->origin,la->origin);
         if(std::abs(denominator)>64*std::numeric_limits<long double>::epsilon()) take(add(la->origin,mul(la->direction,double((static_cast<long double>(delta.x)*lb->direction.y-static_cast<long double>(delta.y)*lb->direction.x)/denominator))));
@@ -129,6 +179,27 @@ std::vector<Point> tangentPoints(Point anchor,const Geometry& curve,double toler
 }
 std::optional<Point> nearestPoint(const Geometry& curve,Point point) {
     if(!std::isfinite(point.x) || !std::isfinite(point.y)) return {};
+    if(const auto e=ellipse(curve)) {
+        const auto local=principal(*e,point);const double x=double(local[0]),y=double(local[1]);
+        if(!std::isfinite(x) || !std::isfinite(y)) return {};
+        std::vector<double> parameters;
+        if(x==0 && y==0) parameters={0,pi/2,pi,3*pi/2};
+        else try {
+            const Handle(Geom2d_Ellipse) support=new Geom2d_Ellipse(gp_Ax2d(gp_Pnt2d(0,0),gp_Dir2d(1,0)),e->majorRadius,e->minorRadius);
+            Geom2dAPI_ProjectPointOnCurve projection(gp_Pnt2d(x,y),support);
+            if(projection.NbPoints()==0) return {};
+            for(int i=1;i<=projection.NbPoints();++i) parameters.push_back(projection.Parameter(i));
+        } catch(const Standard_Failure&) {return {};}
+        std::optional<Point> best;long double distance=std::numeric_limits<long double>::infinity();
+        const auto consider=[&](double t) {
+            const auto p=ellipsePoint(*e,t);if(!std::isfinite(p.x) || !std::isfinite(p.y)) return;
+            const long double dx=static_cast<long double>(p.x)-point.x,dy=static_cast<long double>(p.y)-point.y,dist=std::hypot(dx,dy);
+            if(dist<distance) {distance=dist;best=p;}
+        };
+        for(double t:parameters) if(!std::holds_alternative<EllipticalArc>(curve) || ellipticalArcContainsParameter(std::get<EllipticalArc>(curve),t,0)) consider(t);
+        if(const auto* arc=std::get_if<EllipticalArc>(&curve)) {consider(arc->startParameter);consider(arc->startParameter+arc->sweepParameter);}
+        return best;
+    }
     if(const auto* p=std::get_if<ConstructionPoint>(&curve)) {
         if(std::isfinite(p->position.x) && std::isfinite(p->position.y)) return p->position;
         return {};
@@ -155,10 +226,16 @@ std::vector<SnapTarget> snapTargets(const std::vector<Entity>& entities,const QS
             if(std::isfinite(point->position.x) && std::isfinite(point->position.y)) addTarget(point->position,SnapKind::ConstructionPoint,"Construction point");
             continue;
         }
-        // Elliptic query/snapping tools are a later phase. Do not invent a
-        // circular or linear interpretation of the exact stored conic.
-        if(!supportedSketchToolCurve(e.geometry)) continue;
+        if(!supportedSketchToolCurve(e.geometry) && !isElliptical(e.geometry)) continue;
         eligible.push_back(&e);
+        if(const auto support=ellipse(e.geometry)) {
+            addTarget(support->center,SnapKind::Center,"Ellipse center");
+            if(const auto* arc=std::get_if<EllipticalArc>(&e.geometry)) {
+                const auto ends=ellipticalArcEndpoints(*arc);
+                addTarget(ends[0],SnapKind::Endpoint,"Elliptical arc start");addTarget(ends[1],SnapKind::Endpoint,"Elliptical arc end");
+                addTarget(ellipsePoint(*support,arc->startParameter+arc->sweepParameter/2),SnapKind::Midpoint,"Elliptical arc parametric midpoint");
+            }
+        }
         if(const auto* s=std::get_if<Segment>(&e.geometry)) {
             addTarget(s->start,SnapKind::Endpoint,"Endpoint");addTarget(s->end,SnapKind::Endpoint,"Endpoint");
             addTarget(mul(add(s->start,s->end),0.5),SnapKind::Midpoint,"Midpoint");
@@ -179,7 +256,7 @@ std::vector<SnapTarget> snapTargets(const std::vector<Entity>& entities,const QS
                 }
             }
         }
-        if(const auto p=nearestPoint(e.geometry,cursor)) addTarget(*p,SnapKind::Nearest,circle(e.geometry)?"On curve":"On line");
+        if(const auto p=nearestPoint(e.geometry,cursor)) addTarget(*p,SnapKind::Nearest,circle(e.geometry) || isElliptical(e.geometry)?"On curve":"On line");
     }
     if(intersections) for(size_t i=0;i<eligible.size();++i) for(size_t j=i+1;j<eligible.size();++j)
         for(Point p:intersect(eligible[i]->geometry,eligible[j]->geometry).points) addTarget(p,SnapKind::Intersection,"Intersection");

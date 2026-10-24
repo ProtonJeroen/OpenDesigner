@@ -21,6 +21,7 @@ private:
     friend struct SketchReleaseSessionTest;
     friend struct SketchPointSessionTest;
     friend struct SketchEllipseSessionTest;
+    friend struct SketchEllipseDrawingTest;
     friend struct CommandPanelSessionTest;
     friend struct SketchProjectionSessionTest;
     bool maybeSave();

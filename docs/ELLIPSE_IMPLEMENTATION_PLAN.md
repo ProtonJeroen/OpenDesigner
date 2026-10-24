@@ -1,9 +1,8 @@
 # Exact Ellipse and EllipticalArc support — v0.4.2 phase 6A
 
-Status: phase 6A.1 foundation approved and implemented, 2026-10-24. The baseline
-analysis below records the pre-implementation state; later stages remain planned.
-Interactive drawing requirements for phase 6A.2 are approved as specified below,
-but their implementation must wait for review of 6A.1.
+Status: phase 6A.1 merged; phase 6A.2 interactive drawing and basic snapping
+implemented, 2026-10-24. The baseline analysis below is historical. The latest
+approved scope separates drawing (6A.2) from oblique 3D projection (6A.3).
 
 ## 1. Investigation baseline and scope
 
@@ -397,14 +396,14 @@ when that optional extension is actually implemented.
 1. **Foundation and safe consumers:** add the two value types, shared helpers,
    exact OCCT rendering, explicit visitor/curve-tool guards and schema v5 with
    v1–v4 migration. Prove value/storage/history/presentation tests first.
-2. **6A.2 projection and independent drawing:** analytic circle/ellipse conversion, signed parameter
+2. **6A.2 independent drawing and reference geometry:** implement Ellipse and
+   Elliptical Arc workflows below, basic snaps, Euclidean nearest and analytic
+   line/ellipse intersections. Keep conic/conic intersections and elliptic tangent
+   snaps explicit outstanding 6A.2 items until safely implemented.
+3. **6A.3 projection core:** analytic circle/ellipse conversion, signed parameter
    mapping, numerical certificates, face contours and support/domain duplicate
-   rules. Keep widget-independent API. Add focused projection tests and update
-   unsupported fixtures without dropping refusal coverage. Add the independent
-   Ellipse/Elliptical Arc workflows below; projected geometry alone is insufficient.
-3. **Useful reference geometry:** implement elliptic snapping/intersections/
-   nearest/tangents and integrate projection preview/confirmation through the
-   existing command. Validate all old tools with new values present.
+   rules. Keep the widget-independent API and existing unsupported fixtures until
+   this separate phase is implemented. No 3D projection changes belong to 6A.2.
 4. **Optional full ellipse Overdraw:** implement independent Profile pieces and
    both traversal directions after query correctness is established. Until
    approved and tested, expose the limit explicitly and keep safe gating.
@@ -449,7 +448,8 @@ sessions and parameter-panel conventions:
   seam-crossing arcs, Cancel at every step, snaps, stable IDs and native roundtrip.
 
 These are explicit OpenDesigner requirements, not newly inferred v16 behavior.
-Do not begin their implementation until phase 6A.1 has been reviewed.
+Phase 6A.1 was merged before the separate drawing branch was supplied. Its
+values/storage/rendering remain the sole geometry/document representation.
 
 ## 12. Phase 6A.1 delivery boundary
 
@@ -477,3 +477,47 @@ CI-style display. No positioning code was changed. See SKETCH_EDITOR.md for
 the environment distinction and session coverage.
 No new Fedora KDE manual confirmation is implied by automated session tests.
 The existing local `hole.zip` remains outside all changes and commits.
+
+## 13. Phase 6A.2 implementation and remaining work
+
+`SketchEllipseDrawing.cpp` extends the existing Sketch command session with
+center → major endpoint → perpendicular minor radius → (arc only) start → end.
+DrawTool alternatives are appended; document type tags/UUIDs and schema v5 are
+unchanged. Both roles are available in menu, toolbar and context menu. Exact
+support parameters are stored directly for numeric input instead of reconstructing
+them from rounded screen coordinates or input display text.
+
+The existing SketchDrawingPanel presents only the current step's fields, then
+all relevant fields during complete preview. Numeric edits update the blue
+preview live and own their pending values until accepted or an explicit mouse
+click. Automatic cursor feedback cannot overwrite them. Complete edits replace
+only fields actually edited, preserving unedited parameter bits. CW/CCW chooses
+the complementary path with the same endpoints; signed numeric sweep directly
+selects direction. Zero/full-turn sweeps and invalid radii fail without swapping
+axes. Back revisits each acquisition step. Enter/Escape, role changes, history,
+Save/Open, tool/Workplane switching and panel clamping reuse existing adapters.
+
+Basic snapping supports ellipse/arc centers, arc endpoints, parametric midpoint
+and Euclidean nearest points on complete/trimmed ellipses. The OCCT
+Geom2dAPI_ProjectPointOnCurve extrema solver runs on the analytic local conic;
+all eligible extrema and trimmed endpoints are compared. Center/circular-limit
+degeneracy has an explicit analytic treatment. No radial nearest approximation,
+polyline sampling or curve fitting becomes application/model geometry.
+
+Line/segment versus ellipse/elliptical arc intersections use a normalized
+principal-frame quadratic with finite/domain filtering, tangent deduplication
+and geometric residual checks. Unsupported conic/conic combinations report
+`IntersectionKind::Unsupported`; invalid/nonfinite calculations can report
+`NumericalFailure`. They are never reported as a fabricated crossing.
+
+**Remaining 6A.2 snapping work:** circle/ellipse, ellipse/ellipse (including
+coincident supports/domain overlaps), and ellipse tangent snaps. The existing
+general conic intersector may return tolerance-sized tangential segments; these
+must not be mistaken for true shared supports. A complete robust mapping to the
+application's overlap/error contract requires separate tests. Full snapping is
+not claimed. Existing line/circle snapping and priorities/Shift bypass remain.
+
+3D ellipse projection stays disabled for 6A.3, including the conservative guard
+against existing Construction ellipses in the projection target. Full elliptic
+Overdraw, ellipse Offset/Common Tangent commands, dynamic Workplane bounds,
+associative constraints and SpaceNavigator are outside this delivery.

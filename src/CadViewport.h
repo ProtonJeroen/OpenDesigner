@@ -155,6 +155,7 @@ private:
     friend struct SketchReleaseSessionTest;
     friend struct SketchPointSessionTest;
     friend struct SketchEllipseSessionTest;
+    friend struct SketchEllipseDrawingTest;
     friend struct CommandPanelSessionTest;
     friend struct SketchProjectionSessionTest;
     friend struct CadViewportPullTest;
@@ -234,6 +235,8 @@ private:
         std::optional<Sketch::SnapTarget> snap;
         std::vector<Sketch::SnapTarget> intersections;
         std::optional<double> radius, startAngle, sweep;
+        Sketch::Ellipse ellipse{{},10,5,0};
+        std::optional<double> ellipseStart,ellipseEnd;
         bool complete=false;
     };
     struct SketchChange { std::vector<Sketch::Entity> before, after; };
@@ -384,6 +387,11 @@ private:
     void useSketchNumeric(bool polar);
     void backSketchPoint();
     void refreshSketchDrawing();
+    void acceptSketchEllipsePoint(Sketch::Point point);
+    void useSketchEllipseNumeric();
+    void refreshSketchEllipseDrawing();
+    void editSketchEllipseParameters();
+    void changeSketchEllipseDirection();
     void updateSketchFeedback();
     void clearSketchFeedback();
     void closeSketchDrawingPanel();

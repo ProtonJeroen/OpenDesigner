@@ -4,12 +4,12 @@
 #include <optional>
 
 namespace Sketch {
-enum class IntersectionKind { None, Finite, Coincident };
+enum class IntersectionKind { None, Finite, Coincident, Unsupported, NumericalFailure };
 struct Intersections { IntersectionKind kind=IntersectionKind::None; std::vector<Point> points; };
 // Linear model tolerance is independent of the pixel-based catch radius.
-// Phase 6A.1: elliptic queries are not implemented. Check
-// supportedSketchToolCurve before using an ellipse as a curve-tool reference;
-// these queries return no solution for it and snapTargets excludes it.
+// Elliptic centers/endpoints/nearest and line-conic intersections are supported.
+// Conic-conic intersections report Unsupported; elliptic tangent snaps remain
+// unavailable. Curve construction/Overdraw eligibility is a separate predicate.
 bool contains(const Geometry& curve, Point point, double tolerance=1.e-7);
 Intersections intersect(const Geometry& a, const Geometry& b, double tolerance=1.e-7);
 std::vector<Point> tangentPoints(Point anchor, const Geometry& curve, double tolerance=1.e-7);
