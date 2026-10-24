@@ -29,10 +29,18 @@
   pass (94.54 seconds) with isolated Xvfb 1280×1024, xcb and software OpenGL,
   including normal/200% conic sessions and existing 2D/3D regressions. New pure
   geometry/storage tests also pass without a display; diff/safety checks pass.
-- [ ] 6A.2: exact circle/ellipse and face-boundary projection plus usable elliptic
-  snapping and **independent drawing tools**, not only projected ellipse display.
+- [x] 6A.2: **independent drawing tools**, not only projected ellipse display.
   Ellipse: center → major axis → minor axis. Elliptical Arc: center/axes → start
   → end with explicit CW/CCW. Both roles, numeric input, preview, history and save.
+- [x] 6A.2 basic snapping: ellipse/arc centers, arc endpoints/parametric midpoint,
+  Euclidean nearest on complete/trimmed ellipses and analytic line/ellipse
+  intersections. Respect domains, tangent degeneracy, locks, pixels and Shift.
+- [ ] Remaining 6A.2 snapping: circle/ellipse and ellipse/ellipse intersections,
+  coincident-support handling and elliptic tangent snaps. Full conic snapping
+  is not yet claimed; unsupported combinations report an explicit status.
+- [ ] 6A.3: exact oblique circle/ellipse and face-boundary projection, including
+  parameter mapping and shared-support duplicate/overlap comparisons. Projection
+  behavior is unchanged in the 6A.2 drawing delivery.
 - [ ] Full elliptic Overdraw remains separately gated pending its graph/domain,
   reverse traversal and ambiguity tests. Ellipse Offset/Common Tangent commands
   are outside this foundation.

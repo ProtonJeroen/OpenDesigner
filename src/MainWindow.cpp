@@ -114,6 +114,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* infinite2D=drawAction(tr("Infinite Construction Line"),"sketch.infinite",Sketch::DrawTool::InfiniteLine);
     auto* circle2D=drawAction(tr("Circle"),"sketch.circle",Sketch::DrawTool::Circle);
     auto* arc2D=drawAction(tr("Arc (center/start/end)"),"sketch.arc",Sketch::DrawTool::Arc);
+    auto* ellipse2D=drawAction(tr("Ellipse"),"sketch.ellipse",Sketch::DrawTool::Ellipse);
+    auto* ellipticalArc2D=drawAction(tr("Elliptical Arc"),"sketch.elliptical_arc",Sketch::DrawTool::EllipticalArc);
     auto* axes2D=sketchMenu->addMenu(tr("Construction Axes"));axes2D->setObjectName("sketch.axes");axes2D->setEnabled(false);
     viewport_->populateSketchAxesMenu(*axes2D);
     auto* overdraw=sketchMenu->addAction(tr("Overdraw"));overdraw->setObjectName("sketch.overdraw");overdraw->setEnabled(false);
@@ -243,6 +245,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     sketchToolbar->addAction(normalSketch);sketchToolbar->addAction(finishSketch);sketchToolbar->addSeparator();
     sketchToolbar->addAction(construction2D);sketchToolbar->addAction(line2D);sketchToolbar->addAction(infinite2D);
     sketchToolbar->addAction(circle2D);sketchToolbar->addAction(arc2D);sketchToolbar->addAction(overdraw);
+    sketchToolbar->insertAction(overdraw,ellipse2D);sketchToolbar->insertAction(overdraw,ellipticalArc2D);
     sketchToolbar->addAction(axes2D->menuAction());
     sketchToolbar->addAction(offset2D);sketchToolbar->addAction(tangent2D);sketchToolbar->addAction(projection2D);sketchToolbar->addSeparator();sketchToolbar->addAction(snap2D);
     auto* pixels=new QSpinBox(sketchToolbar);pixels->setObjectName("sketchSnapPixels");pixels->setRange(1,100);pixels->setValue(viewport_->sketchSnapPixels());pixels->setSuffix(tr(" px"));

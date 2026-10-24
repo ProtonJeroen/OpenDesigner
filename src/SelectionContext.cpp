@@ -173,10 +173,14 @@ QMenu* CadViewport::createSelectionMenu(const QPoint& anchor) {
         add(tr("Profile Line"),Sketch::DrawTool::Segment,Sketch::Role::Profile);
         add(tr("Profile Circle"),Sketch::DrawTool::Circle,Sketch::Role::Profile);
         add(tr("Profile Arc"),Sketch::DrawTool::Arc,Sketch::Role::Profile);
+        add(tr("Profile Ellipse"),Sketch::DrawTool::Ellipse,Sketch::Role::Profile);
+        add(tr("Profile Elliptical Arc"),Sketch::DrawTool::EllipticalArc,Sketch::Role::Profile);
         add(tr("Construction Line"),Sketch::DrawTool::Segment,Sketch::Role::Construction);
         add(tr("Infinite Construction Line"),Sketch::DrawTool::InfiniteLine,Sketch::Role::Construction);
         add(tr("Construction Circle"),Sketch::DrawTool::Circle,Sketch::Role::Construction);
         add(tr("Construction Arc"),Sketch::DrawTool::Arc,Sketch::Role::Construction);
+        add(tr("Construction Ellipse"),Sketch::DrawTool::Ellipse,Sketch::Role::Construction);
+        add(tr("Construction Elliptical Arc"),Sketch::DrawTool::EllipticalArc,Sketch::Role::Construction);
         connect(menu->addAction(tr("Look Normal")),&QAction::triggered,this,&CadViewport::lookNormalToSketch);
         connect(menu->addAction(tr("Finish 2D")),&QAction::triggered,this,&CadViewport::endSketchEditing);
     }

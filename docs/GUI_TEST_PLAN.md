@@ -139,3 +139,33 @@ Merge pas na groene CI, opgeloste fouten en expliciete toestemming van de gebrui
 | F — Paneel/focus | Nog niet uitgevoerd | |
 | G — KDE HiDPI | Nog niet uitgevoerd | |
 | H — 2D/3D-regressies | Nog niet uitgevoerd | |
+# v0.4.2 phase 6A.2 — native Fedora KDE checks (pending)
+
+These manual checks have not been claimed as passed by automation.
+
+1. Empty document → XY/XZ/YZ or rotated/translated WP → Edit Sketch. Verify
+   Ellipse/Elliptical Arc in menu, toolbar and both-role context menus.
+2. Ellipse: click center/major/minor. Drag along the fixed major axis while
+   choosing minor; only the perpendicular distance changes. Check a rotated axis,
+   equal radii, zero and excessive minor feedback without automatic swaps.
+3. Enter exact center/radii/angle using local comma notation where configured.
+   Move the pointer while typing: fields and numeric preview stay unchanged.
+   Edit individual complete parameters and confirm with Enter.
+4. Elliptical Arc: choose support, start/end across 0/360, short/large paths and
+   CW/CCW. Endpoints remain fixed when direction switches. Try signed numeric
+   sweep, zero and ±360 refusal. The parameter must not behave as a polar angle.
+5. Back through every step; switch Profile/Construction; Cancel/Escape/close at
+   partial and complete previews. No geometry/history/highlight residue remains.
+6. Snap a line to ellipse/arc center, endpoints, parametric midpoint and nearest
+   curve point at different zoom levels. Check line/ellipse intersection and
+   tangent contact, Shift bypass and hidden/locked source exclusion. Conic/conic
+   intersections and elliptic tangent snaps are explicitly still unsupported.
+7. Confirm one entity → Undo/Redo: exactly one step and same UUID/shape, no
+   selection after history navigation. Move/rotate the WP and verify contents.
+8. Save/Save As with a pending preview; reopen schema v5. Only confirmed geometry
+   is saved. New/Open and Workplane/tool changes clear the pending session.
+9. Drag the panel, change parameters, dock/resize and test a small viewport at
+   100% and 200% scale: no position reset; scroll only when needed; OK/Cancel
+   remain reachable. Native KDE may differ from strict automated Xvfb positions.
+10. Smoke-test existing Line/Circle/Arc drawing and Move/Rotate/Delete Face,
+    Boolean and 3D history alongside sketch geometry.

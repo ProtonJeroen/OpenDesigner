@@ -22,8 +22,9 @@ silently losing ellipses. Future versions, old roots carrying new tags, invalid
 record sizes/values/owners and unsupported downgrade requests are refused before
 replacement. Save remains atomic; failed Open/Save preserves existing state.
 Save/Save As preserve selection/history and exclude previews; New/Open clear
-them. Phase 6A.1 enables values, rendering and document lifecycle only; interactive
-drawing/projection/snapping arrive later. See [the implementation plan](ELLIPSE_IMPLEMENTATION_PLAN.md).
+them. Phase 6A.2 drawing stores the same independent v5 values, with no additional
+schema or source links; pending previews are excluded. Oblique 3D projection
+remains a later phase. See [the implementation plan](ELLIPSE_IMPLEMENTATION_PLAN.md).
 
 OpenDesigner stores native documents as a single `.odc` file. The file is
 an OCCT XCAF document written by the BinXCAF driver. Parts keep their exact

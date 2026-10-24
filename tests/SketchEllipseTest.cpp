@@ -131,8 +131,8 @@ void safeTools() {
     QString error;const Ellipse support{{},10,5,0.2};const auto ellipse=entity(support),arc=entity(EllipticalArc{support,5.8,-2});
     for(const auto& e:{ellipse,arc}) {
         check(isElliptical(e.geometry) && !supportedSketchToolCurve(e.geometry),"ellipse mislabeled as supported circle tool source");
-        check(!contains(e.geometry,{0,0}) && !nearestPoint(e.geometry,{1,1}) && tangentPoints({20,20},e.geometry).empty()
-            && intersect(e.geometry,Circle{{},5}).points.empty() && snapTargets({e},e.workplaneId,{0,0}).empty(),"unimplemented elliptic query fabricated results");
+        check(!contains(e.geometry,{0,0}) && nearestPoint(e.geometry,{1,1}) && tangentPoints({20,20},e.geometry).empty()
+            && intersect(e.geometry,Circle{{},5}).kind==IntersectionKind::Unsupported && !snapTargets({e},e.workplaneId,{0,0}).empty(),"ellipse snap support or explicit conic/tangent limits incorrect");
         Geometry offset=Segment{};const auto old=offset;std::vector<CommonTangent> tangents;
         check(!offsetConstructionLine(e.geometry,2,LineOutput::Finite,{},offset,error) && offset==old,"ellipse became an offset line");
         check(!commonTangents(e.geometry,Circle{{},3},tangents,error),"ellipse became circular tangent source");

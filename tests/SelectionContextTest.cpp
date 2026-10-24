@@ -374,6 +374,7 @@ void runSketchPointSessions();
 void runCommandPanelSessions();
 void runSketchProjectionSessions();
 void runSketchEllipseSessions();
+void runSketchEllipseDrawing();
 int main(int argc,char** argv) {
 #if defined(Q_OS_LINUX)
     if(qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM") && !qEnvironmentVariableIsEmpty("DISPLAY"))qputenv("QT_QPA_PLATFORM","xcb");
@@ -381,7 +382,8 @@ int main(int argc,char** argv) {
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc,argv);
     try {
-        if(app.arguments().contains("--ellipses")) runSketchEllipseSessions();
+        if(app.arguments().contains("--ellipse-drawing")) runSketchEllipseDrawing();
+        else if(app.arguments().contains("--ellipses")) runSketchEllipseSessions();
         else if(app.arguments().contains("--projection")) runSketchProjectionSessions();
         else if(app.arguments().contains("--command-panels")) runCommandPanelSessions();
         else if(app.arguments().contains("--sketch-points")) runSketchPointSessions();

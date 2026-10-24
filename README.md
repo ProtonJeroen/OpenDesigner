@@ -2,7 +2,7 @@
 
 OpenDesigner is an open-source cross-platform 3D direct-modeling application inspired by classic CoCreate SolidDesigner.
 
-**Status:** v0.4.2 phases 1–5 plus 6A.1 ellipse data/storage foundation; not a packaged distribution.
+**Status:** v0.4.2 phases 1–5 plus 6A.2 interactive ellipse drawing; not a packaged distribution.
 The supplied Delete Face and Unite seam cases were manually confirmed by the user
 on 2026-10-20. Native Save/Open and the cone/hole Pull fixes were tested and
 confirmed by the user on Fedora KDE on 2026-10-21. Automated regression coverage
@@ -29,9 +29,10 @@ the earlier nine and all nine additional checks, including axes and presets.
 
 Native writes use `.odc` schema v5 for Ellipse/EllipticalArc values, v4 when only
 local 2D Construction Points require it, and v3 otherwise; readers accept v1–v5.
-Phase 6A.1 supports exact ellipse model values, rendering, selection and history;
-interactive ellipse drawing/projection/snapping are not yet available. Independent
-Ellipse and Elliptical Arc drawing are required in phase 6A.2; see the
+Phase 6A.2 adds independent Ellipse/Elliptical Arc drawing with exact numeric
+input, live preview, CW/CCW, both roles and shared history. Basic elliptic snaps
+and line/ellipse intersections are available; conic/conic and elliptic tangent
+snaps remain incomplete. Oblique 3D projection is deferred to 6A.3. See the
 [implementation scope](docs/ELLIPSE_IMPLEMENTATION_PLAN.md#11-approved-6a2-independent-drawing-requirements).
 Points have exact local coordinates,
 fixed-screen-size markers, typed selection, snapping and shared history. This

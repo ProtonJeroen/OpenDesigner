@@ -7,9 +7,9 @@ Overdraw of bounded Construction portions into independent Profile geometry.
 The 2D Construction additions supply offset lines and common tangent lines using
 the same values, analytic helpers, viewport and transactions.
 Profile validation, 3D profile operations, splines and constraints remain outside
-this release. Phase 6A.1 adds exact ellipse values/storage/rendering only;
-interactive Ellipse/Elliptical Arc drawing is required in 6A.2 and is not yet
-available. v0.4.2 now adds interactive **Project 3D Geometry** in the
+this release. Phase 6A.1 supplies exact ellipse values/storage/rendering; phase
+6A.2 adds interactive Ellipse/Elliptical Arc drawing and basic elliptic snapping.
+Oblique 3D projection remains outside this phase. v0.4.2 adds **Project 3D Geometry** in the
 2D Modeling menu/toolbar on an active Workplane: vertices, supported analytic
 edges and full face boundaries become independent Construction geometry with
 live preview and one SketchChange. See [workflow and limits](SKETCH_PROJECTION.md#phase-5-interactive-project-3d-geometry).
@@ -19,6 +19,53 @@ entity, does not supply sketch snaps and does not follow subsequent Workplane
 transforms. No associative projection or feature history is implied.
 
 ## Model and ownership
+
+### Current phase 6A.2: Ellipse and Elliptical Arc
+
+Choose **Ellipse** or **Elliptical Arc** alongside Circle/Arc in the 2D Modeling
+menu/toolbar, or the corresponding Profile/Construction entry in the viewport
+2D Drawing context menu. An active visible/unlocked Workplane is required.
+
+Ellipse acquires **center → major-axis endpoint → minor radius**. The second
+point defines the major radius and local XY orientation. The third point uses
+only its perpendicular component relative to the fixed major axis; dragging
+along that axis cannot change its direction/length. Radii must satisfy
+`major >= minor > 1e-9`; equal radii are allowed. Excessive minor or zero radii
+produce feedback rather than swapping axes or storing partial data.
+
+Elliptical Arc adds **start → end** on that support ellipse. Mouse acquisition
+uses Euclidean nearest on the analytic ellipse; its parameter is the eccentric
+angle, not the position's polar angle. **CW/CCW** preserves the chosen endpoints
+and switches to the complementary short/large route, including 0/360 crossings.
+Numeric start and signed sweep are degrees; positive sweep means CCW, negative
+means CW, zero/full turns are refused. Use Ellipse for a complete revolution.
+
+The shared floating editor shows only current-step controls. Enter center XY,
+major radius/axis angle, minor radius, then (for arcs) start parameter/signed sweep.
+Use the step's button or Enter in its input to advance; complete **OK/Enter**
+commits once. **Back one point** revisits any acquisition step. A complete preview
+also exposes parameters for live editing. Inputs respect local number notation
+with up to 12 decimals, mm/degrees in the panel and mm/radians in values.
+Automatic mouse feedback never overwrites pending typed values. Editing one
+complete parameter preserves unedited stored parameters. Profile/Construction
+can be changed before confirmation. Blue is temporary; confirmed Profile is
+white/solid and Construction pink/dashed. Cancel/Escape/close/switch discards all
+temporary presentations, with no dirty/history change.
+
+Save excludes candidates and preserves the session/history. New/Open clear it;
+Undo/Redo retain the confirmed UUID and values and clear selection. The same
+Workplane-local entities, Structure Browser and schema v5 are used.
+
+Elliptic snaps now include centers, arc start/end and **parametric** midpoint,
+plus Euclidean nearest on full/trimmed ellipses. OCCT computes extrema on an
+analytic conic; eligible extrema and arc endpoints are compared. Line/segment
+intersections with ellipses/arcs use an analytic quadratic, with trimmed domains,
+tangency and residual checks. Pixel catch radius, snap priorities, visibility/
+locks and Shift bypass are unchanged. Invalid nearest calculations supply no
+snap. **Remaining:** circle/ellipse and ellipse/ellipse intersections and elliptic
+tangent snaps. These are not yet full conic snapping; unsupported intersections
+have an explicit API status. Elliptic Overdraw and oblique 3D projection remain
+disabled. The foundation section below records the earlier 6A.1 limitations.
 
 ### Phase 6A.1 ellipse foundation
 

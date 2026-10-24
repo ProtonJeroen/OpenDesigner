@@ -36,7 +36,7 @@ bool CadViewport::activateSketchWorkplane(const QString& requested,bool alignVie
     cancelCommandSession();initializeViewer();clearHistorySelection();
     activeSketchWorkplaneId_=id;refreshSketchPicking();
     emit activeSketchWorkplaneChanged(id);if(alignView) lookNormalToSketch();
-    emit statusMessage(tr("2D editing: %1. Choose Line, Circle, Arc or Infinite Line. Finish 2D returns to 3D picking.").arg(owner->name));return true;
+    emit statusMessage(tr("2D editing: %1. Choose Line, Circle, Arc, Ellipse, Elliptical Arc or Infinite Line. Finish 2D returns to 3D picking.").arg(owner->name));return true;
 }
 void CadViewport::endSketchEditing() {
     if(activeSketchWorkplaneId_.isEmpty()) return;
@@ -109,10 +109,12 @@ void CadViewport::startSketchDrawing(Sketch::DrawTool tool,Sketch::Role role) {
     };
     sketchDrawingPanel_->directionChanged=[this] {
         if(!commandSession_ || !commandSession_->drawing) return;
+        if(Sketch::ellipseTool(commandSession_->drawing->tool)) {changeSketchEllipseDirection();return;}
         // Keep the chosen endpoints. The other direction is the complementary
         // arc between them, not the same signed amount with a moved endpoint.
         commandSession_->drawing->sweep.reset();refreshSketchDrawing();
     };
+    sketchDrawingPanel_->ellipseParametersChanged=[this]{editSketchEllipseParameters();};
     showCommandPanel(sketchDrawingPanel_);refreshSketchDrawing();setFocus();
 }
 bool CadViewport::sketchDrawingMove(const QPoint& pixel,Qt::KeyboardModifiers modifiers) {
@@ -130,6 +132,8 @@ bool CadViewport::sketchDrawingMove(const QPoint& pixel,Qt::KeyboardModifiers mo
             const Sketch::Circle support{d.points[0],d.radius.value_or(distance(d.points[0],d.points[1]))};
             std::erase_if(targets,[&](const auto& target){return !Sketch::contains(support,target.point);});
         }
+        if(d.tool==Sketch::DrawTool::EllipticalArc && d.points.size()>=3)
+            std::erase_if(targets,[&](const auto& target){return !Sketch::contains(d.ellipse,target.point);});
         d.snap=Sketch::closestSnap(targets,{double(pixel.x()),double(pixel.y())},sketchSnapPixels_,[&](Sketch::Point p) {
             const auto world=Sketch::worldPoint(p,owner->frame);int x,y;view_->Convert(world.X(),world.Y(),world.Z(),x,y);return Sketch::Point{double(x),double(y)};
         });
@@ -147,6 +151,7 @@ bool CadViewport::sketchDrawingClick(const QPoint& pixel,Qt::KeyboardModifiers m
 void CadViewport::acceptSketchPoint(Sketch::Point point) {
     if(!commandSession_ || !commandSession_->drawing || !std::isfinite(point.x) || !std::isfinite(point.y)) return;
     auto& d=*commandSession_->drawing;if(d.complete) return;
+    if(Sketch::ellipseTool(d.tool)) {acceptSketchEllipsePoint(point);return;}
     if(!d.points.empty()) {
         const auto anchor=d.tool==Sketch::DrawTool::Arc?d.points[0]:d.points.back();
         if(distance(anchor,point)<=1.e-7) {sketchDrawingPanel_->setStep(int(d.points.size()),false,false,tr("Choose a distinct point."));return;}
@@ -158,6 +163,7 @@ void CadViewport::useSketchNumeric(bool usePolar) {
     if(!commandSession_ || !commandSession_->drawing || !sketchDrawingPanel_) return;
     auto& d=*commandSession_->drawing;if(d.complete) return;
     sketchDrawingPanel_->finishEditing();d.snap.reset();
+    if(Sketch::ellipseTool(d.tool)) {if(usePolar) useSketchEllipseNumeric();else acceptSketchEllipsePoint({sketchDrawingPanel_->x->value(),sketchDrawingPanel_->y->value()});return;}
     if(!usePolar) {acceptSketchPoint({sketchDrawingPanel_->x->value(),sketchDrawingPanel_->y->value()});return;}
     if(d.points.empty()) return;
     const double length=sketchDrawingPanel_->distance->value(),angle=sketchDrawingPanel_->angle->value()*pi/180;
@@ -176,11 +182,18 @@ void CadViewport::backSketchPoint() {
     if(!commandSession_ || !commandSession_->drawing) return;
     auto& d=*commandSession_->drawing;if(!d.points.empty()) d.points.pop_back();
     d.complete=false;d.cursor.reset();d.snap.reset();d.sweep.reset();
+    if(Sketch::ellipseTool(d.tool)) {
+        d.ellipseEnd.reset();if(d.points.size()<4) d.ellipseStart.reset();
+        sketchDrawingPanel_->resetEllipseEdits();
+        sketchDrawingPanel_->setEllipseValues(d.ellipse,d.ellipseStart.value_or(0),(sketchDrawingPanel_->direction->currentIndex()==1?-1:1)*pi/2,true);
+        refreshSketchDrawing();return;
+    }
     if(d.points.size()<2) {d.radius.reset();d.startAngle.reset();}
     refreshSketchDrawing();
 }
 void CadViewport::refreshSketchDrawing() {
     if(!commandSession_ || !commandSession_->drawing || !sketchDrawingPanel_) return;
+    if(Sketch::ellipseTool(commandSession_->drawing->tool)) {refreshSketchEllipseDrawing();return;}
     auto& session=*commandSession_;auto& d=*session.drawing;auto points=d.points;
     if(d.cursor && !d.complete) points.push_back(*d.cursor);
     for(const auto& [id,p]:sketchPreviews_) context_->Remove(p,Standard_False);
@@ -245,7 +258,13 @@ void CadViewport::updateSketchFeedback() {
     const auto right=gp_Vec(camera->Direction()).Crossed(gp_Vec(camera->Up())).Normalized();
     sketchCursorLabel_->SetPosition(world.Translated((right+gp_Vec(camera->Up()))*view_->Convert(12)));
     QString text=QString("%1X %2  Y %3").arg(d.snap?d.snap->label+" | ":QString()).arg(d.cursor->x,0,'f',6).arg(d.cursor->y,0,'f',6);
-    if(!d.points.empty()) {
+    if(!d.points.empty() && Sketch::ellipseTool(d.tool)) {
+        auto support=d.ellipse;
+        if(const auto* e=std::get_if<Sketch::Ellipse>(&d.candidate.geometry)) support=*e;
+        if(const auto* a=std::get_if<Sketch::EllipticalArc>(&d.candidate.geometry)) support=a->ellipse;
+        text+=QString(" | a %1  b %2  Axis %3°").arg(support.majorRadius,0,'f',6).arg(support.minorRadius,0,'f',6).arg(support.axisAngle*180/pi,0,'f',4);
+        if(const auto* a=std::get_if<Sketch::EllipticalArc>(&d.candidate.geometry)) text+=QString(" | Sweep %1°").arg(a->sweepParameter*180/pi,0,'f',4);
+    } else if(!d.points.empty()) {
         const bool arcEnd=d.tool==Sketch::DrawTool::Arc && d.points.size()==2;
         const double size=arcEnd?d.radius.value_or(distance(d.points[0],d.points[1])):distance(d.points[0],*d.cursor);
         double angle=std::atan2(d.cursor->y-d.points[0].y,d.cursor->x-d.points[0].x);
@@ -277,5 +296,5 @@ void CadViewport::clearSketchFeedback() {
 void CadViewport::closeSketchDrawingPanel() {
     if(!sketchDrawingPanel_) return;
     auto* panel=sketchDrawingPanel_;sketchDrawingPanel_=nullptr;
-    panel->confirmed={};panel->cancelled={};panel->useXY={};panel->usePolar={};panel->back={};panel->roleChanged={};panel->directionChanged={};panel->hide();panel->deleteLater();
+    panel->confirmed={};panel->cancelled={};panel->useXY={};panel->usePolar={};panel->back={};panel->roleChanged={};panel->directionChanged={};panel->ellipseParametersChanged={};panel->hide();panel->deleteLater();
 }
