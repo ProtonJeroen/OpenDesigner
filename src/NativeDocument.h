@@ -40,7 +40,7 @@ struct NativePartState {
 };
 
 struct NativeDocumentSnapshot {
-    int schemaVersion = 4; // In-memory capability; current saves use v3 without points.
+    int schemaVersion = 5; // Capability; saves choose v3/v4/v5 by exact sketch content.
     std::vector<NativePartState> parts;
     std::vector<Construction::Object> constructions;
     std::array<int,3> constructionNameCounters{};
@@ -50,7 +50,10 @@ struct NativeDocumentSnapshot {
 
 class NativeDocumentStorage final {
 public:
-    static constexpr int CurrentSchemaVersion = 4;
+    static constexpr int CurrentSchemaVersion = 5;
+    // Shared by storage and snapshot import. Empty/legacy curves require v3,
+    // points v4, ellipses v5; older document-content guards remain separate.
+    static int sketchSchemaVersion(const std::vector<Sketch::Entity>& entities);
     static bool save(const QString& path, const NativeDocumentSnapshot& snapshot, QString& error);
     static bool load(const QString& path, NativeDocumentSnapshot& snapshot, QString& error);
 };

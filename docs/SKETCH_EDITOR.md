@@ -6,8 +6,10 @@ numeric drawing, analytic snapping and live feedback. Phase 3 adds explicit
 Overdraw of bounded Construction portions into independent Profile geometry.
 The 2D Construction additions supply offset lines and common tangent lines using
 the same values, analytic helpers, viewport and transactions.
-Profile validation, 3D profile operations, splines, ellipses and constraints remain
-outside this release. v0.4.2 now adds interactive **Project 3D Geometry** in the
+Profile validation, 3D profile operations, splines and constraints remain outside
+this release. Phase 6A.1 adds exact ellipse values/storage/rendering only;
+interactive Ellipse/Elliptical Arc drawing is required in 6A.2 and is not yet
+available. v0.4.2 now adds interactive **Project 3D Geometry** in the
 2D Modeling menu/toolbar on an active Workplane: vertices, supported analytic
 edges and full face boundaries become independent Construction geometry with
 live preview and one SketchChange. See [workflow and limits](SKETCH_PROJECTION.md#phase-5-interactive-project-3d-geometry).
@@ -17,6 +19,57 @@ entity, does not supply sketch snaps and does not follow subsequent Workplane
 transforms. No associative projection or feature history is implied.
 
 ## Model and ownership
+
+### Phase 6A.1 ellipse foundation
+
+The variant now appends `Ellipse { center, majorRadius, minorRadius, axisAngle }`
+and `EllipticalArc { ellipse, startParameter, sweepParameter }` as tags 5 and 6.
+Existing tags 0–4, entity UUIDs and Workplane ownership do not change. Both roles
+are allowed. Finite radii satisfy `majorRadius >= minorRadius > 1e-9`; equal radii
+remain a valid ellipse. Arc sweep is signed, nonzero and shorter than one turn.
+Unrepresentable end parameters are refused. Values are not normalized on load.
+
+Shared analytic helpers evaluate positions/derivatives, invert the support
+parameter, check signed periodic domains and reverse traversal. Exact OCCT
+elliptical edges follow moved/rotated owner frames and generic AIS/browser
+selection, visibility/lock, delete and SketchChange history paths. Nearly-full
+arc presentation uses distinct endpoint vertices to avoid automatic topological
+endpoint merging. Current saves use schema v5 for these types, with continued
+v1–v4 reading and v3/v4 output when new types are absent.
+
+This stage adds **no ellipse drawing buttons** and does not enable ellipse
+projection or analytic snapping/intersections. Curve queries return no solution
+for unsupported elliptic inputs; callers use `supportedSketchToolCurve` to check
+eligibility. Overdraw excludes elliptic sources with a notice while continuing
+supported line/circle workflows. Offset/Common Tangent keep their existing
+straight/circular reference filters. Projection conservatively refuses a
+nonempty batch when the target already has Construction ellipses, until conic
+support/domain comparison is implemented; hiding/locking them does not bypass
+that check. Profile ellipses/other Workplanes do not block projection.
+
+Phase **6A.2 must add independent drawing**: center → major axis → minor axis
+for Ellipse; then start → end with CW/CCW for Elliptical Arc. Both require live
+preview, exact numeric input, Construction/Profile choice, snapping, one-step
+Undo/Redo and Save/Open. It has not been started. See
+[the approved drawing requirements](ELLIPSE_IMPLEMENTATION_PLAN.md#11-approved-6a2-independent-drawing-requirements).
+
+Validation on 2026-10-24: full CMake Release build PASS; all 43 CTests PASS
+(94.54 seconds) on isolated Xvfb 1280×1024 with xcb/software OpenGL. The new
+geometry/storage executable also passes without DISPLAY/WAYLAND_DISPLAY.
+`sketch-ellipse-foundation` checks exact values, OCCT type/endpoints, transforms,
+signed domains/reversal, safe tool guards, mixed Parts/camera, v1–v5 storage and
+malformed/downgrade refusal. Normal/200% `sketch-ellipse-sessions` checks real
+viewport/browser picking, locks/visibility, owner transforms/deletion, Cancel,
+Undo/Redo, Save/Save As/Open/New and mixed 3D history.
+
+An earlier run on the active KDE-managed display passed 38/43 tests: five existing
+strict +12-pixel panel-position assertions failed (positioning normal/HiDPI,
+projection sessions normal/HiDPI and command-panel sessions). Those same tests
+all passed on the isolated CI-style display; CommandPanelPositioner was not
+modified for this stage. These results do not claim new native Fedora KDE manual
+approval or a fix to window-manager-dependent placement tests.
+
+The paragraphs below retain the historical curve/point foundation description.
 
 `SketchGeometry.h/.cpp` defines a `std::variant` of exact local-XY segment,
 infinite line, circle and circular arc values. Each entity has a UUID, Workplane

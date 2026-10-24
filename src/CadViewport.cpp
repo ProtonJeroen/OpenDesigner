@@ -1349,7 +1349,9 @@ bool CadViewport::importDocumentSnapshot(const NativeDocumentSnapshot& snapshot,
         }
     }
     if(snapshot.schemaVersion<3 && !snapshot.sketchEntities.empty()) {error=tr("Schema v1/v2 cannot contain 2D geometry.");return false;}
-    if(snapshot.schemaVersion<4 && Sketch::hasConstructionPoints(snapshot.sketchEntities)) {error=tr("Schema v3 cannot contain 2D Construction Points.");return false;}
+    if(!snapshot.sketchEntities.empty() && snapshot.schemaVersion<NativeDocumentStorage::sketchSchemaVersion(snapshot.sketchEntities)) {
+        error=tr("The requested schema cannot contain these 2D types (points require v4; ellipses require v5).");return false;
+    }
     if(!Sketch::validate(snapshot.sketchEntities,snapshot.constructions,documentIds,error)) return false;
     if (!std::isfinite(snapshot.camera.scale) || snapshot.camera.scale <= 0.0) {
         error = tr("The document contains an invalid camera state.");

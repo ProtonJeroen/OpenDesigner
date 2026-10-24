@@ -1,5 +1,30 @@
 # Native OpenDesigner documents
 
+## Current extension: phase 6A.1 ellipse storage
+
+Current in-memory capability is **schema v5**. A current snapshot writes v5 only
+when Ellipse or EllipticalArc entities are present, v4 when Construction Points
+require it, and v3 otherwise. Readers retain v1/v2/v3/v4 support and migrate the
+capability without changing stored entity values or UUIDs. Historical version
+sections below describe when each extension was introduced.
+
+New tags 5/6 are appended after the unchanged 0–4 meanings. Ellipse stores local
+center X/Y, major radius, minor radius and principal-axis angle (five doubles).
+EllipticalArc stores that support plus start parameter and signed sweep (seven
+doubles). Its parameter is the eccentric angle, not the position's polar angle.
+Positive sweep is CCW in owner XY. Construction and Profile roles are supported;
+owner/ID/name/visibility/selectability remain the usual metadata. No persistent
+source references or creation history are stored. The same BinXCAF container
+and sketch metadata group remain in use.
+
+The v5 root marker and explicit version integer prevent older applications from
+silently losing ellipses. Future versions, old roots carrying new tags, invalid
+record sizes/values/owners and unsupported downgrade requests are refused before
+replacement. Save remains atomic; failed Open/Save preserves existing state.
+Save/Save As preserve selection/history and exclude previews; New/Open clear
+them. Phase 6A.1 enables values, rendering and document lifecycle only; interactive
+drawing/projection/snapping arrive later. See [the implementation plan](ELLIPSE_IMPLEMENTATION_PLAN.md).
+
 OpenDesigner stores native documents as a single `.odc` file. The file is
 an OCCT XCAF document written by the BinXCAF driver. Parts keep their exact
 local B-Rep; no display tessellation is used as a source for Save/Open.

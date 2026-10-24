@@ -13,11 +13,34 @@ struct InfiniteLine { Point origin, direction{1,0}; bool operator==(const Infini
 struct Circle { Point center; double radius=1; bool operator==(const Circle&) const = default; };
 // Radians, signed sweep: positive is counterclockwise in Workplane XY.
 struct Arc { Point center; double radius=1, startAngle=0, sweepAngle=1; bool operator==(const Arc&) const = default; };
-// Append new alternatives: persisted tags 0–3 must keep their existing meaning.
+// Append new alternatives: persisted tags 0–4 must keep their existing meaning.
 struct ConstructionPoint { Point position; bool operator==(const ConstructionPoint&) const = default; };
-using Geometry = std::variant<Segment, InfiniteLine, Circle, Arc, ConstructionPoint>;
+// Exact local conic: center + a*cos(t)*u + b*sin(t)*v; u is rotated by
+// axisAngle and v is its CCW perpendicular. t is not the polar angle.
+struct Ellipse {
+    Point center;
+    double majorRadius=2, minorRadius=1, axisAngle=0;
+    bool operator==(const Ellipse&) const = default;
+};
+struct EllipticalArc {
+    Ellipse ellipse;
+    double startParameter=0, sweepParameter=1; // Positive = CCW; no full turns.
+    bool operator==(const EllipticalArc&) const = default;
+};
+using Geometry = std::variant<Segment, InfiniteLine, Circle, Arc, ConstructionPoint, Ellipse, EllipticalArc>;
 double directedArcSweep(double start,double end,bool clockwise);
 Arc reversedArc(const Arc& arc);
+Point ellipsePoint(const Ellipse& ellipse,double parameter);
+Point ellipseDerivative(const Ellipse& ellipse,double parameter);
+// Inverse support parameter; the center has no unique parameter. This does not
+// certify that point lies on the curve (use its evaluated residual for that).
+std::optional<double> ellipseParameter(const Ellipse& ellipse,Point point);
+bool ellipticalArcContainsParameter(const EllipticalArc& arc,double parameter,double angularTolerance=1.e-12);
+std::array<Point,2> ellipticalArcEndpoints(const EllipticalArc& arc);
+EllipticalArc reversedEllipticalArc(const EllipticalArc& arc);
+bool isElliptical(const Geometry& geometry);
+// Phase 6A.1 curve tools only support the original analytic line/circle types.
+bool supportedSketchToolCurve(const Geometry& geometry);
 struct Entity {
     QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString workplaneId, name;
@@ -27,6 +50,7 @@ struct Entity {
     bool operator==(const Entity&) const = default;
 };
 bool hasConstructionPoints(const std::vector<Entity>& entities);
+bool hasEllipses(const std::vector<Entity>& entities);
 QString typeName(const Geometry& geometry);
 bool valid(const Entity& entity, QString& error);
 bool validate(const std::vector<Entity>& entities, const std::vector<Construction::Object>& owners,

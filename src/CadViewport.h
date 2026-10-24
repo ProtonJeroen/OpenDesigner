@@ -154,6 +154,7 @@ private:
     friend struct SketchConstructionSessionTest;
     friend struct SketchReleaseSessionTest;
     friend struct SketchPointSessionTest;
+    friend struct SketchEllipseSessionTest;
     friend struct CommandPanelSessionTest;
     friend struct SketchProjectionSessionTest;
     friend struct CadViewportPullTest;

@@ -207,7 +207,7 @@ void independenceAndStorage() {
     document.sketchEntities.erase(document.sketchEntities.begin());document.schemaVersion=3;
     path=directory.filePath("projected-line-v3.odc");check(NativeDocumentStorage::save(path,document,error)
         && NativeDocumentStorage::load(path,loaded,error) && loaded.sketchEntities==document.sketchEntities,"projected lines needlessly required schema v4");
-    check(NativeDocumentStorage::CurrentSchemaVersion==4,"projection changed the native schema contract");
+    check(NativeDocumentStorage::sketchSchemaVersion(copy)==4 && NativeDocumentStorage::sketchSchemaVersion(document.sketchEntities)==3,"vertex/line projection changed required native schemas");
 }
 }
 int main(int argc,char** argv) {
