@@ -43,13 +43,13 @@
   (207.21 seconds), headless projection tests, v1–v4 compatibility and existing
   2D/3D regressions pass; diff/new-file whitespace and safety checks pass.
 
-- [ ] Project 3D vertices, edges and face boundaries into independent local 2D
+- [x] Project 3D vertices, edges and face boundaries into independent local 2D
   references on a Workplane, with explicit supported curve types and safe refusal.
   This is outside the approved v0.4.1 release scope. Existing 3D Point projection
   remains available and does not create 2D sketch entities or dependencies.
   Phases 1–2 add no interactive point-creation or Project 3D Geometry command.
   Phases 3–4 add circular/arc edges and actual face boundaries to the computation
-  core. The interactive selection/session UI remains phase-5 work.
+  core. Phase 5 adds the interactive selection/session UI below.
 
 - [x] Phase 3: analytic circular edges parallel to the target Workplane project
   to independent Construction Circles/Arcs. Preserve signed traversal, reversed
@@ -68,7 +68,27 @@
 - [x] Phase-4 validation: complete Release build and 38/38 CTests pass
   (85.43 seconds), including existing 2D/3D/history and v1–v4 storage regressions.
   All three projection suites also pass without a display; diff and reviewed-file
-  safety checks pass. Interactive projection remains phase-5 work.
+  safety checks pass. That milestone did not include the phase-5 UI.
+
+- [x] Phase 5: Project 3D Geometry in 2D Modeling menu/toolbar/context, requiring
+  an active visible/unlocked Workplane. One existing Sketch command session owns
+  temporary Vertex/Edge/Face/Mixed OCCT selection, source list/clear/remove,
+  live blue preview and kernel diagnostics. OK validates again and commits one
+  SketchChange; Cancel/Escape/close discard, restore picking and safely retained
+  Sketch selection. Duplicate-only confirmation creates no history/dirty change.
+- [x] Projection panel uses CommandPanelPositioner at viewport upper-right +12;
+  viewport navigation, dragging, resize/docking, small-view scrolling and HiDPI
+  reuse existing mechanisms. Save excludes preview while preserving the session;
+  successful Open/New, target/source invalidation and accepted close clean up.
+  Exact curve/point values keep native v3/v4 output and v1–v4 reading.
+- [ ] Phase-5 native Fedora KDE GUI verification and explicit merge permission.
+  The existing v0.4.1 confirmations do not cover this command. Follow
+  [tests A–H](GUI_TEST_PLAN.md); record results before merging the UI PR.
+- [x] Phase-5 automated validation: complete Release build, 40/40 CTests
+  (92.48 seconds) under isolated Xvfb/xcb/software OpenGL, including normal/200%
+  projection sessions and existing 2D/3D/history/v1–v4 regressions. Both new UI
+  tests also pass at the CI display size 1280×1024 (6.43 seconds). Diff and
+  explicit changed/new-file safety checks pass; no GUI confirmation is implied.
 
 ### UI: Command Pop-up Positioning
 

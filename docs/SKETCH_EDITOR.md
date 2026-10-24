@@ -7,8 +7,11 @@ Overdraw of bounded Construction portions into independent Profile geometry.
 The 2D Construction additions supply offset lines and common tangent lines using
 the same values, analytic helpers, viewport and transactions.
 Profile validation, 3D profile operations, splines, ellipses and constraints remain
-outside this release. General 3D-to-2D projection of vertices, edges and face
-boundaries is scheduled for v0.4.2. Existing Point projection creates an
+outside this release. v0.4.2 now adds interactive **Project 3D Geometry** in the
+2D Modeling menu/toolbar on an active Workplane: vertices, supported analytic
+edges and full face boundaries become independent Construction geometry with
+live preview and one SketchChange. See [workflow and limits](SKETCH_PROJECTION.md#phase-5-interactive-project-3d-geometry).
+The older Point projection creates an
 independent world-space 3D construction Point on a plane; it is not a 2D sketch
 entity, does not supply sketch snaps and does not follow subsequent Workplane
 transforms. No associative projection or feature history is implied.
@@ -403,10 +406,10 @@ delete or drive that line.
 
 Points do not become curve intersections, tangent/offset references, Overdraw
 sources or cuts. Overdraw skips them; Offset/Common Tangent refuse them. They
-cannot be Profile geometry or close a contour. This phase exposes point values
-through the existing candidate/SketchChange API and native files; no interactive
-point-creation tool or Project 3D Geometry command is added yet. Projection and its
-selection/session UI remain later phases. These are OpenDesigner design choices,
+cannot be Profile geometry or close a contour. Phase 1 exposed point values
+through the existing candidate/SketchChange API and native files. A separate
+point-drawing tool remains absent; phase 5 now exposes vertex projection
+through Project 3D Geometry; see the workflow linked above. These are OpenDesigner design choices,
 not additional claims about SolidDesigner v16 behavior.
 
 ### Camera capture without Parts
@@ -714,7 +717,8 @@ independent. Save/Save As preserve selection and both history stacks, pending
 points are excluded, and Open/New reset the session and rebuild the browser.
 Existing 3D Move Undo/Redo is exercised in the same document.
 
-There is no interactive point-creation button in this foundation phase. Generate
+Phase 1 had no interactive point-creation button; phase 5 can project a selected
+3D vertex into a local point. To inspect the earlier repeatable fixture, generate
 a repeatable manual fixture in the ignored build directory with:
 
 ```sh

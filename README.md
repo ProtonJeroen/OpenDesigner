@@ -2,7 +2,7 @@
 
 OpenDesigner is an open-source cross-platform 3D direct-modeling application inspired by classic CoCreate SolidDesigner.
 
-**Status:** v0.4.2 phases 1–4 — 2D points and exact projection core; not a packaged distribution.
+**Status:** v0.4.2 phases 1–5 — interactive exact 3D projection; not a packaged distribution.
 The supplied Delete Face and Unite seam cases were manually confirmed by the user
 on 2026-10-20. Native Save/Open and the cone/hole Pull fixes were tested and
 confirmed by the user on Fedora KDE on 2026-10-21. Automated regression coverage
@@ -30,11 +30,13 @@ the earlier nine and all nine additional checks, including axes and presets.
 Native writes use `.odc` schema v4 when local 2D Construction Points are present,
 and v3 otherwise; readers accept v1/v2/v3/v4. Points have exact local coordinates,
 fixed-screen-size markers, typed selection, snapping and shared history. This
-foundation has no interactive point-creation or Project 3D Geometry command yet.
-General Project 3D Geometry (vertices, edges and faces to 2D) remains scheduled
-for the interactive v0.4.2 phase. A standalone exact vertex/straight-edge,
-parallel circle/arc and actual face-boundary computation core is implemented;
-see [projection module](docs/SKETCH_PROJECTION.md). The existing
+foundation has no separate interactive point-drawing tool. **Project 3D Geometry**
+is available in Modeling → 2D Modeling and the 2D toolbar after **Edit Sketch**.
+Choose Vertex, Edge, Face or Mixed; select visible 3D subshapes, inspect the blue
+preview, then OK or Cancel. The same exact vertex/straight-edge, parallel
+circle/arc and actual face-boundary core supplies the independent 2D results.
+See [projection workflow and limits](docs/SKETCH_PROJECTION.md#phase-5-interactive-project-3d-geometry)
+and the pending [Fedora KDE GUI checklist](docs/GUI_TEST_PLAN.md). The existing
 Point → Project onto workplane creates an independent 3D construction Point;
 it does not populate a Workplane’s 2D collection. Overdraw currently requires
 bounded pieces, excludes unbounded tails and 0/1-cut circles, refuses overlapping

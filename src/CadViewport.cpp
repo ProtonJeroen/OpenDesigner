@@ -171,6 +171,14 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     cancelDimension_ = new QShortcut(QKeySequence(Qt::Key_Escape), this);
     connect(cancelDimension_, &QShortcut::activated, this, &CadViewport::cancelCommandSession);
     commandPanelPositioner_->manage(commandPanel_,true);
+    const auto invalidateProjection=[this] {
+        if(commandSession_ && commandSession_->projection) {
+            cancelCommandSession();emit statusMessage(tr("Project 3D Geometry cancelled because the model changed."));
+        }
+    };
+    connect(this,&CadViewport::partsChanged,this,invalidateProjection);
+    connect(this,&CadViewport::constructionsChanged,this,invalidateProjection);
+    connect(this,&CadViewport::sketchEntitiesChanged,this,invalidateProjection);
 }
 void CadViewport::beginCommandSession(CommandSession::Kind kind,
         const std::vector<size_t>& indices, const gp_Dir& direction, const gp_Pnt& pivot) {
@@ -392,6 +400,7 @@ bool CadViewport::eventFilter(QObject* watched, QEvent* event) {
             || (sketchDrawingPanel_ && (widget==sketchDrawingPanel_ || sketchDrawingPanel_->isAncestorOf(widget)))
             || (sketchOverdrawPanel_ && (widget==sketchOverdrawPanel_ || sketchOverdrawPanel_->isAncestorOf(widget)))
             || (sketchConstructionPanel_ && (widget==sketchConstructionPanel_ || sketchConstructionPanel_->isAncestorOf(widget)))
+            || (sketchProjectionPanel_ && (widget==sketchProjectionPanel_ || sketchProjectionPanel_->isAncestorOf(widget)))
             || (commandSession_->kind==CommandSession::Kind::Boolean && widget && widget->window()==window()));
         if(sessionWidget && key->modifiers()==Qt::ControlModifier
             && (key->key()==Qt::Key_Z || key->key()==Qt::Key_Y)) {
@@ -1843,6 +1852,7 @@ gp_Pnt CadViewport::rotationCenter(const std::vector<size_t>& indices) const {
     return count ? gp_Pnt(x/count, y/count, z/count) : gp_Pnt(0, 0, 0);
 }
 void CadViewport::setPartVisible(size_t index, bool visible) {
+    const bool projecting=commandSession_ && commandSession_->projection;
     cancelCommandSession();
     if (!isPartActive(index)) return;
     auto& part = boxes_[index];
@@ -1863,7 +1873,7 @@ void CadViewport::setPartVisible(size_t index, bool visible) {
     for (const auto selected : selectedPartIndices_)
         if (isPartVisible(selected))
             remaining.push_back(selected);
-    selectParts(remaining);
+    if(projecting) refreshSketchPicking();else selectParts(remaining);
     emit partsChanged();
 }
 bool CadViewport::isPartVisible(size_t index) const {
@@ -1885,6 +1895,9 @@ void CadViewport::fitSelection(const std::vector<size_t>& indices) {
     view_->Redraw();
 }
 void CadViewport::selectParts(const std::vector<size_t>& indices) {
+    if(commandSession_ && commandSession_->projection) {
+        emit statusMessage(tr("Project 3D Geometry requires vertices, edges or faces picked in the viewport, not whole Parts."));return;
+    }
     endSketchEditing();
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Construction) {
         emit statusMessage(tr("Pick the required subshape in the viewport or choose a construction reference."));return;
@@ -2380,6 +2393,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
     panning_ = e->button() == Qt::MiddleButton && (e->modifiers() & Qt::ShiftModifier);
     if (rotating_ && !view_.IsNull()) view_->StartRotation(previous_.x(), previous_.y());
     if (e->button() == Qt::LeftButton && !context_.IsNull()) {
+        if(sketchProjectionClick(e->pos(),e->modifiers())) return;
         if(sketchConstructionClick(e->pos())) return;
         if(overdrawClick(e->pos())) return;
         if(sketchDrawingClick(e->pos(),e->modifiers())) return;

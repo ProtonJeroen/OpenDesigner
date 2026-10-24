@@ -1,9 +1,10 @@
-# Exact sketch projection core — v0.4.2 phases 2–4
+# Exact sketch projection and interactive command — v0.4.2 phases 2–5
 
-This phase supplies a computation module, not an interactive command. It projects
+Phases 2–4 supply a widget-independent computation module. It projects
 vertices, bounded analytic straight edges, full circles, bounded circular arcs
 and actual face boundaries onto a chosen Workplane as independent Construction
-values. A Project 3D Geometry selection/preview session remains phase-5 work. Popup placement and natural panel
+values. Phase 5 adds the selection/preview session described below, using this
+same API. Popup placement and natural panel
 sizing are implemented separately in CommandPanelPositioner; this computation
 module does not reposition anything.
 
@@ -203,8 +204,8 @@ as its unsupported-curve fixture; circular edges are intentionally supported.
 
 The full regression suite retains v1/v2 migration and v3/v4 storage, selection,
 command sessions, Undo/Redo, panel sizing and existing 3D modeling coverage. There
-is still no interactive Project command or ellipse/spline
-support or associative source relationship. No new SolidDesigner behavior is
+was no interactive Project command in phase 3 (phase 5 is below), and ellipse/spline
+support or associative source relationships remain absent. No new SolidDesigner behavior is
 claimed; these are explicit OpenDesigner computation and safety policies.
 
 Phase-3 validation: complete CMake Release build PASS; all 37 CTests PASS
@@ -325,7 +326,7 @@ loose B-Rep tolerances. Mixed atomic requests, source independence, stable
 identities, snapping/Overdraw and exact v3/v4 roundtrips complement the existing
 vertex/line/circle/arc and native v1/v2 migration regressions.
 
-No phase-4 GUI command or panel is added. General ellipses/splines, silhouettes,
+Phase 4 added no GUI command or panel. General ellipses/splines, silhouettes,
 hidden-line removal, mesh/polyline approximations, automatic contour repair and
 associative source history remain unsupported. A curved face is accepted only
 when all its actual boundary occurrences meet these explicit analytic rules;
@@ -338,3 +339,121 @@ native v1–v4, selection/history, command sessions, 2D tools and 3D modeling
 regressions are included. `git diff --check` and explicit reviewed-file
 artifact/secret-pattern checks pass. No production UI or environment-specific
 test workaround was introduced in this phase.
+
+## Phase 5: interactive Project 3D Geometry
+
+Start **Edit Sketch** on a visible, unlocked Workplane. Use **Modeling → 2D
+Modeling → Project 3D Geometry**, the same action in the **2D Modeling** toolbar,
+or **2D Drawing → Project 3D Geometry** in the viewport context menu. The menu/
+toolbar action is disabled without an active target; a direct invocation reports
+the required Workplane rather than silently choosing a different plane.
+
+`SketchProjectionPanel` is a nonmodal Qt Tool window managed exclusively by
+CommandPanelPositioner (viewport upper-right, 12 logical pixels). It shows the
+target name, selection mode, selected source list/count, resulting entity count,
+live status and kernel diagnostic details. Use **Remove selected sources** or
+**Clear sources**, **OK** or **Cancel**. Its natural form uses the existing
+scroll/clamp/drag behavior at small sizes and HiDPI. Selection/preview changes
+never call show/move/adjustSize to reanchor a manually placed panel.
+
+### Temporary source picking
+
+`CommandSession::Kind::Sketch` carries an optional `SketchProjectionState` alongside
+the same before/after `SketchChange` used by other 2D commands. The state freezes
+the Workplane value and holds transient operand records: Part slot/stable ID,
+current local root/subshape, outer placement and actual OCCT selected owner.
+These records are only session validation data and are never persisted.
+
+Normal Sketch editing deactivates Part picking. This session temporarily
+activates `AIS_Shape::SelectionMode` for **Vertex**, **Edge**, **Face**, or all three
+in **Mixed** on visible Parts. Existing Workplane, 2D and preview presentations are
+deactivated as source pickers. Preview values remain visible in blue; confirmed
+2D geometry remains visible in its normal color. Middle-button orbit, Shift+
+middle pan and wheel zoom retain the existing navigation.
+
+Click replaces the source set, **Ctrl+click** adds/removes. OCCT owners and its
+existing cyan highlighting are authoritative: session operands are captured from
+that selection, not from a second independently highlighted selection system.
+Membership is checked against the current Part's local topology. Repeated or
+reversed occurrences of the same Part subshape become one selected source;
+different topology/Parts can remain selected while the kernel deduplicates their
+projected geometric results. Whole Parts and 2D entities are not source operands.
+Use the viewport to pick subshapes; the Structure Browser does not contain a new
+edge/vertex hierarchy. The pane's list and diagnostics identify each source by
+its current list number, Part and type.
+
+A mode change retains only sources eligible for the new mode, rebuilds the
+corresponding OCCT picker and recomputes the preview. **Mixed** retains all three
+supported source types. Clear/removal update selected owners, preview and counts
+together. A projection-specific context menu offers Clear, Cancel and Fit All
+without reconfiguring the active source picker as an ordinary face-edit command.
+
+### Preview, confirmation and cancellation
+
+Every source selection change calls the unchanged `SketchProjection::project(...)`
+with the frozen Workplane and original confirmed 2D collection. The owner's
+Part-local shape and separate outer Part transform follow the existing contract;
+`SelectedShape()` is not used to accidentally bake the AIS placement twice.
+This adapter implements no projection math. It supports the exact types and
+conservative refusal rules from phases 2–4, including all inner wires.
+
+Successful additions have separate, nonselectable blue AIS presentations on the
+target Workplane, drawn topmost to remain legible on a solid face. Points use the
+existing fixed-screen-size marker. Unchanged geometry keeps its preview UUID
+across recalculation. A failed batch displays the kernel's source/wire/edge
+diagnostics, clears all additions and disables OK; no partial result is presented
+as valid. The pane distinguishes selected source count from deduplicated output
+count. A fully duplicate valid batch can close with OK without making history or
+dirtying the document.
+
+OK/Enter rechecks Workplane and source identity, membership, visibility and
+placement, then calls the same kernel again and compares with the displayed
+candidate. Changed/in-place edited source geometry cancels rather than silently
+committing a different result. Valid unchanged additions retain the preview IDs
+and append as one `SketchChange`. One Undo removes the whole projection, one Redo
+restores the same values/IDs; the original confirmed 2D collection stays intact.
+Normal Sketch picking is restored and confirmed history clears all selection as
+before. The Structure Browser is rebuilt through `sketchEntitiesChanged`.
+
+Cancel, Escape and panel close discard all preview and source owners. Safely
+pickable pre-command Sketch selection is restored on Cancel/no-op, with no model,
+dirty-state or history change. Start of another command cancels first. Target
+change/deactivation/deletion, source invalidation, New, successful Open and
+accepted document close clean up the session. A refused close or failed Open
+keeps the current document intact. Save/Save As capture only confirmed values
+and current camera; pending projection remains active with its selection/history.
+Results are ordinary independent Construction values: no source links or feature
+history. Curves use schema v3, points cause v4, and existing v1–v4 reading remains.
+
+### Reference evidence and validation scope
+
+The supplied v16 Getting Started pages `part_modify_ex1a1.html` (explicit grouped
+edge selection), `part_modify_ex34.html` (Preview then OK) and `wp_on_face.html`
+(Workplane as a 2D profile context) support those general workflow concepts. They
+do not establish this Project command's exact pane, mode labels, shortcuts,
+cancel semantics or automatic live preview. Those are explicit OpenDesigner
+choices aligned with its current selection and command-session architecture.
+No proprietary text/assets are copied into the repository.
+
+`sketch-projection-sessions` and its HiDPI run use real viewport mouse picks and
+OCCT owners to cover mode filtering, multi-Part placement, reversed duplicates,
+highlighting, point/line/circle/arc/hole preview, atomic failure diagnostics,
+stable UUIDs, no-op/OK/Cancel/close, browser rebuild, source/target invalidation,
+Save/Save As/Open, shared history and panel drag/resize/docking. Existing geometry
+and v1–v4 tests remain mandatory. The source immutability assertion compares exact
+B-Rep curves/surfaces/locations/topological connections without mesh caches;
+XCAF's `Free` bookkeeping flag is normalized for that test, not changed in the model.
+
+Native Fedora KDE visual/focus/mixed-monitor verification is pending in
+[GUI tests A–H](GUI_TEST_PLAN.md). No ellipses/splines, silhouettes, hidden-line
+removal, automatic contour repair or associative updates are introduced. On
+periodic faces the projected boundary set can contain open/retraced seam curves;
+it is not certified as a closed or extrudable Profile.
+
+Phase-5 automated validation: complete CMake Release build PASS; all 40 CTests
+PASS (92.48 seconds) on isolated Xvfb with Qt xcb/software OpenGL. Both new session
+tests also pass on a 1280×1024 display matching CI (6.43 seconds), including the
+200% HiDPI run. Existing geometric projection, v1–v4 storage, command sessions,
+selection/history, 2D tools and 3D modeling regressions pass. `git diff --check`
+and explicit changed/new text-file artifact/secret-pattern checks pass. Native
+Fedora KDE GUI approval remains pending in the linked plan.
