@@ -14,6 +14,7 @@
 #include <TopoDS_Iterator.hxx>
 #include <TopoDS_Wire.hxx>
 #include <gp_Cone.hxx>
+#include <gp_Cylinder.hxx>
 #include <gp_Elips.hxx>
 #include <gp_Lin2d.hxx>
 #include <gp_Pln.hxx>
@@ -260,6 +261,159 @@ Point collapsedPole(const Source& source,const TopoDS_Face& face,const gp_Ax3& f
     require(vertices==2,Code::DegenerateEdge,"The degenerated edge does not have two verifiable endpoint occurrences.");
     return local(pole,source.partPlacement,frame,tolerance);
 }
+// Only certify complete rectangular UV trims. A UV bounding box alone cannot
+// prove that a generator stays inside a face with holes or oblique/curved caps.
+std::vector<Piece> cylinderSilhouettes(const Source& source,const TopoDS_Face& face,
+        const GeomAdaptor_Surface& surface,const TopLoc_Location& location,const gp_Ax3& frame,double tolerance) {
+    const auto cylinder=surface.Cylinder();
+    const auto surfacePlacement=location.Transformation();
+    const auto direction=[&](const gp_Dir& d) {
+        std::array<long double,3> result{};
+        for(int r=1;r<=3;++r) for(int c=1;c<=3;++c) result[r-1]+=static_cast<long double>(surfacePlacement.Value(r,c))*d.Coord(c);
+        return result;
+    };
+    const auto sx=direction(cylinder.XAxis().Direction()),sy=direction(cylinder.YAxis().Direction()),sz=direction(cylinder.Axis().Direction());
+    const auto residual=[&](const gp_Pnt& point,double v,long double c,long double s) {
+        std::array<long double,3> result{};
+        for(int r=1;r<=3;++r) {
+            result[r-1]=static_cast<long double>(surfacePlacement.Value(r,4))-point.Coord(r);
+            for(int j=1;j<=3;++j) result[r-1]+=static_cast<long double>(surfacePlacement.Value(r,j))*cylinder.Location().Coord(j);
+            result[r-1]+=cylinder.Radius()*(c*sx[r-1]+s*sy[r-1])+v*sz[r-1];
+        }
+        return result;
+    };
+    const auto norm=[](const auto& a){return std::hypot(a[0],a[1],a[2]);};
+    struct Side {gp_Pnt2d a,b;bool horizontal,reversed;};
+    std::vector<Side> edges;size_t wires=0;
+    for(TopoDS_Iterator it(face);it.More();it.Next()) {
+        require(it.Value().ShapeType()==TopAbs_WIRE && ++wires==1,Code::UnsupportedSilhouetteTrim,
+                "Cylinder silhouettes require one full rectangular UV boundary without holes.");
+        for(TopoDS_Iterator edge(it.Value());edge.More();edge.Next()) {
+            require(edge.Value().ShapeType()==TopAbs_EDGE,Code::UnsupportedSilhouetteTrim,"Invalid cylindrical trim topology.");
+            double first,last;const auto uv=BRep_Tool::CurveOnSurface(TopoDS::Edge(edge.Value()),face,first,last);
+            require(!uv.IsNull() && std::isfinite(first) && std::isfinite(last) && !Precision::IsInfinite(first)
+                    && !Precision::IsInfinite(last) && last>first,Code::UnsupportedSilhouetteTrim,
+                    "Cylinder silhouettes require finite verifiable boundary p-curves.");
+            const Geom2dAdaptor_Curve curve(uv,first,last);
+            require(curve.GetType()==GeomAbs_Line,Code::UnsupportedSilhouetteTrim,
+                    "Curved cylinder trims are not supported for exact finite silhouettes.");
+            const auto direction=curve.Line().Direction();
+            require(direction.X()==0 || direction.Y()==0,Code::UnsupportedSilhouetteTrim,
+                    "Oblique cylinder trims are not supported for exact finite silhouettes.");
+            const auto a=curve.Value(first),b=curve.Value(last);
+            require(std::isfinite(a.X()) && std::isfinite(a.Y()) && std::isfinite(b.X()) && std::isfinite(b.Y()),
+                    Code::NumericalFailure,"Cylinder trim coordinates are not finite.");
+            // Certify the entire exact 3D boundary against its cylinder p-curve.
+            // BRepCheck alone may accept a larger stored edge/face tolerance.
+            const BRepAdaptor_Curve boundary(TopoDS::Edge(edge.Value()));
+            require(boundary.Is3DCurve() && boundary.FirstParameter()==first && boundary.LastParameter()==last,
+                    Code::UnsupportedSilhouetteTrim,"Cylinder boundary parameterizations do not match their p-curves.");
+            long double error=0;
+            if(direction.Y()==0) {
+                require(boundary.GetType()==GeomAbs_Circle,Code::UnsupportedSilhouetteTrim,
+                        "A rectangular cylinder cap must be an analytic circular edge.");
+                const auto cap=boundary.Circle();const long double phase=curve.Line().Location().X();
+                const auto c=std::cos(phase),s=std::sin(phase);
+                auto p=sx,q=sy;
+                for(int i=0;i<3;++i) {
+                    p[i]=cylinder.Radius()*(c*sx[i]+s*sy[i])-cap.Radius()*cap.XAxis().Direction().Coord(i+1);
+                    q[i]=direction.X()*cylinder.Radius()*(-s*sx[i]+c*sy[i])-cap.Radius()*cap.YAxis().Direction().Coord(i+1);
+                }
+                error=norm(residual(cap.Location(),a.Y(),0,0))+norm(p)+norm(q);
+            } else {
+                require(boundary.GetType()==GeomAbs_Line,Code::UnsupportedSilhouetteTrim,
+                        "A rectangular cylinder seam must be an analytic straight edge.");
+                gp_Pnt at;gp_Vec tangent;boundary.D1(first,at,tangent);auto delta=sz;
+                for(int i=0;i<3;++i) delta[i]=direction.Y()*sz[i]-tangent.Coord(i+1);
+                error=norm(residual(at,a.Y(),std::cos(static_cast<long double>(a.X())),std::sin(static_cast<long double>(a.X()))))
+                    +(static_cast<long double>(last)-first)*norm(delta);
+            }
+            require(std::isfinite(error) && error*std::abs(source.partPlacement.ScaleFactor())<=tolerance,
+                    Code::NumericalFailure,"Cylinder boundary curves do not agree with the trimmed surface within projection tolerance.");
+            edges.push_back({a,b,direction.Y()==0,edge.Value().Orientation()==TopAbs_REVERSED});
+        }
+    }
+    require(!edges.empty(),Code::UnsupportedSilhouetteTrim,"Cylinder silhouettes require a finite boundary.");
+    double u0=edges.front().a.X(),u1=u0,v0=edges.front().a.Y(),v1=v0;
+    for(const auto& e:edges) for(const auto p:{e.a,e.b}) {
+        u0=std::min(u0,p.X());u1=std::max(u1,p.X());v0=std::min(v0,p.Y());v1=std::max(v1,p.Y());
+    }
+    const auto placement=source.partPlacement*location.Transformation();
+    require(finite(placement),Code::InvalidPlacement,"The combined cylinder placement is invalid.");
+    const long double scale=std::abs(placement.ScaleFactor());
+    const long double radius=scale*cylinder.Radius();
+    const long double uNoise=angularRoundoff*std::max({1.,std::abs(u0),std::abs(u1)});
+    const long double vNoise=angularRoundoff*std::max({1.,std::abs(v0),std::abs(v1)});
+    require(radius*uNoise<=tolerance && scale*vNoise<=tolerance,Code::NumericalFailure,
+            "Cylinder trim roundoff exceeds the projection tolerance.");
+    require(std::abs((static_cast<long double>(u1)-u0)-turn)<=uNoise,Code::UnsupportedSilhouetteTrim,
+            "Cylinder silhouettes currently require a complete 360-degree mantle.");
+    require(radius>tolerance && scale*(static_cast<long double>(v1)-v0)>tolerance,Code::CollapsedProjection,
+            "The cylinder radius or finite height is tolerance-sized.");
+    std::array<std::vector<std::pair<double,double>>,4> sides;
+    for(const auto& e:edges) {
+        if(e.horizontal) {
+            const auto side=std::abs(static_cast<long double>(e.a.Y())-v0)<=vNoise?0:1;
+            require(std::abs(static_cast<long double>(e.a.Y())-(side==0?v0:v1))<=vNoise,Code::UnsupportedSilhouetteTrim,
+                    "Cylinder caps do not form a rectangular UV trim.");
+            sides[side].emplace_back(std::min(e.a.X(),e.b.X()),std::max(e.a.X(),e.b.X()));
+        } else {
+            const auto side=std::abs(static_cast<long double>(e.a.X())-u0)<=uNoise?2:3;
+            require(std::abs(static_cast<long double>(e.a.X())-(side==2?u0:u1))<=uNoise,Code::UnsupportedSilhouetteTrim,
+                    "Cylinder seams do not form a rectangular UV trim.");
+            sides[side].emplace_back(std::min(e.a.Y(),e.b.Y()),std::max(e.a.Y(),e.b.Y()));
+        }
+    }
+    for(size_t i=0;i<sides.size();++i) {
+        auto& intervals=sides[i];std::sort(intervals.begin(),intervals.end());
+        long double cursor=i<2?u0:v0;const auto noise=i<2?uNoise:vNoise;
+        for(const auto [a,b]:intervals) {
+            require(b>a && std::abs(static_cast<long double>(a)-cursor)<=noise,Code::UnsupportedSilhouetteTrim,
+                    "Cylinder trim intervals contain gaps or overlaps.");cursor=b;
+        }
+        require(!intervals.empty() && std::abs(cursor-(i<2?u1:v1))<=noise,Code::UnsupportedSilhouetteTrim,
+                "Cylinder trim sides do not cover one complete bounded mantle.");
+    }
+    long double area=0;
+    for(const auto& e:edges) {
+        const long double ax=static_cast<long double>(e.a.X())-u0,ay=static_cast<long double>(e.a.Y())-v0;
+        const long double bx=static_cast<long double>(e.b.X())-u0,by=static_cast<long double>(e.b.Y())-v0;
+        area+=(e.reversed?-1:1)*(ax*by-bx*ay);
+    }
+    require(area>0,Code::UnsupportedSilhouetteTrim,
+            "The cylindrical trim does not bound the finite rectangular interior.");
+    const auto x=localDirection(cylinder.XAxis().Direction(),placement,frame);
+    const auto y=localDirection(cylinder.YAxis().Direction(),placement,frame);
+    const auto axis=localDirection(cylinder.Axis().Direction(),placement,frame);
+    const long double radial=std::hypot(x[2],y[2]);
+    require(radial>angularRoundoff,Code::CollapsedProjection,
+            "A cylinder viewed along its axis has no two distinct finite silhouette lines.");
+    require(angularRoundoff*radius/radial<=tolerance,Code::NumericalFailure,
+            "The cylinder axis is too nearly parallel to the projection direction for reliable silhouettes.");
+    // Surface normal dot view direction = Nx*cos(u)+Ny*sin(u)=0.
+    // The two exact radial directions are +/- (Ny,-Nx)/hypot(Nx,Ny).
+    const long double c=y[2]/radial,s=-x[2]/radial;
+    const auto center=local(cylinder.Location(),placement,frame,tolerance);
+    require(angularRoundoff*std::max({radius,scale*std::abs(static_cast<long double>(v0)),scale*std::abs(static_cast<long double>(v1)),
+                std::abs(static_cast<long double>(center.x)),std::abs(static_cast<long double>(center.y))})<=tolerance,
+            Code::NumericalFailure,"Cylinder silhouette coordinate roundoff exceeds tolerance.");
+    const auto endpoint=[&](double v,int side) {
+        const auto coord=[&](double origin,long double dx,long double dy,long double dz) {
+            const long double value=origin+side*radius*(c*dx+s*dy)+scale*v*dz;const double stored=double(value);
+            require(std::isfinite(stored) && std::abs(value-stored)<=tolerance,Code::NumericalFailure,
+                    "A finite cylinder silhouette endpoint cannot be stored within tolerance.");return stored;
+        };
+        return Point{coord(center.x,x[0],y[0],axis[0]),coord(center.y,x[1],y[1],axis[1])};
+    };
+    std::vector<Piece> result;
+    for(int side:{1,-1}) {
+        const Segment line{endpoint(v0,side),endpoint(v1,side)};
+        require(std::hypot(line.end.x-line.start.x,line.end.y-line.start.y)>tolerance,Code::CollapsedProjection,
+                "The cylinder silhouette collapses to a point or tolerance-sized span.");
+        result.push_back({line,QString("Cylinder silhouette %1: ").arg(result.size()+1)});
+    }
+    return result;
+}
 std::vector<Piece> faceGeometry(const Source& source,const gp_Ax3& frame,double tolerance,std::vector<QString>& skipped) {
     // Face reversal changes surface orientation, not the boundary's geometric
     // set. Keep each wire's own traversal, with all cumulative locations.
@@ -269,6 +423,8 @@ std::vector<Piece> faceGeometry(const Source& source,const gp_Ax3& frame,double 
     TopLoc_Location surfaceLocation;const auto surface=BRep_Tool::Surface(face,surfaceLocation);
     require(!surface.IsNull() && finite(surfaceLocation.Transformation()),Code::InvalidPlacement,"The face surface placement is invalid.");
     GeomAdaptor_Surface adaptor(surface);
+    const auto silhouettes=adaptor.GetType()==GeomAbs_Cylinder
+        ?cylinderSilhouettes(source,face,adaptor,surfaceLocation,frame,tolerance):std::vector<Piece>{};
     if(adaptor.GetType()==GeomAbs_Plane) {
         auto normal=adaptor.Plane().Axis().Direction();normal.Transform(surfaceLocation.Transformation());
         require(std::abs(localDirection(normal,source.partPlacement,frame)[2])>angularRoundoff,
@@ -327,6 +483,7 @@ std::vector<Piece> faceGeometry(const Source& source,const gp_Ax3& frame,double 
         if(!near(*previous,*beginning,tolerance)) throw Failure{Code::InvalidFaceBoundary,wireContext+"The projected wire is not closed within tolerance."};
     }
     require(wireIndex>0,Code::InvalidFaceBoundary,"The face has no boundary wires.");
+    result.insert(result.end(),silhouettes.begin(),silhouettes.end());
     return result;
 }
 std::optional<Sketch::Circle> support(const Sketch::Geometry& geometry) {

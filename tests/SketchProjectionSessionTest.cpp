@@ -249,6 +249,30 @@ struct SketchProjectionSessionTest {
             && v.context_->NbSelected()==0 && checkBoundary(v.sketchEntities_),"Open lost exact overlapping face or left history/selection");
         w.documentDirty_=false;
     }
+    static void cylinderSilhouettes() {
+        MainWindow w;setup(w);auto& v=*w.viewport_;const auto baseline=v.sketchEntities_;const auto history=v.undoStack_.size();
+        gp_Trsf placement;placement.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),0.65);placement.SetTranslationPart(gp_Vec(95,35,0));
+        v.boxes_[2].orientation=placement;v.boxes_[2].presentation->SetLocalTransformation(placement);
+        TopoDS_Face face;for(TopExp_Explorer it(v.boxes_[2].shape,TopAbs_FACE);it.More();it.Next())
+            if(BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType()==GeomAbs_Cylinder) {face=TopoDS::Face(it.Current());break;}
+        check(!face.IsNull(),"cylinder mantle fixture missing");v.startSketchProjection();pick(v,{{2,face}});preview(v,5);
+        const auto& additions=v.commandSession_->projection->result.additions;
+        check(std::count_if(additions.begin(),additions.end(),[](const auto& e){return std::holds_alternative<Sketch::Ellipse>(e.geometry);})==2
+            && std::count_if(additions.begin(),additions.end(),[](const auto& e){return std::holds_alternative<Sketch::Segment>(e.geometry);})==3,
+            "cylinder preview lost rims, seam or silhouette segments");
+        NativeDocumentSnapshot pending;check(v.exportDocumentSnapshot(pending) && pending.sketchEntities==baseline,"cylinder preview leaked into Save snapshot");
+        v.cancelCommandSession();check(v.sketchEntities_==baseline && v.undoStack_.size()==history && v.sketchPreviews_.empty(),"cylinder Cancel mutated document/history");
+        v.startSketchProjection();pick(v,{{2,face}});preview(v,5);auto expected=baseline;
+        expected.insert(expected.end(),v.commandSession_->projection->result.additions.begin(),v.commandSession_->projection->result.additions.end());
+        v.confirmCommandSession();check(v.sketchEntities_==expected && v.undoStack_.size()==history+1,"cylinder projection not one SketchChange");
+        v.undoPull();check(v.sketchEntities_==baseline && v.context_->NbSelected()==0,"cylinder Undo left geometry/selection");
+        v.redoPull();check(v.sketchEntities_==expected && v.selectedSketchIds_.empty() && v.context_->NbSelected()==0,"cylinder Redo changed stable values/selection");
+        v.startSketchProjection();pick(v,{{2,face.Reversed()}});preview(v,0);w.documentDirty_=false;v.confirmCommandSession();
+        check(v.undoStack_.size()==history+1 && !w.documentDirty_,"repeated cylinder changed history/dirty state");
+        QTemporaryDir dir;QString error;NativeDocumentSnapshot saved,loaded;check(v.exportDocumentSnapshot(saved),"cylinder snapshot failed");
+        check(NativeDocumentStorage::save(dir.filePath("cylinder.odc"),saved,error) && NativeDocumentStorage::load(dir.filePath("cylinder.odc"),loaded,error)
+            && loaded.sketchEntities==expected,"cylinder session lost exact silhouettes in Save/Open");w.documentDirty_=false;
+    }
     static void conicHistory() {
         MainWindow w;setup(w);auto& v=*w.viewport_;const auto baseline=v.sketchEntities_;const auto history=v.undoStack_.size();
         // Tilt the existing analytic elliptical prism: both edge and face modes
@@ -327,6 +351,6 @@ struct SketchProjectionSessionTest {
         check(bounds().contains(panel->frameGeometry()),"viewport restore lost projection panel");
         key(*panel->mode,Qt::Key_Escape);check(!v.commandSession_ && v.sketchPreviews_.empty(),"panel-focused Escape did not cancel");w.documentDirty_=false;
     }
-    static void run() {availabilityAndPicking();commitHistoryStorage();existingConstructionOverlap();conicHistory();failuresAndLifecycle();panelAndNavigation();}
+    static void run() {availabilityAndPicking();commitHistoryStorage();existingConstructionOverlap();cylinderSilhouettes();conicHistory();failuresAndLifecycle();panelAndNavigation();}
 };
 void runSketchProjectionSessions() {SketchProjectionSessionTest::run();}

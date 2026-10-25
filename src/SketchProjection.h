@@ -20,7 +20,7 @@ enum class Code {
     MissingCurve, NonlinearEdge, UnboundedEdge, DegenerateEdge,
     InvalidBRep, CollapsedProjection, NumericalFailure, KernelFailure,
     Duplicate, PartialOverlap, NonCircularProjection, UnsupportedCircularSpan,
-    InvalidFaceBoundary, DegenerateSkipped, UnsupportedConicComparison
+    InvalidFaceBoundary, DegenerateSkipped, UnsupportedConicComparison, UnsupportedSilhouetteTrim
 };
 struct Diagnostic {
     Code code;
@@ -53,7 +53,9 @@ struct Result {
 // for duplicate/overlap comparison, including circular-limit cross-type cases.
 // Faces expand all actual outer/inner wires into those same analytic curves.
 // Validate complete closed wire walks before deduplication; no endpoint points,
-// silhouette or contour reconstruction. Proven spherical/conical pole edges
+// general silhouette or contour reconstruction. Complete rectangularly trimmed
+// analytic cylinders additionally supply their two exact finite generators.
+// Complex/partial cylinder trims fail explicitly. Proven spherical/conical pole edges
 // may be skipped with a non-error diagnostic. Other degenerate edges fail.
 // Empty or fully duplicate requests succeed with no additions. New IDs are
 // allocated once for the returned values, not derived from source topology.
