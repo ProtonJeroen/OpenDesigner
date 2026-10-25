@@ -6,6 +6,11 @@
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepTools.hxx>
+#include <BRepCheck_Analyzer.hxx>
+#include <BRepTools_WireExplorer.hxx>
+#include <BRep_Tool.hxx>
+#include <TopExp.hxx>
+#include <gp_Pln.hxx>
 #include <BRep_Builder.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
@@ -125,6 +130,116 @@ void nativeAndTransforms() {
     s=edge(gp_Circ(axes(pi/4,0.3),10));s.partPlacement.SetTranslation(gp_Vec(1.e20,-1.e20,1.e20));
     r=project({s},distant);check(std::get<Ellipse>(one(r).geometry).center==Point{3,-7},"large common translation erased local center");
 }
+Source fromGeometry(const Geometry& geometry) {
+    Entity e;e.workplaneId=plane().id;e.role=Role::Construction;e.geometry=geometry;
+    return {Sketch::shape(e,plane().frame),{},"conic comparison source"};
+}
+void count(const Result& r,size_t n) {
+    if(!r.success || r.additions.size()!=n) {
+        std::cerr<<"Expected "<<n<<" additions, got "<<r.additions.size()<<"\n";
+        for(const auto& d:r.diagnostics) std::cerr<<int(d.code)<<": "<<d.message.toStdString()<<'\n';
+    }
+    check(r.success && r.additions.size()==n,"unexpected conic integration result");
+}
+void conicDomains() {
+    const auto wp=plane();const Ellipse e{{2,-3},10,4,0.4};const auto full=fromGeometry(e);
+    auto flipped=e;flipped.axisAngle+=pi;auto periodic=e;periodic.axisAngle+=4*turn;
+    count(project({full,fromGeometry(flipped),fromGeometry(periodic)},wp),1);
+    auto existing=project({full},wp).additions;existing[0].visible=false;existing[0].selectable=false;
+    auto r=project({fromGeometry(flipped)},wp,existing);count(r,0);
+    check(!r.changed() && r.diagnostics[0].code==Code::Duplicate && r.diagnostics[0].existingEntityId==existing[0].id,"duplicate-only projection is not a no-op");
+    for(auto role:{Role::Construction,Role::Profile}) {
+        auto others=existing;others[0].role=role;if(role==Role::Construction) others[0].workplaneId="other-wp";
+        count(project({full},wp,others),1);
+    }
+    for(Point shift:{Point{5,0},Point{20,0},Point{30,0}}) {
+        auto loose=e;loose.axisAngle=0;auto base=loose;loose.center.x+=shift.x;
+        count(project({fromGeometry(base),fromGeometry(loose)},wp),2); // Crossing, tangent and disjoint.
+    }
+    auto rotated=e;rotated.axisAngle+=0.7;count(project({full,fromGeometry(rotated)},wp),2);
+    auto nearby=e;nearby.center.x+=0.5e-7;count(project({full,fromGeometry(nearby)},wp),1);
+    nearby.center.x+=2.e-7;count(project({full,fromGeometry(nearby)},wp),2);
+    Ellipse round{{},10,10-1.e-9,0};auto roundRotated=round;roundRotated.axisAngle=1.3;
+    count(project({fromGeometry(round),fromGeometry(roundRotated)},wp),1); // No principal-axis ambiguity near circular limit.
+    for(double sweep:{0.7,pi,4.8,-0.7,-pi,-4.8}) {
+        const EllipticalArc a{e,5.9,sweep};auto phase=a;phase.ellipse.axisAngle+=pi;phase.startParameter-=pi;
+        auto periodicArc=a;periodicArc.startParameter+=turn;
+        const auto source=fromGeometry(a);const auto reversed=fromGeometry(reversedEllipticalArc(a));
+        count(project({source,reversed,fromGeometry(phase),fromGeometry(periodicArc)},wp),1);
+        const auto saved=project({source},wp).additions;count(project({reversed},wp,saved),0);
+        refused(project({full,source},wp),Code::PartialOverlap);refused(project({source,full},wp),Code::PartialOverlap);
+        auto hidden=saved;hidden[0].visible=false;hidden[0].selectable=false;
+        const auto overlapResult=project({full},wp,hidden);refused(overlapResult,Code::PartialOverlap);
+        check(overlapResult.diagnostics[0].existingEntityId==hidden[0].id && overlapResult.diagnostics[0].sourceIndex==0,"conic overlap diagnostic lost provenance");
+        // An existing overlapping collection must not turn a duplicate into an error.
+        auto old=existing;old.push_back(saved[0]);count(project({source},wp,old),0);
+    }
+    for(double start:{0.,0.3,5.9}) {
+        const auto a=fromGeometry(EllipticalArc{e,start,pi});
+        const auto b=fromGeometry(EllipticalArc{e,start+pi,pi});
+        count(project({a,b},wp),2); // Complementary arcs share endpoints only.
+    }
+    count(project({fromGeometry(EllipticalArc{e,5.8,turn-5.8}),fromGeometry(EllipticalArc{e,0,0.4})},wp),2);
+    count(project({fromGeometry(EllipticalArc{e,0,1.e-6}),fromGeometry(EllipticalArc{e,1.e-6,turn-1.e-6})},wp),2);
+    refused(project({fromGeometry(EllipticalArc{e,5.8,1.4}),fromGeometry(EllipticalArc{e,0.1,0.5})},wp),Code::PartialOverlap);
+    refused(project({fromGeometry(EllipticalArc{e,0,pi}),fromGeometry(EllipticalArc{e,pi-1.e-9,0.7})},wp),Code::PartialOverlap);
+    const Ellipse circular{{},10,10,2.1};
+    const auto circle=fromGeometry(Circle{{},10});count(project({circle,fromGeometry(circular)},wp),1);
+    count(project({fromGeometry(circular),circle},wp),1);
+    const Arc arc{{},10,0.4,2.7};const EllipticalArc ellipticalArc{circular,0.4-circular.axisAngle,2.7};
+    count(project({fromGeometry(arc),fromGeometry(reversedEllipticalArc(ellipticalArc))},wp),1);
+    refused(project({circle,fromGeometry(ellipticalArc)},wp),Code::PartialOverlap);
+    count(project({fromGeometry(arc),fromGeometry(EllipticalArc{circular,0.4+2.7-circular.axisAngle,turn-2.7})},wp),2);
+}
+void ellipticalFaces() {
+    const auto wp=plane();const auto a=axes(pi/4,0.3);
+    const auto outer=BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(gp_Circ(a,10)).Edge()).Wire();
+    const auto inner=BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(gp_Circ(a,3)).Edge()).Wire();
+    BRepBuilderAPI_MakeFace make(outer);make.Add(TopoDS::Wire(inner.Reversed()));
+    check(BRepCheck_Analyzer(make.Face()).IsValid(),"annulus fixture invalid");
+    for(const auto& face:{make.Face(),TopoDS::Face(make.Face().Reversed())}) {
+        auto result=project({{face,{},"tilted annulus"}},wp);count(result,2);
+        for(const auto& e:result.additions) check(std::holds_alternative<Ellipse>(e.geometry),"tilted annulus lost exact ellipse type");
+        const auto repeat=project({{face.Reversed(),{},"repeat annulus"}},wp,result.additions);count(repeat,0);
+    }
+    // One closed boundary containing straight, circular and elliptical pieces.
+    BRepBuilderAPI_MakeWire wire;
+    wire.Add(BRepBuilderAPI_MakeEdge(gp_Elips(gp_Ax2(),6,4),-pi/2,pi/2).Edge());
+    wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(0,4,0),gp_Pnt(-10,4,0)).Edge());
+    wire.Add(BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(gp_Pnt(-10,0,0),gp_Dir(0,0,1)),4),pi/2,3*pi/2).Edge());
+    wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(-10,-4,0),gp_Pnt(0,-4,0)).Edge());
+    for(bool reverse:{false,true}) {
+        const auto boundary=reverse?TopoDS::Wire(wire.Wire().Reversed()):wire.Wire();
+        const auto face=BRepBuilderAPI_MakeFace(boundary).Face();check(BRepCheck_Analyzer(face).IsValid(),"mixed boundary fixture invalid");
+        Source source{face,{},"mixed boundary"};
+        for(bool tilt:{false,true}) {
+            if(tilt) source.partPlacement.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,0,0)),0.4);
+            const auto result=project({source},wp);count(result,4);
+            std::vector<std::array<Point,2>> ends;
+            for(const auto& entity:result.additions) {
+                if(const auto* g=std::get_if<Segment>(&entity.geometry)) ends.push_back({g->start,g->end});
+                if(const auto* g=std::get_if<Arc>(&entity.geometry)) ends.push_back({Point{g->center.x+g->radius*std::cos(g->startAngle),g->center.y+g->radius*std::sin(g->startAngle)},
+                    Point{g->center.x+g->radius*std::cos(g->startAngle+g->sweepAngle),g->center.y+g->radius*std::sin(g->startAngle+g->sweepAngle)}});
+                if(const auto* g=std::get_if<EllipticalArc>(&entity.geometry)) ends.push_back(ellipticalArcEndpoints(*g));
+            }
+            check(ends.size()==4,"missing stored boundary endpoints");
+            for(size_t i=0;i<ends.size();++i) check(near(ends[i][1],ends[(i+1)%ends.size()][0]),"stored elliptic wire opened after projection");
+            // A selected face and an explicitly selected boundary edge deduplicate together.
+            const auto edge=BRepTools_WireExplorer(boundary,face).Current();
+            count(project({source,{edge,source.partPlacement,"shared boundary edge"}},wp),4);
+        }
+    }
+    // A loose-tolerance B-Rep must not permit stored conic endpoint gaps.
+    auto gapped=BRepBuilderAPI_MakeFace(wire.Wire()).Face();BRep_Builder builder;
+    TopoDS_Edge elliptic;
+    for(BRepTools_WireExplorer edges(wire.Wire(),gapped);edges.More();edges.Next())
+        if(BRepAdaptor_Curve(edges.Current()).GetType()==GeomAbs_Ellipse) {elliptic=edges.Current();break;}
+    for(auto vertex:{TopExp::FirstVertex(elliptic),TopExp::LastVertex(elliptic)}) builder.UpdateVertex(vertex,1.e-3);
+    TopLoc_Location location;double first,last;auto curve=BRep_Tool::Curve(elliptic,location,first,last)->Copy();
+    curve->Translate(gp_Vec(0,1.e-5,0));builder.UpdateEdge(elliptic,Handle(Geom_Curve)::DownCast(curve),location,1.e-3);
+    check(BRepCheck_Analyzer(gapped).IsValid(),"loose elliptical gap fixture invalid");
+    refused(project({{make.Face(),{},"good annulus"},{gapped,{},"gapped ellipse"}},wp),Code::InvalidFaceBoundary);
+}
 void safetyAndPersistence() {
     const auto wp=plane();auto s=edge(gp_Circ(axes(pi/4),10));
     for(const auto& bad:{edge(gp_Circ(axes(pi/2),10)),edge(gp_Circ(axes(pi/2-1.e-10),10))}) refused(project({bad},wp),Code::CollapsedProjection);
@@ -142,20 +257,20 @@ void safetyAndPersistence() {
     for(bool reverseOrder:{false,true}) {
         auto duplicate=s;duplicate.shape.Reverse();
         const auto pair=reverseOrder?std::vector{duplicate,s}:std::vector{s,duplicate};
-        refused(project(pair,wp),Code::UnsupportedConicComparison);
+        const auto duplicates=project(pair,wp);check(duplicates.success && duplicates.additions.size()==1 && duplicates.diagnostics.size()==1,"reversed conic not deduplicated");
         const auto circle=edge(gp_Circ(gp_Ax2(),10));
-        refused(project(reverseOrder?std::vector{s,circle}:std::vector{circle,s},wp),Code::UnsupportedConicComparison);
+        const auto loose=project(reverseOrder?std::vector{s,circle}:std::vector{circle,s},wp);
+        check(loose.success && loose.additions.size()==2,"different conics incorrectly refused");
     }
     auto existing=project({edge(gp_Circ(gp_Ax2(),10))},wp).additions;existing[0].visible=false;existing[0].selectable=false;
-    const auto blocked=project({s},wp,existing);refused(blocked,Code::UnsupportedConicComparison);
-    check(blocked.diagnostics[0].sourceIndex==0 && blocked.diagnostics[0].existingEntityId==existing[0].id,"unsafe-pair diagnostic lost provenance");
+    check(project({s},wp,existing).success,"hidden disjoint circular reference blocked ellipse projection");
     existing[0].role=Role::Profile;check(project({s},wp,existing).success,"Profile conic incorrectly participates in Construction overlap");
-    existing=project({s},wp).additions;refused(project({vertex},wp,existing),Code::InvalidExistingGeometry);
+    existing=project({s},wp).additions;check(project({vertex},wp,existing).success,"existing ellipse blocked point projection");
     check(project({},wp,existing).success,"empty request failed conservative conic guard");
     const auto ellipseFace=BRepBuilderAPI_MakeFace(BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(gp_Elips(gp_Ax2(),10,5)).Edge()).Wire()).Shape();
-    refused(project({{ellipseFace,{},"ellipse face"}},wp),Code::NonlinearEdge);
+    check(project({{ellipseFace,{},"ellipse face"}},wp).success,"native elliptical boundary refused");
     const auto tiltedFace=BRepBuilderAPI_MakeFace(BRepBuilderAPI_MakeWire(TopoDS::Edge(s.shape)).Wire()).Shape();
-    refused(project({{tiltedFace,{},"tilted face"}},wp),Code::NonCircularProjection);
+    check(project({{tiltedFace,{},"tilted face"}},wp).success,"oblique circular boundary refused");
     std::ostringstream before,after;BRepTools::Write(s.shape,before);
     auto arcSource=edge(gp_Circ(axes(pi/3,0.4),8),5.8,-4.2);auto arcResult=project({arcSource},wp);
     verify(arcSource,wp,one(arcResult));auto entities=mixed.additions;entities.push_back(arcResult.additions[0]);
@@ -168,6 +283,6 @@ void safetyAndPersistence() {
 }
 int main(int argc,char** argv) {
     QCoreApplication app(argc,argv);
-    try {circularProjection();nativeAndTransforms();safetyAndPersistence();std::cout<<"Exact conic projection, signed traversal, placements and safety guards passed.\n";return 0;}
+    try {circularProjection();nativeAndTransforms();conicDomains();ellipticalFaces();safetyAndPersistence();std::cout<<"Exact conic projection, signed traversal, placements and safety guards passed.\n";return 0;}
     catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

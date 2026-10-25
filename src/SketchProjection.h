@@ -45,10 +45,9 @@ struct Result {
 // and crossings are allowed; nonzero collinear/cocircular overlaps are refused.
 // Parallel circular edges retain Circle/Arc. Oblique circles and analytic
 // ellipses use exact Ellipse/EllipticalArc coefficients and signed phase mapping.
-// Rank loss/unstable conversion fails; no tessellation/fitting. Until 6A.3b,
-// ellipse-vs-conic comparisons are refused, including within a batch; existing
-// target Construction ellipses retain the conservative request guard.
-// Elliptical face boundaries remain explicitly unsupported in this phase.
+// Rank loss/unstable conversion fails; no tessellation/fitting. Conic supports
+// use analytic symmetric-basis bounds and common periodic parameter domains
+// for duplicate/overlap comparison, including circular-limit cross-type cases.
 // Faces expand all actual outer/inner wires into those same analytic curves.
 // Validate complete closed wire walks before deduplication; no endpoint points,
 // silhouette or contour reconstruction. Proven spherical/conical pole edges

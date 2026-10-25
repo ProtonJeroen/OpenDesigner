@@ -8,20 +8,26 @@ same API. Popup placement and natural panel
 sizing are implemented separately in CommandPanelPositioner; this computation
 module does not reposition anything.
 
-## Phase 6A.3a edge extension
+## Phase 6A.3 integration
 
-Standalone oblique Circle/Arc and analytic OCCT Ellipse/elliptical-arc edges now
-produce exact Ellipse/EllipticalArc values through the same API. A scaled analytic
-coefficient decomposition preserves the signed parameter map, endpoints and
-short/long traversal. Edge-on, tolerance-sized or ill-conditioned projections
-fail explicitly; parallel circles keep the established Circle/Arc path.
+Standalone oblique Circle/Arc and analytic OCCT Ellipse/elliptical-arc edges,
+also inside outer/inner face wires, produce exact Ellipse/EllipticalArc values
+through the same API. The 6A.3a coefficient decomposition, signed traversal,
+conditioning and endpoint certificates remain unchanged. Face walks now check
+stored elliptical-arc endpoints and closure before deduplication.
 
-Elliptical face-boundaries and complete conic duplicate/overlap comparison are
-reserved for 6A.3b. Existing Construction ellipses conservatively block nonempty
-requests, and new ellipse–conic pairs are refused atomically with
-`UnsupportedConicComparison`, including disjoint pairs. A single ellipse may
-accompany points/lines. No UI/session or schema changes are introduced. The
-older phase-specific restrictions below describe those earlier milestones.
+6A.3b compares conic supports analytically using the symmetric principal-radius
+matrix. Its spectral-norm difference plus center distance bounds geometric
+support deviation within the requested tolerance, without unstable axis matching
+near circles. The common phase `w=t+axisAngle` handles axis signs, circular-limit
+cross-type equivalence, reversed traversal and periodic intervals. Duplicates
+are removed first; positive common intervals on equivalent supports fail with
+`PartialOverlap`. Complementary arcs, isolated crossings/tangencies and loose
+supports are accepted. Hidden/locked Construction references still participate;
+Profile/other-owner geometry does not. The temporary ellipse gates are removed.
+Ellipse outputs use existing schema v5; older outputs retain v3/v4 selection.
+No tessellation, silhouettes, Profile reconstruction, UI session or schema change
+is introduced. The older phase-specific restrictions below are historical.
 
 ## API and transaction boundary
 
@@ -82,7 +88,7 @@ availability, placement, finite parameters/coordinates and source length are
 checked. An infinite/half-infinite, standalone flagged degenerated, invalid or
 unsupported curve is refused. Face-contained certified poles have the explicit
 exception described in phase 4 below. Analytic lines, circles and ellipses are
-accepted, subject to the phase 6A.3a gates above. A perpendicular or nearly perpendicular edge whose projected length
+accepted, subject to the numerical checks above. A perpendicular or nearly perpendicular edge whose projected length
 is no greater than tolerance is refused as CollapsedProjection, rather than
 silently converted into a point.
 

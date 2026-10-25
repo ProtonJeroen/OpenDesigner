@@ -43,6 +43,9 @@
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <gp_Elips.hxx>
+#include <Geom_Ellipse.hxx>
+#include <Geom_BSplineCurve.hxx>
+#include <GeomConvert.hxx>
 #include <gp_Lin.hxx>
 #include <gp_Pln.hxx>
 #include <algorithm>
@@ -83,8 +86,10 @@ struct SketchProjectionSessionTest {
         Sketch::Entity existing;existing.workplaneId=wp.id;existing.name="Existing profile";existing.geometry=Sketch::Segment{{-35,-20},{-15,-20}};doc.sketchEntities={existing};
         auto cut=BRepAlgoAPI_Cut(BRepPrimAPI_MakeBox(40,30,10).Shape(),BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(20,15,-5),gp_Dir(0,0,1)),4,20).Shape()).Shape();
         const auto ellipse=BRepBuilderAPI_MakeFace(BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(gp_Elips(gp_Ax2(),9,5)).Edge()).Wire()).Face();
-        const std::vector shapes{cut,BRepPrimAPI_MakeBox(15,12,8).Shape(),BRepPrimAPI_MakeCylinder(6,12).Shape(),BRepPrimAPI_MakeCylinder(7,12,std::numbers::pi).Shape(),BRepPrimAPI_MakePrism(ellipse,gp_Vec(0,0,10)).Shape()};
-        const std::array translations{gp_Vec(),gp_Vec(65,0,5),gp_Vec(95,35,0),gp_Vec(95,-30,0),gp_Vec(-50,35,0)};
+        const auto splineFace=BRepBuilderAPI_MakeFace(BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(
+            GeomConvert::CurveToBSplineCurve(new Geom_Ellipse(gp_Elips(gp_Ax2(),9,5)))).Edge()).Wire()).Face();
+        const std::vector shapes{cut,BRepPrimAPI_MakeBox(15,12,8).Shape(),BRepPrimAPI_MakeCylinder(6,12).Shape(),BRepPrimAPI_MakeCylinder(7,12,std::numbers::pi).Shape(),BRepPrimAPI_MakePrism(ellipse,gp_Vec(0,0,10)).Shape(),BRepPrimAPI_MakePrism(splineFace,gp_Vec(0,0,10)).Shape()};
+        const std::array translations{gp_Vec(),gp_Vec(65,0,5),gp_Vec(95,35,0),gp_Vec(95,-30,0),gp_Vec(-50,35,0),gp_Vec(-90,35,0)};
         for(size_t i=0;i<shapes.size();++i) {NativePartState part;part.id=QString("projection-part-%1").arg(i);part.name=QString("Part %1").arg(i+1);part.shape=shapes[i];part.transform.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(0,0,1)),i==1?0.4:0);part.transform.SetTranslationPart(translations[i]);doc.parts.push_back(part);}
         doc.camera.eye=gp_Pnt(35,10,300);doc.camera.center=gp_Pnt(35,10,0);doc.camera.scale=180;return doc;
     }
@@ -208,6 +213,26 @@ struct SketchProjectionSessionTest {
         check(!v.commandSession_ && v.sketchPreviews_.empty() && v.undoStack_.empty() && v.redoStack_.empty() && v.context_->NbSelected()==0 && v.activeSketchWorkplaneId_.isEmpty(),"Open retained projection session/history/pickers");
         w.documentDirty_=false;
     }
+    static void conicHistory() {
+        MainWindow w;setup(w);auto& v=*w.viewport_;const auto baseline=v.sketchEntities_;const auto history=v.undoStack_.size();
+        // Tilt the existing analytic elliptical prism: both edge and face modes
+        // use the same exact kernel and one existing SketchChange transaction.
+        gp_Trsf transform;transform.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,0,0)),0.4);transform.SetTranslationPart(gp_Vec(-50,35,0));
+        v.boxes_[4].orientation=transform;
+        const auto face=top(v,4);v.startSketchProjection();pick(v,{{4,face}});preview(v,1);
+        const auto additions=v.commandSession_->projection->result.additions;
+        check(std::holds_alternative<Sketch::Ellipse>(additions[0].geometry),"elliptical face lost analytic output in session");
+        NativeDocumentSnapshot snapshot;check(v.exportDocumentSnapshot(snapshot) && snapshot.sketchEntities==baseline,"Save included elliptic preview");
+        v.cancelCommandSession();check(v.sketchEntities_==baseline && v.undoStack_.size()==history,"Cancel left conic geometry/history");
+        v.startSketchProjection();pick(v,{{4,face}});preview(v,1);const auto committed=v.commandSession_->projection->result.additions;
+        v.confirmCommandSession();auto expected=baseline;expected.insert(expected.end(),committed.begin(),committed.end());
+        check(v.sketchEntities_==expected && v.undoStack_.size()==history+1,"elliptical projection did not commit one transaction");
+        v.undoPull();check(v.sketchEntities_==baseline && v.selectedSketchIds_.empty() && v.context_->NbSelected()==0,"elliptical Undo left geometry/selection");
+        v.redoPull();check(v.sketchEntities_==expected && v.selectedSketchIds_.empty() && v.context_->NbSelected()==0,"elliptical Redo lost stable geometry");
+        v.startSketchProjection();pick(v,{{4,face.Reversed()}});preview(v,0);const auto count=v.undoStack_.size();w.documentDirty_=false;v.confirmCommandSession();
+        check(v.undoStack_.size()==count && !w.documentDirty_,"duplicate elliptic face added an Undo step");
+        w.documentDirty_=false;
+    }
     static void failuresAndLifecycle() {
         MainWindow w;setup(w);auto& v=*w.viewport_;const auto baseline=v.sketchEntities_;const auto history=v.undoStack_.size();
         const auto face=top(v);v.startSketchProjection();pick(v,{{0,face}});preview(v,5);
@@ -220,8 +245,8 @@ struct SketchProjectionSessionTest {
         check(!v.commandSession_->valid && v.sketchPreviews_.empty() && v.commandSession_->sketch->after==baseline,"bad mixed batch left partial preview");
         check(v.sketchProjectionPanel_->findChild<QPlainTextEdit*>("projectionDiagnostics")->toPlainText().contains("projects to a point"),"kernel diagnostic not shown in panel");
         v.confirmCommandSession();check(v.commandSession_ && v.sketchEntities_==baseline && v.undoStack_.size()==history,"invalid OK committed or destroyed correction workflow");
-        TopoDS_Shape unsupported;for(TopExp_Explorer it(v.boxes_[4].shape,TopAbs_EDGE);it.More();it.Next()) if(BRepAdaptor_Curve(TopoDS::Edge(it.Current())).GetType()==GeomAbs_Ellipse) {unsupported=it.Current();break;}
-        check(!unsupported.IsNull(),"unsupported-curve fixture is missing its ellipse");pick(v,{{0,face},{4,unsupported}});
+        TopoDS_Shape unsupported;for(TopExp_Explorer it(v.boxes_[5].shape,TopAbs_EDGE);it.More();it.Next()) if(BRepAdaptor_Curve(TopoDS::Edge(it.Current())).GetType()==GeomAbs_BSplineCurve) {unsupported=it.Current();break;}
+        check(!unsupported.IsNull(),"unsupported-curve fixture is missing its spline");pick(v,{{0,face},{5,unsupported}});
         check(!v.commandSession_->valid && v.sketchPreviews_.empty() && v.sketchProjectionPanel_->findChild<QPlainTextEdit*>("projectionDiagnostics")->toPlainText().contains("not approximated"),"unsupported curve diagnostic/atomic preview failed");
         pick(v,{{0,face}});preview(v,5);v.sketchProjectionPanel_->buttons->button(QDialogButtonBox::Cancel)->click();normalPicking(v);
         for(int route=0;route<3;++route) {
@@ -266,6 +291,6 @@ struct SketchProjectionSessionTest {
         check(bounds().contains(panel->frameGeometry()),"viewport restore lost projection panel");
         key(*panel->mode,Qt::Key_Escape);check(!v.commandSession_ && v.sketchPreviews_.empty(),"panel-focused Escape did not cancel");w.documentDirty_=false;
     }
-    static void run() {availabilityAndPicking();commitHistoryStorage();failuresAndLifecycle();panelAndNavigation();}
+    static void run() {availabilityAndPicking();commitHistoryStorage();conicHistory();failuresAndLifecycle();panelAndNavigation();}
 };
 void runSketchProjectionSessions() {SketchProjectionSessionTest::run();}

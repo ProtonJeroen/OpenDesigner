@@ -38,9 +38,9 @@
 - [ ] Remaining 6A.2 snapping: circle/ellipse and ellipse/ellipse intersections,
   coincident-support handling and elliptic tangent snaps. Full conic snapping
   is not yet claimed; unsupported combinations report an explicit status.
-- [ ] 6A.3: exact oblique circle/ellipse and face-boundary projection, including
-  parameter mapping and shared-support duplicate/overlap comparisons. Projection
-  behavior is unchanged in the 6A.2 drawing delivery.
+- [x] 6A.3: exact oblique circle/ellipse and face-boundary projection, including
+  parameter mapping and shared-support duplicate/overlap comparisons. Uses the
+  existing Project 3D Geometry session and native schema v5.
 - [ ] Full elliptic Overdraw remains separately gated pending its graph/domain,
   reverse traversal and ambiguity tests. Ellipse Offset/Common Tangent commands
   are outside this foundation.

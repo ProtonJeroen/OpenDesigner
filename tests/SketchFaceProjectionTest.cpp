@@ -16,6 +16,9 @@
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <Geom_Line.hxx>
+#include <Geom_Ellipse.hxx>
+#include <GeomConvert.hxx>
+#include <Geom_BSplineCurve.hxx>
 #include <Geom_Circle.hxx>
 #include <Geom_SurfaceOfRevolution.hxx>
 #include <TopExp.hxx>
@@ -216,14 +219,22 @@ void seamsAndPoles() {
 void failuresAndTolerance() {
     auto wp=plane();
     const auto ellipse=BRepBuilderAPI_MakeFace(BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(gp_Elips(gp_Ax2(),10,5)).Edge()).Wire()).Face();
-    auto r=project({source(ellipse)},wp);refused(r,Code::NonlinearEdge);check(r.diagnostics.front().message.contains("wire 1, edge 1"),"edge diagnostic lacks face boundary context");
+    auto r=project({source(ellipse)},wp);ok(r,1);
+    const auto unsupported=BRepBuilderAPI_MakeFace(BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(
+        GeomConvert::CurveToBSplineCurve(new Geom_Ellipse(gp_Elips(gp_Ax2(),10,5)))).Edge()).Wire()).Face();
+    r=project({source(unsupported)},wp);refused(r,Code::NonlinearEdge);check(r.diagnostics.front().message.contains("wire 1, edge 1"),"edge diagnostic lacks face boundary context");
     const auto ellipseHole=BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(gp_Elips(gp_Ax2(gp_Pnt(20,15,0),gp_Dir(0,0,1)),5,3)).Edge()).Wire();
     BRepBuilderAPI_MakeFace withBadHole(gp_Pln(),rectangle());withBadHole.Add(TopoDS::Wire(ellipseHole.Reversed()));
     check(BRepCheck_Analyzer(withBadHole.Face()).IsValid(),"unsupported inner contour fixture is invalid");
-    r=project({source(withBadHole.Face())},wp);refused(r,Code::NonlinearEdge);
+    r=project({source(withBadHole.Face())},wp);ok(r,5);
+    const auto unsupportedHole=BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(GeomConvert::CurveToBSplineCurve(
+        new Geom_Ellipse(gp_Elips(gp_Ax2(gp_Pnt(20,15,0),gp_Dir(0,0,1)),5,3)))).Edge()).Wire();
+    BRepBuilderAPI_MakeFace badInner(gp_Pln(),rectangle());badInner.Add(TopoDS::Wire(unsupportedHole.Reversed()));
+    check(BRepCheck_Analyzer(badInner.Face()).IsValid(),"unsupported inner contour fixture is invalid");
+    r=project({source(badInner.Face())},wp);refused(r,Code::NonlinearEdge);
     check(r.diagnostics.front().message.contains("wire 2"),"an unsupported inner wire was ignored or misdiagnosed");
     const auto disk=BRepBuilderAPI_MakeFace(circleWire()).Face();auto tilted=source(disk);tilted.partPlacement.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,0,0)),0.2);
-    refused(project({tilted},wp),Code::NonCircularProjection);
+    r=project({tilted},wp);ok(r,1);check(std::holds_alternative<Ellipse>(r.additions.front().geometry),"tilted disk did not produce an exact ellipse");
     auto edgeOn=plane();edgeOn.frame=gp_Ax3(gp_Pnt(),gp_Dir(1,0,0),gp_Dir(0,1,0));
     refused(project({source(rectangleFace())},edgeOn),Code::CollapsedProjection);
     edgeOn.frame=gp_Ax3(gp_Pnt(),gp_Dir(1,1,0),gp_Dir(0,0,1));refused(project({source(rectangleFace())},edgeOn),Code::CollapsedProjection);
@@ -243,7 +254,7 @@ void failuresAndTolerance() {
     Source unbounded=source(BRepBuilderAPI_MakeFace(gp_Pln()).Face());refused(project({unbounded},wp),Code::InvalidFaceBoundary);
     Source vertex=source(BRepBuilderAPI_MakeVertex(gp_Pnt(4,5,6)).Shape(),"valid vertex");
     for(size_t invalidIndex:{0u,2u}) {
-        std::vector batch{source(rectangleFace(2)),vertex,source(rectangleFace())};batch[invalidIndex]=source(ellipse,"unsupported source");
+        std::vector batch{source(rectangleFace(2)),vertex,source(rectangleFace())};batch[invalidIndex]=source(unsupported,"unsupported source");
         r=project(batch,wp);refused(r,Code::NonlinearEdge,invalidIndex);
     }
     auto nearly=source(rectangleFace());nearly.partPlacement.SetTranslation(gp_Vec(0.5e-7,0,50));ok(project({source(rectangleFace()),nearly},wp),4);

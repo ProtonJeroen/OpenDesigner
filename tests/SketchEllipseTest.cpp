@@ -141,7 +141,7 @@ void safeTools() {
         check(overdrawCandidates({e,line},e.workplaneId,graph,error) && graph.pieces.size()==1 && graph.notice.contains("elliptic Overdraw"),"ellipse broke existing Overdraw line workflow");
         const SketchProjection::Source vertex{BRepBuilderAPI_MakeVertex(gp_Pnt(1,2,3)).Shape(),{},"vertex"};
         const auto result=SketchProjection::project({vertex},plane(),{e});
-        check(!result.success && result.additions.empty() && result.diagnostics.front().existingEntityId==e.id,"projection bypassed unsupported ellipse overlap comparison");
+        check(result.success && result.additions.size()==1,"existing ellipse incorrectly blocked independent point projection");
         auto profile=e;profile.role=Role::Profile;check(SketchProjection::project({vertex},plane(),{profile}).success,"Profile ellipse blocked Construction projection");
         check(SketchProjection::project({},plane(),{e}).success,"empty projection request changed into an error");
     }

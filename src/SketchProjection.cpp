@@ -301,11 +301,7 @@ std::vector<Piece> faceGeometry(const Source& source,const gp_Ax3& frame,double 
                     a=b=collapsedPole(child,face,frame,tolerance);skipped.push_back(context+"Certified collapsed pole edge omitted; no endpoint point was added.");
                 } else {
                     BRepAdaptor_Curve curve(edge);
-                    require(curve.GetType()!=GeomAbs_Ellipse,Code::NonlinearEdge,
-                            "Elliptical face boundaries require phase 6A.3b; contours are not approximated.");
                     auto g=geometry(child,frame,tolerance);
-                    require(!Sketch::isElliptical(g),Code::NonCircularProjection,
-                            "Oblique conic face boundaries require phase 6A.3b; contours are not approximated.");
                     a=local(curve.Value(edge.Orientation()==TopAbs_REVERSED?curve.LastParameter():curve.FirstParameter()),source.partPlacement,frame,tolerance);
                     b=local(curve.Value(edge.Orientation()==TopAbs_REVERSED?curve.FirstParameter():curve.LastParameter()),source.partPlacement,frame,tolerance);
                     // Check the persisted Arc endpoints too, not just the B-Rep
@@ -313,6 +309,12 @@ std::vector<Piece> faceGeometry(const Source& source,const gp_Ax3& frame,double 
                     if(const auto* arc=std::get_if<Sketch::Arc>(&g)) {
                         a={arc->center.x+arc->radius*std::cos(arc->startAngle),arc->center.y+arc->radius*std::sin(arc->startAngle)};
                         b={arc->center.x+arc->radius*std::cos(arc->startAngle+arc->sweepAngle),arc->center.y+arc->radius*std::sin(arc->startAngle+arc->sweepAngle)};
+                    }
+                    if(const auto* arc=std::get_if<Sketch::EllipticalArc>(&g)) {
+                        const auto ends=Sketch::ellipticalArcEndpoints(*arc);
+                        require(near(a,ends[0],tolerance) && near(b,ends[1],tolerance),Code::NumericalFailure,
+                                "Stored elliptical boundary endpoints do not match the oriented B-Rep edge.");
+                        a=ends[0];b=ends[1];
                     }
                     result.push_back({std::move(g),context});++curves;
                 }
@@ -334,7 +336,69 @@ std::optional<Sketch::Circle> support(const Sketch::Geometry& geometry) {
 }
 bool sameSupport(const Sketch::Circle& a,const Sketch::Circle& b,double tolerance) {return near(a.center,b.center,tolerance) && std::abs(a.radius-b.radius)<=tolerance;}
 long double intervalStart(const Sketch::Arc& arc) {return normalized(static_cast<long double>(arc.startAngle)+(arc.sweepAngle<0?arc.sweepAngle:0));}
+// All supported conics have direct local frames. Write B = S R(angle),
+// S = R diag(a,b) R^T, the symmetric positive square root of B B^T.
+// Comparing S by its exact 2x2 spectral norm bounds the whole support, handles
+// axis sign changes and avoids ill-defined principal directions near circles.
+struct Conic {
+    Sketch::Ellipse ellipse;
+    bool full=true;
+    double start=0,sweep=turn;
+};
+std::optional<Conic> conic(const Sketch::Geometry& g) {
+    if(const auto* e=std::get_if<Sketch::Ellipse>(&g)) return Conic{*e};
+    if(const auto* e=std::get_if<Sketch::EllipticalArc>(&g)) return Conic{e->ellipse,false,e->startParameter,e->sweepParameter};
+    if(const auto* e=std::get_if<Sketch::Circle>(&g)) return Conic{{e->center,e->radius,e->radius,0}};
+    if(const auto* e=std::get_if<Sketch::Arc>(&g)) return Conic{{e->center,e->radius,e->radius,0},false,e->startAngle,e->sweepAngle};
+    return {};
+}
+std::array<long double,3> symmetricSupport(const Sketch::Ellipse& e) {
+    const long double c=std::cos(static_cast<long double>(e.axisAngle)),s=std::sin(static_cast<long double>(e.axisAngle));
+    const long double gap=static_cast<long double>(e.majorRadius)-e.minorRadius;
+    return {e.minorRadius+gap*c*c,e.minorRadius+gap*s*s,gap*c*s};
+}
+bool sameConic(const Conic& a,const Conic& b,double tolerance) {
+    const auto x=symmetricSupport(a.ellipse),y=symmetricSupport(b.ellipse);
+    const long double xx=x[0]-y[0],yy=x[1]-y[1],xy=x[2]-y[2];
+    const long double norm=std::abs((xx+yy)/2)+std::hypot((xx-yy)/2,xy);
+    const long double centers=std::hypot(static_cast<long double>(a.ellipse.center.x)-b.ellipse.center.x,
+                                         static_cast<long double>(a.ellipse.center.y)-b.ellipse.center.y);
+    // Under the common parameter w=t+axisAngle, every point differs by at
+    // most center distance + ||Sa-Sb||. No curve sampling or conic fitting.
+    return centers+norm<=tolerance;
+}
+long double conicStart(const Conic& c) {
+    const auto reduced=[](double t) {return std::atan2(std::sin(static_cast<long double>(t)),std::cos(static_cast<long double>(t)));};
+    return normalized(reduced(c.start)+reduced(c.ellipse.axisAngle)+(c.sweep<0?c.sweep:0));
+}
+bool duplicateConics(const Conic& a,const Conic& b,double tolerance) {
+    if(!sameConic(a,b,tolerance)) return false;
+    if(a.full || b.full) return a.full && b.full;
+    auto delta=std::abs(conicStart(a)-conicStart(b));delta=std::min(delta,turn-delta);
+    const auto radius=std::max(a.ellipse.majorRadius,b.ellipse.majorRadius);
+    return delta*radius<=tolerance && std::abs(std::abs(a.sweep)-std::abs(b.sweep))*radius<=tolerance;
+}
+bool overlapConics(const Conic& a,const Conic& b,double tolerance) {
+    if(!sameConic(a,b,tolerance)) return false;
+    if(a.full || b.full) return true;
+    const auto intervals=[](const Conic& c) {
+        const auto start=conicStart(c),end=start+std::abs(c.sweep);
+        std::vector<std::pair<long double,long double>> result{{start,std::min(end,static_cast<long double>(turn))}};
+        if(end>turn) result.emplace_back(0,end-turn);
+        return result;
+    };
+    // As with circular arcs, model tolerance must not swallow a short but
+    // positive common interval. Only phase arithmetic noise permits contact.
+    const auto noise=std::min(static_cast<long double>(angularRoundoff*turn),
+                             static_cast<long double>(tolerance)/std::max(a.ellipse.majorRadius,b.ellipse.majorRadius));
+    for(const auto& i:intervals(a)) for(const auto& j:intervals(b))
+        if(std::min(i.second,j.second)-std::max(i.first,j.first)>noise) return true;
+    return false;
+}
 bool duplicate(const Sketch::Geometry& a,const Sketch::Geometry& b,double tolerance) {
+    if(Sketch::isElliptical(a) || Sketch::isElliptical(b)) {
+        const auto ca=conic(a),cb=conic(b);return ca && cb && duplicateConics(*ca,*cb,tolerance);
+    }
     if(const auto* p=std::get_if<ConstructionPoint>(&a)) {
         const auto* q=std::get_if<ConstructionPoint>(&b);return q && near(p->position,q->position,tolerance);
     }
@@ -356,6 +420,9 @@ struct Line {
     long double distance(Point p) const {return std::abs((static_cast<long double>(p.x)-x)*dy-(static_cast<long double>(p.y)-y)*dx);}
 };
 bool overlap(const Sketch::Geometry& a,const Sketch::Geometry& b,double tolerance) {
+    if(Sketch::isElliptical(a) || Sketch::isElliptical(b)) {
+        const auto ca=conic(a),cb=conic(b);return ca && cb && overlapConics(*ca,*cb,tolerance);
+    }
     if(const auto ca=support(a),cb=support(b);ca && cb && sameSupport(*ca,*cb,tolerance)) {
         if(!std::holds_alternative<Sketch::Arc>(a) || !std::holds_alternative<Sketch::Arc>(b)) return true;
         const auto intervals=[](const Sketch::Arc& arc) {
@@ -409,13 +476,6 @@ Result project(const std::vector<Source>& sources,const Construction::Object& wo
             report(Code::InvalidExistingGeometry,"Invalid existing 2D collection: "+(error.isEmpty()?QString("duplicate identity."):error),{},{},e.id);return result;
         }
         ids.insert(e.id);
-        // Conic support/domain comparison is deferred to phase 6A.3b.
-        // Fail conservatively rather than silently accepting duplicate or
-        // overlapping circular/elliptical supports. Other owners/Profile values
-        // do not participate in Construction deduplication.
-        if(!sources.empty() && e.workplaneId==workplane.id && e.role==Sketch::Role::Construction && Sketch::isElliptical(e.geometry)) {
-            report(Code::InvalidExistingGeometry,"Projection against existing Construction ellipses requires elliptic support comparison, which is deferred to phase 6A.3b.",{},{},e.id);return result;
-        }
     }
     struct Candidate {size_t source;Sketch::Geometry geometry;QString context;};
     std::vector<Candidate> candidates;
@@ -447,23 +507,10 @@ Result project(const std::vector<Source>& sources,const Construction::Object& wo
     }
     for(size_t i=0;i<unique.size();++i) {
         const auto& c=unique[i];
-        // Until 6A.3b can certify equivalent supports/domains, never silently
-        // accept a pair that might share a conic interval (including Circle vs
-        // equal-radius Ellipse). Lines/points cannot share a conic interval.
-        const auto unchecked=[](const Sketch::Geometry& a,const Sketch::Geometry& b) {
-            return (Sketch::isElliptical(a) && (Sketch::isElliptical(b) || support(b)))
-                || (Sketch::isElliptical(b) && support(a));
-        };
-        for(const auto& e:existing) if(e.workplaneId==workplane.id && e.role==Sketch::Role::Construction) {
-            if(unchecked(c.geometry,e.geometry)) report(Code::UnsupportedConicComparison,
-                "Conic overlap comparison requires phase 6A.3b; unchecked curves are not approximated or accepted.",c.source,{},e.id);
-            else if(overlap(c.geometry,e.geometry,tolerance)) report(Code::PartialOverlap,c.context+"The projected geometry overlaps existing Construction geometry; no automatic trimming is performed.",c.source,{},e.id);
-        }
-        for(size_t j=0;j<i;++j) {
-            if(unchecked(c.geometry,unique[j].geometry)) report(Code::UnsupportedConicComparison,
-                "Conic overlap comparison requires phase 6A.3b; unchecked curves are not approximated or accepted.",c.source,unique[j].source);
-            else if(overlap(c.geometry,unique[j].geometry,tolerance)) report(Code::PartialOverlap,c.context+"Projected curves overlap over a nonzero interval; no automatic trimming is performed. "+unique[j].context,c.source,unique[j].source);
-        }
+        for(const auto& e:existing) if(e.workplaneId==workplane.id && e.role==Sketch::Role::Construction && overlap(c.geometry,e.geometry,tolerance))
+            report(Code::PartialOverlap,c.context+"The projected geometry overlaps existing Construction geometry; no automatic trimming is performed.",c.source,{},e.id);
+        for(size_t j=0;j<i;++j) if(overlap(c.geometry,unique[j].geometry,tolerance))
+            report(Code::PartialOverlap,c.context+"Projected curves overlap over a nonzero interval; no automatic trimming is performed. "+unique[j].context,c.source,unique[j].source);
     }
     if(std::any_of(result.diagnostics.begin(),result.diagnostics.end(),[](const auto& d){return d.isError();})) return result;
     for(const auto& c:unique) {
