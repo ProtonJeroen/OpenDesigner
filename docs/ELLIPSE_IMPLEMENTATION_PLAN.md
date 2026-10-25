@@ -3,6 +3,8 @@
 Status: phase 6A.1 merged; phase 6A.2 interactive drawing and basic snapping
 implemented, 2026-10-24. The baseline analysis below is historical. The latest
 approved scope separates drawing (6A.2) from oblique 3D projection (6A.3).
+Phases 6A.3a and 6A.3b now implement edge conversion, conic support/domain
+comparison and actual face-boundary integration through the existing API.
 
 ## 1. Investigation baseline and scope
 
@@ -521,3 +523,70 @@ not claimed. Existing line/circle snapping and priorities/Shift bypass remain.
 against existing Construction ellipses in the projection target. Full elliptic
 Overdraw, ellipse Offset/Common Tangent commands, dynamic Workplane bounds,
 associative constraints and SpaceNavigator are outside this delivery.
+
+## 14. Phase 6A.3a — exact edge projection core
+
+The existing `SketchProjection::project` API now converts oblique analytic
+Circle edges and native OCCT Ellipse edges into exact Ellipse/EllipticalArc
+values. Projected cosine/sine coefficients use a scaled 2×2 principal-axis
+factorization. The small radius comes from determinant/large singular value,
+not subtraction of almost equal eigenvalues. A direct local basis gives an
+orthogonal signed phase map; source trim length and reversed traversal are
+preserved, including seam crossings and major arcs. Existing certified parallel
+Circle/Arc projection is unchanged. No UI, drawing, model or schema is added.
+
+Long-double coefficient arithmetic, stored-double reconstruction bounds over
+the full curve, arc endpoint checks and conditioning/roundoff limits refuse
+collapsed or unreliable results explicitly. Existing Part/subshape placement and
+large common translation handling are reused. Results remain independent
+Construction values with new stable IDs and use existing schema v5.
+
+**Historical 6A.3a gate (removed by 6A.3b below):** existing target Construction ellipses still conservatively block
+nonempty requests. A new ellipse paired with any circular/elliptical support in
+one batch or the target collection reports `UnsupportedConicComparison` and
+leaves all additions empty, even for disjoint pairs. Points/straight lines can
+accompany a single ellipse. Profile/other-owner curves do not participate.
+Elliptical face-boundaries remain explicitly refused, retaining the old face
+contract. This avoids accepting unchecked overlaps through the existing GUI.
+
+Phase 6A.3b must add certified support equivalence (including circular-limit and
+axis-frame equivalence), common parameter-domain mapping, duplicate-only no-ops,
+nonzero overlap refusal and actual outer/inner face-wire endpoint/closure
+validation before removing those gates. Elliptic Overdraw and dynamic Workplane
+bounds remain outside this core milestone.
+
+Validation for this core milestone: targeted Release targets build successfully;
+5/5 geometry/storage tests and both existing projection-session tests (normal and
+HiDPI, isolated Xvfb/xcb/software OpenGL) pass. `git diff --check` passes. No full
+application build or full regression-suite claim is made for this phase.
+
+## 15. Phase 6A.3b — conic comparison and face integration
+
+The 6A.3a coefficient conversion is unchanged. Supported conics use the direct
+factorization `B=S*R(axisAngle)`, with symmetric `S=R*diag(a,b)*R^T`.
+Center distance plus the analytic spectral norm of `S1-S2` certifies whole-support
+equivalence within tolerance, including near-circular supports. Common phase
+`w=t+axisAngle` maps signed arcs to periodic intervals independently of stored
+axis signs or traversal. Deduplication precedes positive-interval overlap checks;
+point contacts, crossings, tangencies and distinct supports remain allowed.
+Existing hidden/locked Construction references participate; Profile and other
+Workplanes do not. The temporary `UnsupportedConicComparison` and existing-ellipse
+request gates are no longer used.
+
+Actual outer/inner face wires reuse the same conic conversion. Stored
+EllipticalArc endpoints are checked against oriented B-Rep endpoints and used for
+adjacent-join/closure checks before deduplication. Existing traversal, seams,
+pole, B-Rep, precision and all-or-nothing guards remain. Exact BSpline fixtures
+remain explicitly unsupported, even when their visual locus is elliptical.
+
+Regression coverage includes equivalent axes/phases, circular-limit cross-types,
+CW/CCW and seam/complement domains, loose/crossing/tangent supports, duplicate
+no-ops, tiny positive overlaps, tilted annuli, reversed mixed analytic boundaries,
+shared edges, invalid inner wires and stored-endpoint gaps. The existing Project
+session also verifies elliptical preview/Cancel, one-step Undo/Redo and stable
+IDs, plus duplicate confirmation without document/history changes.
+
+Validation: one full Release build PASS; all 47/47 CTests PASS (99.55 seconds),
+including existing 2D/3D regressions and normal/HiDPI Project sessions, on isolated
+Xvfb/xcb/software OpenGL. `git diff --check` PASS. Native Fedora KDE manual
+confirmation of these new projection cases remains pending.

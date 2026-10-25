@@ -16,6 +16,9 @@
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <Geom_Line.hxx>
+#include <Geom_Ellipse.hxx>
+#include <GeomConvert.hxx>
+#include <Geom_BSplineCurve.hxx>
 #include <Geom_Circle.hxx>
 #include <Geom_SurfaceOfRevolution.hxx>
 #include <TopExp.hxx>
@@ -140,6 +143,47 @@ void placements() {
     auto huge=plane();huge.frame.SetLocation(gp_Pnt(1.e20,-1.e20,1.e20));auto far=source(rectangleFace(1));far.partPlacement.SetTranslation(gp_Vec(1.e20,-1.e20,1.e20));
     r=project({far},huge);ok(r,5);check(std::get<Segment>(r.additions[0].geometry).start==Point{0,0},"common huge translation erased small face coordinates");
 }
+void existingConstructionOverlap() {
+    auto wp=plane();wp.frame.SetLocation(gp_Pnt(0,0,70));
+    Entity reference;reference.workplaneId=wp.id;reference.role=Role::Construction;
+    reference.geometry=Segment{{-11,-59},{89,-59}};
+    for(const auto [x1,x2]:{std::pair{-17.224,79.369},std::pair{-1.694,110.427}}) {
+        const auto face=source(BRepBuilderAPI_MakeFace(rectangle(x1,-59,x2-x1,20,30)).Face(),"reported face");
+        for(bool visible:{false,true}) for(bool selectable:{false,true}) {
+            reference.visible=visible;reference.selectable=selectable;
+            const std::vector before{reference};const auto result=project({face},wp,before);ok(result,4);closedEndpoints(result);
+            check(before==std::vector{reference},"face projection mutated the old Construction line");
+            const auto boundary=std::find_if(result.additions.begin(),result.additions.end(),[&](const auto& entity) {
+                const auto* line=std::get_if<Segment>(&entity.geometry);
+                return line && ((near(line->start,{x1,-59}) && near(line->end,{x2,-59}))
+                    || (near(line->end,{x1,-59}) && near(line->start,{x2,-59})));
+            });
+            check(boundary!=result.additions.end(),"overlapping source boundary was trimmed or omitted");
+            auto saved=before;saved.insert(saved.end(),result.additions.begin(),result.additions.end());
+            const auto repeat=project({face},wp,saved);ok(repeat,0);check(!repeat.changed(),"complete duplicate face is not a no-op");
+            const auto edge=source(firstEdge(face.shape));
+            refused(project({edge},wp,before),Code::PartialOverlap);
+            for(const auto& batch:{std::vector{edge,face},std::vector{face,edge}}) ok(project(batch,wp,before),4);
+            const auto invalid=project({face,{}},wp,before);refused(invalid,Code::NullSource,1);
+        }
+    }
+    // A full duplicate edge is reused whole; a partial reference never trims it.
+    const auto face=source(BRepBuilderAPI_MakeFace(rectangle(-17.224,-59,96.593,20,30)).Face());
+    const auto all=project({face},wp).additions;
+    ok(project({face},wp,{all.front(),reference}),3);
+    auto edgeOn=source(BRepBuilderAPI_MakeFace(gp_Pln(gp_Pnt(),gp_Dir(1,0,0)),0,20,0,30).Face());
+    refused(project({face,edgeOn},wp,{reference}),Code::CollapsedProjection,1);
+    // The policy also preserves an entire elliptic boundary arc against an
+    // existing full conic, without weakening standalone edge overlap refusal.
+    const gp_Elips support(gp_Ax2(gp_Pnt(0,0,30),gp_Dir(0,0,1)),10,4);
+    const auto arc=BRepBuilderAPI_MakeEdge(support,0,pi).Edge();
+    const auto chord=BRepBuilderAPI_MakeEdge(gp_Pnt(-10,0,30),gp_Pnt(10,0,30)).Edge();
+    const auto half=source(BRepBuilderAPI_MakeFace(BRepBuilderAPI_MakeWire(arc,chord).Wire()).Face());
+    Entity ellipse;ellipse.workplaneId=wp.id;ellipse.role=Role::Construction;ellipse.geometry=Ellipse{{},10,4,0};
+    const auto result=project({half},wp,{ellipse});ok(result,2);
+    check(count(result,6)==1 && count(result,0)==1,"existing conic changed full face-boundary output");
+    refused(project({source(arc)},wp,{ellipse}),Code::PartialOverlap);
+}
 void duplicatesAndBatches() {
     const auto wp=plane();auto face=source(rectangleFace(1));auto edge=source(firstEdge(face.shape),"individual edge");
     auto reversed=edge;reversed.shape.Reverse();auto r=project({face,face,reversed,edge},wp);ok(r,5);
@@ -216,14 +260,22 @@ void seamsAndPoles() {
 void failuresAndTolerance() {
     auto wp=plane();
     const auto ellipse=BRepBuilderAPI_MakeFace(BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(gp_Elips(gp_Ax2(),10,5)).Edge()).Wire()).Face();
-    auto r=project({source(ellipse)},wp);refused(r,Code::NonlinearEdge);check(r.diagnostics.front().message.contains("wire 1, edge 1"),"edge diagnostic lacks face boundary context");
+    auto r=project({source(ellipse)},wp);ok(r,1);
+    const auto unsupported=BRepBuilderAPI_MakeFace(BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(
+        GeomConvert::CurveToBSplineCurve(new Geom_Ellipse(gp_Elips(gp_Ax2(),10,5)))).Edge()).Wire()).Face();
+    r=project({source(unsupported)},wp);refused(r,Code::NonlinearEdge);check(r.diagnostics.front().message.contains("wire 1, edge 1"),"edge diagnostic lacks face boundary context");
     const auto ellipseHole=BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(gp_Elips(gp_Ax2(gp_Pnt(20,15,0),gp_Dir(0,0,1)),5,3)).Edge()).Wire();
     BRepBuilderAPI_MakeFace withBadHole(gp_Pln(),rectangle());withBadHole.Add(TopoDS::Wire(ellipseHole.Reversed()));
     check(BRepCheck_Analyzer(withBadHole.Face()).IsValid(),"unsupported inner contour fixture is invalid");
-    r=project({source(withBadHole.Face())},wp);refused(r,Code::NonlinearEdge);
+    r=project({source(withBadHole.Face())},wp);ok(r,5);
+    const auto unsupportedHole=BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(GeomConvert::CurveToBSplineCurve(
+        new Geom_Ellipse(gp_Elips(gp_Ax2(gp_Pnt(20,15,0),gp_Dir(0,0,1)),5,3)))).Edge()).Wire();
+    BRepBuilderAPI_MakeFace badInner(gp_Pln(),rectangle());badInner.Add(TopoDS::Wire(unsupportedHole.Reversed()));
+    check(BRepCheck_Analyzer(badInner.Face()).IsValid(),"unsupported inner contour fixture is invalid");
+    r=project({source(badInner.Face())},wp);refused(r,Code::NonlinearEdge);
     check(r.diagnostics.front().message.contains("wire 2"),"an unsupported inner wire was ignored or misdiagnosed");
     const auto disk=BRepBuilderAPI_MakeFace(circleWire()).Face();auto tilted=source(disk);tilted.partPlacement.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,0,0)),0.2);
-    refused(project({tilted},wp),Code::NonCircularProjection);
+    r=project({tilted},wp);ok(r,1);check(std::holds_alternative<Ellipse>(r.additions.front().geometry),"tilted disk did not produce an exact ellipse");
     auto edgeOn=plane();edgeOn.frame=gp_Ax3(gp_Pnt(),gp_Dir(1,0,0),gp_Dir(0,1,0));
     refused(project({source(rectangleFace())},edgeOn),Code::CollapsedProjection);
     edgeOn.frame=gp_Ax3(gp_Pnt(),gp_Dir(1,1,0),gp_Dir(0,0,1));refused(project({source(rectangleFace())},edgeOn),Code::CollapsedProjection);
@@ -243,7 +295,7 @@ void failuresAndTolerance() {
     Source unbounded=source(BRepBuilderAPI_MakeFace(gp_Pln()).Face());refused(project({unbounded},wp),Code::InvalidFaceBoundary);
     Source vertex=source(BRepBuilderAPI_MakeVertex(gp_Pnt(4,5,6)).Shape(),"valid vertex");
     for(size_t invalidIndex:{0u,2u}) {
-        std::vector batch{source(rectangleFace(2)),vertex,source(rectangleFace())};batch[invalidIndex]=source(ellipse,"unsupported source");
+        std::vector batch{source(rectangleFace(2)),vertex,source(rectangleFace())};batch[invalidIndex]=source(unsupported,"unsupported source");
         r=project(batch,wp);refused(r,Code::NonlinearEdge,invalidIndex);
     }
     auto nearly=source(rectangleFace());nearly.partPlacement.SetTranslation(gp_Vec(0.5e-7,0,50));ok(project({source(rectangleFace()),nearly},wp),4);
@@ -265,7 +317,7 @@ void storageAndIndependence() {
 }
 int main(int argc,char** argv) {
     QCoreApplication app(argc,argv);
-    try {contours();placements();duplicatesAndBatches();seamsAndPoles();failuresAndTolerance();storageAndIndependence();
+    try {contours();placements();existingConstructionOverlap();duplicatesAndBatches();seamsAndPoles();failuresAndTolerance();storageAndIndependence();
         std::cout<<"Exact face boundaries, holes, placements, seams/poles, atomic batches and native storage passed.\n";return 0;
     } catch(const Standard_Failure& e) {std::cerr<<"OCCT fixture failure: "<<e.GetMessageString()<<'\n';return 1;}
     catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}

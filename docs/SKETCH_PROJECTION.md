@@ -8,6 +8,47 @@ same API. Popup placement and natural panel
 sizing are implemented separately in CommandPanelPositioner; this computation
 module does not reposition anything.
 
+## Phase 6A.3 integration
+
+Standalone oblique Circle/Arc and analytic OCCT Ellipse/elliptical-arc edges,
+also inside outer/inner face wires, produce exact Ellipse/EllipticalArc values
+through the same API. The 6A.3a coefficient decomposition, signed traversal,
+conditioning and endpoint certificates remain unchanged. Face walks now check
+stored elliptical-arc endpoints and closure before deduplication.
+
+6A.3b compares conic supports analytically using the symmetric principal-radius
+matrix. Its spectral-norm difference plus center distance bounds geometric
+support deviation within the requested tolerance, without unstable axis matching
+near circles. The common phase `w=t+axisAngle` handles axis signs, circular-limit
+cross-type equivalence, reversed traversal and periodic intervals. Duplicates
+are removed first; positive common intervals on equivalent supports fail with
+`PartialOverlap`. Complementary arcs, isolated crossings/tangencies and loose
+supports are accepted. Hidden/locked Construction references still participate;
+Profile/other-owner geometry does not. The temporary ellipse gates are removed.
+Ellipse outputs use existing schema v5; older outputs retain v3/v4 selection.
+No tessellation, silhouettes, Profile reconstruction, UI session or schema change
+is introduced. The older phase-specific restrictions below are historical.
+
+## Face boundary versus existing references
+
+A validated face can be projected even when its boundary partially overlaps
+existing Construction geometry. Each nonduplicate boundary edge is retained in
+full, with its exact original extent; existing references are not edited and no
+intervals are trimmed away. Complete duplicate edges are reused, so repeating
+an entire already-projected face remains a no-op. Face-plus-edge selection uses
+this policy independently of selection order.
+
+This exception applies only against pre-existing references. Standalone edges
+and nonduplicate overlapping sources within one new batch still use the strict
+`PartialOverlap` policy described below. Invalid boundaries remain atomic errors.
+Edge-on planar faces are still explicitly refused as collapsed projections.
+
+Regression coverage reproduces WP1 at Z=70 with existing `(-11,-59)→(89,-59)`
+and both reported overlapping boundaries, including hidden/locked references,
+face/edge selection order, duplicate no-ops and an elliptic boundary. Targeted
+Release builds and 7/7 relevant CTests pass, including normal/HiDPI preview,
+Cancel, Undo/Redo and Save/Open; native Fedora KDE retest remains pending.
+
 ## API and transaction boundary
 
 `SketchProjection.h/.cpp` exposes:
@@ -33,7 +74,7 @@ unchanged before-snapshot for one SketchChange. The existing collection is never
 rewritten. New UUIDs are allocated once for returned entities; retain these values
 through preview/confirmation rather than recomputing UUIDs on each redraw.
 
-One invalid source or overlap fails the entire request with no additions. All
+One invalid source or disallowed overlap fails the entire request with no additions. All
 input sources are checked so multiple source errors can be reported together.
 An empty or entirely duplicate batch succeeds with `changed()==false`; it must
 not create history or dirty the document. Context errors (invalid Workplane,
@@ -66,8 +107,8 @@ geometry, curve fitting or geometric approximation. B-Rep validity, 3D curve
 availability, placement, finite parameters/coordinates and source length are
 checked. An infinite/half-infinite, standalone flagged degenerated, invalid or
 unsupported curve is refused. Face-contained certified poles have the explicit
-exception described in phase 4 below. Only analytic lines and circles are accepted; a circular edge must
-meet the parallel-plane rules below. A perpendicular or nearly perpendicular edge whose projected length
+exception described in phase 4 below. Analytic lines, circles and ellipses are
+accepted, subject to the numerical checks above. A perpendicular or nearly perpendicular edge whose projected length
 is no greater than tolerance is refused as CollapsedProjection, rather than
 silently converted into a point.
 
