@@ -10,9 +10,33 @@
 ## Next milestones
 - CAD document ownership, persistent save/load and robust selection
 - Direct face modeling and workplanes
+- After Workplanes and Sketches: move cylindrical faces and reposition holes
 - Assemblies and 3D copilot
 - STEP, IGES, STL
 - GLB/glTF and FBX import/export
+
+## Planned after Workplanes & Sketches — Move cylindrical faces / reposition holes (Issue #51)
+
+- [ ] **Move Cylindrical Face:** extend direct face editing beyond the existing
+  planar Move Face and cylinder Pull/Resize tools. Move a selected cylindrical
+  side face *laterally* (perpendicular to its axis) using a manipulator or an
+  exact numeric displacement, preserving radius/diameter and cylinder axis.
+- [ ] **Reposition holes:** for a cylindrical hole inside a solid (including a
+  Boolean Subtract result), move the whole hole center rather than merely
+  translating an isolated surface. Reconstruct affected planar boundaries and
+  openings as a valid single solid while preserving unaffected Part geometry.
+- [ ] Start with a simple complete circular **through-hole in a block**;
+  subsequently support unambiguous **blind holes** and more complex analytic
+  B-Reps. Unhandled intersections, topology transitions and trims must fail
+  clearly and atomically, without corrupting the original solid.
+- [ ] Keep CoCreate SolidDesigner/Modeling 2008 v16.0 selection/workflow as a
+  reference, reusing OpenDesigner's live preview, exact numeric input,
+  OK/Cancel, Undo/Redo, native Save/Open and Part placement handling.
+- [ ] Add exact-geometry, Boolean B-Rep, transformed Part, failure-safety and
+  GUI/session regressions. Keep this work **after** Workplane (6B) and Sketch
+  improvements; it is not part of the current v0.4.2 delivery.
+
+See [planned cylindrical-face move / hole repositioning](https://github.com/ProtonJeroen/OpenDesigner/issues/51).
 
 ## v0.4.2 — Project 3D Geometry foundations
 
