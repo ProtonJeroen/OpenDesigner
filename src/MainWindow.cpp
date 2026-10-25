@@ -23,6 +23,7 @@
 #include <QComboBox>
 #include <QSpinBox>
 #include <QLabel>
+#include <QIcon>
 #include <algorithm>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
@@ -112,6 +113,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     };
     auto* line2D=drawAction(tr("Line"),"sketch.line",Sketch::DrawTool::Segment);
     auto* infinite2D=drawAction(tr("Infinite Construction Line"),"sketch.infinite",Sketch::DrawTool::InfiniteLine);
+    auto* horizontal2D=drawAction(tr("Horizontal Infinite Construction Line"),"sketch.infinite.horizontal",Sketch::DrawTool::HorizontalInfiniteLine);
+    auto* vertical2D=drawAction(tr("Vertical Infinite Construction Line"),"sketch.infinite.vertical",Sketch::DrawTool::VerticalInfiniteLine);
+    horizontal2D->setIcon(Sketch::orthogonalLineIcon(Sketch::DrawTool::HorizontalInfiniteLine));
+    vertical2D->setIcon(Sketch::orthogonalLineIcon(Sketch::DrawTool::VerticalInfiniteLine));
     auto* circle2D=drawAction(tr("Circle"),"sketch.circle",Sketch::DrawTool::Circle);
     auto* arc2D=drawAction(tr("Arc (center/start/end)"),"sketch.arc",Sketch::DrawTool::Arc);
     auto* ellipse2D=drawAction(tr("Ellipse"),"sketch.ellipse",Sketch::DrawTool::Ellipse);
@@ -244,6 +249,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     sketchToolbar->addAction(normalSketch);sketchToolbar->addAction(finishSketch);sketchToolbar->addSeparator();
     sketchToolbar->addAction(construction2D);sketchToolbar->addAction(line2D);sketchToolbar->addAction(infinite2D);
+    sketchToolbar->addAction(horizontal2D);sketchToolbar->addAction(vertical2D);
     sketchToolbar->addAction(circle2D);sketchToolbar->addAction(arc2D);sketchToolbar->addAction(overdraw);
     sketchToolbar->insertAction(overdraw,ellipse2D);sketchToolbar->insertAction(overdraw,ellipticalArc2D);
     sketchToolbar->addAction(axes2D->menuAction());

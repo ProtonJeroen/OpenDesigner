@@ -63,6 +63,10 @@ the phase-6A.1 PR. Earlier milestone results below retain their historical scope
 - [x] 6B.1: visually clip infinite Construction Lines to the actual rectangle;
   refresh frames/labels for previews, Cancel, history, transforms and Open.
   Analytical origins, geometry, native schema and styles remain unchanged.
+- [x] Issue #50: independent one-click/numeric Horizontal and Vertical Infinite
+  Construction Line tools in the menu, toolbar and context menu, with H/V icons.
+  Reuses exact local InfiniteLine geometry, forced Construction role, dynamic
+  bounds, snapping, preview/history and native storage without a schema change.
 - [ ] 6B.2: SolidDesigner-style borders, front/back/active colors and grid.
   These remain outside 6B.1; Issue #48 is not fully closed by this delivery.
 

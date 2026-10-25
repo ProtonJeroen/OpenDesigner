@@ -366,6 +366,7 @@ void runConstructionSessions();
 void runSketchSessions();
 void runSketchDisplayBoundsSessions();
 void runSketchDrawing();
+void runSketchOrthogonalLines();
 void runSketchArcDirections();
 void runSketchOverdrawSessions();
 void runSketchOverdrawTraversal();
@@ -383,7 +384,8 @@ int main(int argc,char** argv) {
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc,argv);
     try {
-        if(app.arguments().contains("--display-bounds")) runSketchDisplayBoundsSessions();
+        if(app.arguments().contains("--orthogonal-lines")) runSketchOrthogonalLines();
+        else if(app.arguments().contains("--display-bounds")) runSketchDisplayBoundsSessions();
         else if(app.arguments().contains("--ellipse-drawing")) runSketchEllipseDrawing();
         else if(app.arguments().contains("--ellipses")) runSketchEllipseSessions();
         else if(app.arguments().contains("--projection")) runSketchProjectionSessions();

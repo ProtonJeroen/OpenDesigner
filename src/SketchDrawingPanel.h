@@ -9,9 +9,13 @@ class QPushButton;
 class QLabel;
 class QDialogButtonBox;
 class QFormLayout;
+class QIcon;
 namespace Sketch {
-enum class DrawTool { Segment, InfiniteLine, Circle, Arc, Ellipse, EllipticalArc };
+enum class DrawTool { Segment, InfiniteLine, Circle, Arc, Ellipse, EllipticalArc, HorizontalInfiniteLine, VerticalInfiniteLine };
 inline bool ellipseTool(DrawTool tool) {return tool==DrawTool::Ellipse || tool==DrawTool::EllipticalArc;}
+inline bool orthogonalLineTool(DrawTool tool) {return tool==DrawTool::HorizontalInfiniteLine || tool==DrawTool::VerticalInfiniteLine;}
+inline bool infiniteLineTool(DrawTool tool) {return tool==DrawTool::InfiniteLine || orthogonalLineTool(tool);}
+QIcon orthogonalLineIcon(DrawTool tool);
 }
 
 class SketchDrawingPanel final : public QDialog {
@@ -19,6 +23,7 @@ public:
     SketchDrawingPanel(Sketch::DrawTool tool, Sketch::Role role, const QString& planeName, QWidget* parent);
     std::function<void()> useXY, usePolar, back, confirmed, cancelled, roleChanged, directionChanged;
     std::function<void()> ellipseParametersChanged;
+    std::function<void()> orthogonalPositionChanged;
     QDoubleSpinBox *x=nullptr,*y=nullptr,*distance=nullptr,*angle=nullptr;
     QDoubleSpinBox *majorRadius=nullptr,*axisAngle=nullptr,*minorRadius=nullptr,*startParameter=nullptr,*sweepParameter=nullptr;
     QComboBox *role=nullptr,*direction=nullptr;

@@ -57,6 +57,35 @@ Fedora KDE checks (manual confirmation still required):
 - Move/rotate the Workplane, Save/Open and check geometry placement, snapping,
   selection and labels. Repeat on a second Workplane and at 200% scaling.
 
+## Horizontal and Vertical Infinite Construction Lines (Issue #50)
+
+The 2D Modeling menu, Sketch toolbar and 2D Drawing context menu offer dedicated
+**Horizontal Infinite Construction Line** (H icon) and **Vertical Infinite
+Construction Line** (V icon) actions beside the existing free Infinite Line.
+They use the active Workplane's local XY frame, including on transformed planes.
+
+- Horizontal: click once for Y, or enter **Y (mm)**; exact direction `(1,0)`.
+- Vertical: click once for X, or enter **X (mm)**; exact direction `(0,1)`.
+- Hover uses existing pixel snapping and shows a blue preview. A click fixes the
+  offset; numeric edits update the preview. OK/Enter confirms one independent
+  Construction entity; Cancel/Escape leaves geometry and both history stacks
+  unchanged. Back permits another pick. No length, angle or second point is needed.
+
+These are UI variants of `Sketch::InfiniteLine`, always Construction, storing
+canonical origins `(0,Y)` or `(X,0)`. No geometry tag or native schema changes.
+The 6B.1 bounds include perpendicular offsets immediately, even without finite
+Sketch geometry, and clip presentations to the outer rectangular border.
+Undo/Redo, native Save/Open, browser identity, owner transforms, snapping and
+curve tools reuse the existing paths. The free two-point/angle Infinite Line
+and Construction Axes specifically through local zero remain available.
+
+Fedora KDE checks: pick H at Y=35 and V at X=-120 with snapping; edit numeric
+coordinates and confirm with Enter/OK; try both outside an empty Workplane's
+frame. Check Cancel, Undo/Redo, Save/Open and repeat on a rotated second Workplane
+and at 200% scaling. Verify menu/toolbar/context icons and the unchanged free
+Infinite Line and zero-axis duplicate prevention. Native manual approval is not
+implied by the automated normal/HiDPI tests.
+
 ## Model and ownership
 
 ### Current phase 6A.2: Ellipse and Elliptical Arc

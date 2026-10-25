@@ -178,7 +178,7 @@ bool CadViewport::previewSketchEntities(const std::vector<Sketch::Entity>& entit
 }
 void CadViewport::finishSketchEdit(bool confirm) {
     if(!commandSession_ || commandSession_->kind!=CommandSession::Kind::Sketch) return;
-    if(confirm && commandSession_->drawing && Sketch::ellipseTool(commandSession_->drawing->tool) && sketchDrawingPanel_)
+    if(confirm && commandSession_->drawing && (Sketch::ellipseTool(commandSession_->drawing->tool) || Sketch::orthogonalLineTool(commandSession_->drawing->tool)) && sketchDrawingPanel_)
         sketchDrawingPanel_->finishEditing();
     if(confirm && commandSession_->projection && !confirmSketchProjection()) return;
     if(confirm && sketchConstructionPanel_) sketchConstructionPanel_->finishEditing();

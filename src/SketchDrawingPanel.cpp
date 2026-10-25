@@ -7,13 +7,35 @@
 #include <QVBoxLayout>
 #include <QFormLayout>
 #include <QSignalBlocker>
+#include <QPainter>
+#include <QPixmap>
+#include <QLineF>
+#include <QPalette>
+#include <QIcon>
+#include <QApplication>
+
+QIcon Sketch::orthogonalLineIcon(DrawTool tool) {
+    QIcon icon;
+    for(int scale:{1,2}) {
+        QPixmap image(24*scale,24*scale);image.setDevicePixelRatio(scale);image.fill(Qt::transparent);
+        QPainter painter(&image);painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(QColor(255,102,204),1.8,Qt::DashLine));
+        const bool horizontal=tool==DrawTool::HorizontalInfiniteLine;
+        painter.drawLine(horizontal?QLineF(2,6,22,6):QLineF(6,2,6,22));
+        painter.setPen(QApplication::palette().color(QPalette::WindowText));
+        auto font=painter.font();font.setPixelSize(12);font.setBold(true);painter.setFont(font);
+        painter.drawText(QRect(10,10,14,14),Qt::AlignCenter,horizontal?QStringLiteral("H"):QStringLiteral("V"));
+        painter.end();icon.addPixmap(image);
+    }
+    return icon;
+}
 
 SketchDrawingPanel::SketchDrawingPanel(Sketch::DrawTool tool,Sketch::Role initialRole,const QString& planeName,QWidget* parent)
     : QDialog(parent,Qt::Tool),tool_(tool) {
     setObjectName("sketchDrawingPanel");setWindowTitle(tr("2D Drawing — %1").arg(planeName));setModal(false);
     auto* layout=new QVBoxLayout(this);auto* form=new QFormLayout;form_=form;layout->addLayout(form);
     role=new QComboBox(this);role->setObjectName("sketchRole");
-    if(tool!=Sketch::DrawTool::InfiniteLine) role->addItem(tr("Profile"),int(Sketch::Role::Profile));
+    if(!Sketch::infiniteLineTool(tool)) role->addItem(tr("Profile"),int(Sketch::Role::Profile));
     role->addItem(tr("Construction"),int(Sketch::Role::Construction));role->setCurrentIndex(role->findData(int(initialRole)));
     form->addRow(tr("Geometry"),role);
     const auto spin=[this](const char* name,double min,double max) {
@@ -57,6 +79,12 @@ SketchDrawingPanel::SketchDrawingPanel(Sketch::DrawTool tool,Sketch::Role initia
     connect(buttons_,&QDialogButtonBox::rejected,this,&SketchDrawingPanel::reject);
     connect(role,qOverload<int>(&QComboBox::currentIndexChanged),this,[this]{if(roleChanged) roleChanged();});
     connect(direction,qOverload<int>(&QComboBox::currentIndexChanged),this,[this]{if(directionChanged) directionChanged();});
+    if(Sketch::orthogonalLineTool(tool)) {
+        const bool horizontal=tool==Sketch::DrawTool::HorizontalInfiniteLine;
+        setWindowTitle((horizontal?tr("Horizontal Infinite Construction Line — %1"):tr("Vertical Infinite Construction Line — %1")).arg(planeName));
+        auto* coordinate=horizontal?y:x;coordinate->setKeyboardTracking(true);
+        connect(coordinate,qOverload<double>(&QDoubleSpinBox::valueChanged),this,[this]{if(orthogonalPositionChanged) orthogonalPositionChanged();});
+    }
     setStep(0,false,false,{});
 }
 void SketchDrawingPanel::reject() {if(cancelled) cancelled();else QDialog::reject();}
@@ -101,6 +129,17 @@ void SketchDrawingPanel::setCursor(Sketch::Point p,double length,double degrees)
 void SketchDrawingPanel::setArcSweep(double degrees) {const QSignalBlocker block(angle);angle->setValue(degrees);}
 void SketchDrawingPanel::setStep(int points,bool complete,bool valid,const QString& message) {
     if(Sketch::ellipseTool(tool_)) {setEllipseStep(points,complete,valid,message);return;}
+    if(Sketch::orthogonalLineTool(tool_)) {
+        const bool horizontal=tool_==Sketch::DrawTool::HorizontalInfiniteLine;
+        const auto row=[&](QWidget* field,bool visible) {field->setVisible(visible);if(auto* label=form_->labelForField(field)) label->setVisible(visible);};
+        row(x,!horizontal);row(y,horizontal);row(distance,false);row(angle,false);
+        polarButton->hide();xyButton->setText(horizontal?tr("Use Y position"):tr("Use X position"));xyButton->setEnabled(true);
+        backButton->setEnabled(points>0);buttons_->button(QDialogButtonBox::Ok)->setEnabled(complete && valid);
+        const auto prompt=complete?tr("Preview — edit the offset, then OK/Enter; Cancel/Esc discards.")
+            :horizontal?tr("Click once or enter local Y (mm). Direction is exactly (1,0).")
+                       :tr("Click once or enter local X (mm). Direction is exactly (0,1).");
+        status_->setText(prompt+(message.isEmpty()?QString():"\n"+message));return;
+    }
     const bool arc=tool_==Sketch::DrawTool::Arc;
     distanceLabel_->setText(tool_==Sketch::DrawTool::Circle || arc?tr("Radius (mm)"):tr("Length (mm)"));
     angleLabel_->setText(arc && points>=2?tr("Sweep (degrees)"):tr("Angle (degrees)"));
