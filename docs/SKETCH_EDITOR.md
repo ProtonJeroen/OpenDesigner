@@ -24,13 +24,19 @@ Each Workplane derives a rectangular local XY display frame from all its finite
 Sketch entities (both roles, including hidden/locked geometry). Segment endpoints,
 Construction Points, circles, arcs, rotated ellipses and elliptical arcs use
 analytic extrema within their signed parameter domains, without tessellation.
-Each dimension gets 10% padding on each side and a 20 mm minimum span. Empty or
-infinite-only Workplanes retain their existing display extent and offset. Parts
-and geometry on other Workplanes do not affect this rectangle.
+Each dimension gets 10% padding on each side and a 20 mm minimum span. With no
+finite geometry, the existing display extent and offset supply the base rectangle.
+Parts and geometry on other Workplanes do not affect this rectangle.
 
-Infinite Construction Lines do not enlarge the frame. Their presentation is
-analytically clipped against its four sides, even when the line origin is far
-outside the frame. Outside lines and corner-only contacts have no visible edge;
+An Infinite Construction Line outside that base frame enlarges it using the
+perpendicular projection of the base center onto the line. Its stored origin
+may lie arbitrarily far along the line without stretching the frame in that
+direction. Lines already crossing the frame cause no extra growth. All lines
+use the same fixed base; padding is applied once to the combined extents, so
+results are independent of entity order and repeated refreshes. This also works
+on infinite-only Workplanes and includes hidden/locked Construction lines.
+
+Line presentations are analytically clipped to the four **outer** frame sides;
 their infinite model values, snapping and Overdraw support remain unchanged.
 
 Frames, clipped lines, labels and Fit Selected follow confirmed changes, live
@@ -44,7 +50,8 @@ Fedora KDE checks (manual confirmation still required):
 - On an empty Workplane draw distant/narrow finite geometry, including a rotated
   ellipse and CW/CCW arc. Check rectangular growth, shifting, label and Fit Selected.
 - Add infinite horizontal, vertical and oblique lines with origins outside the
-  frame; check all visible endpoints meet its sides. Outside lines stay invisible.
+  frame; check perpendicular offsets enlarge it and all endpoints meet its outer
+  sides. Repeat with only infinite lines, and with origins far along each line.
 - Preview a large circle/projected contour; Cancel restores the old frame, OK
   keeps it. Delete the distant geometry, then Undo/Redo, and check shrink/growth.
 - Move/rotate the Workplane, Save/Open and check geometry placement, snapping,

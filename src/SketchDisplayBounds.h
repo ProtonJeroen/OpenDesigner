@@ -9,7 +9,8 @@ struct DisplayRectangle {
 };
 std::optional<DisplayRectangle> finiteBounds(const Geometry& geometry);
 // Includes hidden/locked entities of both roles, but only on this Workplane.
-// Empty/infinite-only owners retain their legacy display extent and offset.
+// Empty owners use their legacy extent/offset as a base. Outside infinite lines
+// extend it by their perpendicular offset, independently of stored line origins.
 DisplayRectangle displayRectangle(const Construction::Object& owner,const std::vector<Entity>& entities);
 std::array<gp_Pnt,4> displayCorners(const DisplayRectangle& rectangle,const gp_Ax3& frame);
 // Analytic, display-only clipping. No intersection (including point-only

@@ -2,6 +2,8 @@
 #include "MainWindow.h"
 #include <QApplication>
 #include <QTemporaryDir>
+#include <QComboBox>
+#include <QDoubleSpinBox>
 #include <BRepTools.hxx>
 #include <BRep_Tool.hxx>
 #include <TopExp.hxx>
@@ -11,6 +13,8 @@
 #include <TopoDS_Face.hxx>
 #include <TopExp_Explorer.hxx>
 #include <stdexcept>
+#include <algorithm>
+#include <cmath>
 
 namespace {
 void check(bool ok,const char* message) {if(!ok) throw std::runtime_error(message);}
@@ -26,6 +30,63 @@ struct SketchDisplayBoundsSessionTest {
         double distance=1.e100;for(const auto& corner:Sketch::displayCorners(r,wp.frame)) distance=std::min(distance,corner.Distance(label));
         check(distance<2*v.view_->Convert(10),"label did not follow rectangle corner");
     }
+    static void clipped(CadViewport& v,const Construction::Object& wp,const Sketch::Entity& entity,
+                        const Handle(AIS_Shape)& presentation,const Sketch::DisplayRectangle& r) {
+        check(std::holds_alternative<Sketch::InfiniteLine>(entity.geometry),"offset lost infinite model geometry");
+        check(!presentation->Shape().IsNull() && presentation->Shape().ShapeType()==TopAbs_EDGE,"offset Infinite Line has no visible preview/edge");
+        const auto edge=TopoDS::Edge(presentation->Shape());
+        for(const auto& vertex:{TopExp::FirstVertex(edge),TopExp::LastVertex(edge)}) {
+            const gp_Vec delta(wp.frame.Location(),BRep_Tool::Pnt(vertex));
+            const Sketch::Point p{delta.Dot(gp_Vec(wp.frame.XDirection())),delta.Dot(gp_Vec(wp.frame.YDirection()))};
+            check(Sketch::contains(entity.geometry,p),"display endpoint left the analytic line");
+            check(p.x>=r.minX-1.e-7 && p.x<=r.maxX+1.e-7 && p.y>=r.minY-1.e-7 && p.y<=r.maxY+1.e-7
+                && std::min({std::abs(p.x-r.minX),std::abs(p.x-r.maxX),std::abs(p.y-r.minY),std::abs(p.y-r.maxY)})<1.e-7,
+                "offset line not clipped to the outer frame edge");
+        }
+    }
+    static void offsetCommands(MainWindow& w) {
+        auto& v=*w.viewport_;QString error;const double q=std::sqrt(0.5);
+        for(bool finite:{false,true}) for(const auto direction:std::vector<Sketch::Point>{{0,1},{1,0},{q,q}}) {
+            NativeDocumentSnapshot snapshot;Construction::Object wp;wp.id="offset-wp";wp.name="WP1";wp.kind=Construction::Kind::Workplane;
+            wp.frame=gp_Ax3(gp_Pnt(15,-30,70),gp_Dir(1,2,3),gp_Dir(2,-1,0));
+            auto other=wp;other.id="other-offset-wp";other.name="WP2";snapshot.constructions={wp,other};
+            Sketch::Entity source;source.workplaneId=wp.id;source.role=Sketch::Role::Construction;
+            source.geometry=Sketch::InfiniteLine{{direction.x*1.e6,direction.y*1.e6},direction};snapshot.sketchEntities={source};
+            if(finite) {auto circle=source;circle.id="circle";circle.geometry=Sketch::Circle{{0,0},10};snapshot.sketchEntities.push_back(circle);}
+            check(v.importDocumentSnapshot(snapshot,error),qPrintable(error));check(v.activateSketchWorkplane(wp.id),"activate offset Workplane failed");
+            w.documentDirty_=false;const auto base=Sketch::displayRectangle(wp,snapshot.sketchEntities);
+            const auto start=[&] {
+                v.selectSketchEntities({source.id});v.startSketchConstruction(Sketch::ConstructionTool::OffsetLine);
+                check(v.sketchConstructionPanel_,"Offset command did not start");
+                v.sketchConstructionPanel_->output->setCurrentIndex(0);v.sketchConstructionPanel_->distance->setValue(200);
+                check(v.commandSession_->valid,"Offset preview invalid");
+                return v.commandSession_->lineConstruction->candidate;
+            };
+            auto offset=start();auto shown=snapshot.sketchEntities;shown.push_back(offset);
+            const auto expanded=Sketch::displayRectangle(wp,shown);
+            check(expanded!=base,"offset preview did not enlarge the frame");frame(v,wp,expanded);frame(v,other,Sketch::displayRectangle(other,{}));
+            clipped(v,wp,offset,v.sketchPreviews_.at(offset.id),expanded);
+            NativeDocumentSnapshot pending;check(v.exportDocumentSnapshot(pending) && pending.sketchEntities==snapshot.sketchEntities
+                && v.undoStack_.empty() && !w.documentDirty_,"offset bounds preview changed saved data/history/dirty state");
+            v.cancelCommandSession();frame(v,wp,base);check(!w.documentDirty_ && v.undoStack_.empty(),"offset Cancel changed document/history");
+            offset=start();shown=snapshot.sketchEntities;shown.push_back(offset);v.confirmCommandSession();
+            frame(v,wp,expanded);clipped(v,wp,offset,v.sketchPresentations_.at(offset.id),expanded);
+            check(v.sketchEntities_==shown && v.undoStack_.size()==1,"Offset commit was not one exact SketchChange");
+            const auto far=Sketch::nearestPoint(offset.geometry,{100000,200000});
+            check(far && Sketch::contains(offset.geometry,*far),"line snapping was clipped with the presentation");
+            v.undoPull();frame(v,wp,base);check(v.sketchEntities_==snapshot.sketchEntities && v.sketchSelection().empty(),"offset Undo failed");
+            v.redoPull();frame(v,wp,expanded);check(v.sketchEntities_==shown && v.sketchSelection().empty(),"offset Redo changed geometry/selection");
+            auto moved=wp;moved.frame.SetLocation(gp_Pnt(-40,80,120));moved.frame.SetDirection(gp_Dir(-1,3,2));
+            check(v.updateConstruction(moved),"offset owner transform failed");frame(v,moved,expanded);
+            clipped(v,moved,offset,v.sketchPresentations_.at(offset.id),expanded);
+            NativeDocumentSnapshot saved,loaded;check(v.exportDocumentSnapshot(saved),"offset snapshot export failed");
+            QTemporaryDir dir;check(dir.isValid(),"offset round-trip directory failed");const auto path=dir.filePath("offset.odc");
+            check(NativeDocumentStorage::save(path,saved,error) && NativeDocumentStorage::load(path,loaded,error),qPrintable(error));
+            check(v.importDocumentSnapshot(loaded,error),qPrintable(error));frame(v,moved,expanded);frame(v,other,Sketch::displayRectangle(other,{}));
+            check(v.sketchEntities_==shown && Construction::equivalent(*v.constructionObject(wp.id),moved),"offset Save/Open rewrote source/model values");
+            clipped(v,moved,offset,v.sketchPresentations_.at(offset.id),expanded);
+        }
+    }
     static void run() {
         MainWindow w;w.show();QApplication::processEvents();auto& v=*w.viewport_;QString error;
         v.startConstruction(Construction::Method::PlaneXYZ);v.confirmCommandSession();
@@ -35,7 +96,7 @@ struct SketchDisplayBoundsSessionTest {
         Sketch::Entity axis;axis.workplaneId=wp.id;axis.role=Sketch::Role::Construction;axis.geometry=Sketch::InfiniteLine{{1.e6,3000},{1,0}};
         const auto originalWP=wp;
         check(v.previewSketchEntities({axis},error),qPrintable(error));v.confirmCommandSession();
-        check(!TopExp_Explorer(v.sketchPresentations_.at(axis.id)->Shape(),TopAbs_EDGE).More(),"outside line not clipped away");
+        check(TopExp_Explorer(v.sketchPresentations_.at(axis.id)->Shape(),TopAbs_EDGE).More(),"outside line did not enlarge its infinite-only Workplane");
         Sketch::Entity segment;segment.workplaneId=wp.id;segment.geometry=Sketch::Segment{{1000,3000},{1100,3020}};
         const auto expanded=Sketch::displayRectangle(wp,{axis,segment});
         const auto history=v.undoStack_.size();w.documentDirty_=false;
@@ -76,6 +137,7 @@ struct SketchDisplayBoundsSessionTest {
         check(NativeDocumentStorage::load(path,loaded,error),qPrintable(error));
         check(v.importDocumentSnapshot(loaded,error),qPrintable(error));frame(v,wp,expanded);
         check(v.sketchEntities_==snapshot.sketchEntities && Construction::equivalent(*v.constructionObject(wp.id),originalWP),"bounds persisted or changed source values");
+        offsetCommands(w);
         w.documentDirty_=false;w.close();QApplication::processEvents();
     }
 };

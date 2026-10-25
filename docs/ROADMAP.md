@@ -58,7 +58,8 @@ the phase-6A.1 PR. Earlier milestone results below retain their historical scope
 
 - [x] 6B.1: derived rectangular local bounds from all finite Sketch geometry,
   including analytic circular/elliptical arc extrema, per-side 10% padding,
-  20 mm minimum spans and legacy default for empty/infinite-only Workplanes.
+  20 mm minimum spans and legacy empty-Workplane base extent. Outside infinite
+  lines enlarge the frame by perpendicular offset, ignoring tangential origins.
 - [x] 6B.1: visually clip infinite Construction Lines to the actual rectangle;
   refresh frames/labels for previews, Cancel, history, transforms and Open.
   Analytical origins, geometry, native schema and styles remain unchanged.

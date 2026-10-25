@@ -17,6 +17,19 @@ void include(DisplayRectangle& r,Point p) {
     r.minY=std::min(r.minY,p.y);r.maxY=std::max(r.maxY,p.y);
 }
 DisplayRectangle at(Point p) {return {p.x,p.y,p.x,p.y};}
+Point closestLinePoint(const InfiniteLine& line,const DisplayRectangle& base) {
+    const long double x=std::midpoint(static_cast<long double>(base.minX),static_cast<long double>(base.maxX));
+    const long double y=std::midpoint(static_cast<long double>(base.minY),static_cast<long double>(base.maxY));
+    const long double nx=-line.direction.y,ny=line.direction.x;
+    const auto normalCoordinate=[&](long double px,long double py) {
+        const long double a=nx*px,b=ny*py;
+        // Compensate the two products before subtracting nearly equal terms:
+        // translating the stored origin far along the line must not add extent.
+        return (a+b)+(std::fma(nx,px,-a)+std::fma(ny,py,-b));
+    };
+    const long double distance=(normalCoordinate(line.origin.x,line.origin.y)-normalCoordinate(x,y))/(nx*nx+ny*ny);
+    return {double(std::fma(nx,distance,x)),double(std::fma(ny,distance,y))};
+}
 DisplayRectangle conicBounds(const Ellipse& e,std::optional<std::pair<double,double>> domain) {
     const auto point=[&](double t) {return ellipsePoint(e,t);};
     const double c=std::cos(e.axisAngle),s=std::sin(e.axisAngle);
@@ -67,8 +80,19 @@ DisplayRectangle displayRectangle(const Construction::Object& owner,const std::v
     for(const auto& e:entities) if(e.workplaneId==owner.id) if(const auto r=finiteBounds(e.geometry)) {
         if(bounds) {include(*bounds,{r->minX,r->minY});include(*bounds,{r->maxX,r->maxY});} else bounds=r;
     }
-    if(!bounds) return {owner.displayOffset.X()-owner.extent,owner.displayOffset.Y()-owner.extent,
-                        owner.displayOffset.X()+owner.extent,owner.displayOffset.Y()+owner.extent};
+    const bool finite=bounds.has_value();
+    if(!bounds) bounds=DisplayRectangle{owner.displayOffset.X()-owner.extent,owner.displayOffset.Y()-owner.extent,
+                                       owner.displayOffset.X()+owner.extent,owner.displayOffset.Y()+owner.extent};
+    auto base=*bounds;
+    if(finite) {expand(base.minX,base.maxX);expand(base.minY,base.maxY);}
+    bool outside=false;
+    for(const auto& e:entities) if(e.workplaneId==owner.id) if(const auto* line=std::get_if<InfiniteLine>(&e.geometry)) {
+        if(clipLine(*line,base)) continue; // Already visible, even on a long/narrow frame.
+        // Use one fixed base for every line: order-independent and no repeated
+        // padding. Only the perpendicular offset contributes, never its origin.
+        include(*bounds,closestLinePoint(*line,base));outside=true;
+    }
+    if(!outside) return base;
     expand(bounds->minX,bounds->maxX);expand(bounds->minY,bounds->maxY);return *bounds;
 }
 std::array<gp_Pnt,4> displayCorners(const DisplayRectangle& r,const gp_Ax3& frame) {
