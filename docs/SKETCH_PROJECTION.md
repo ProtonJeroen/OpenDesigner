@@ -8,6 +8,31 @@ same API. Popup placement and natural panel
 sizing are implemented separately in CommandPanelPositioner; this computation
 module does not reposition anything.
 
+## Phase 6A.4 — finite cylinder silhouettes
+
+A selected analytic cylindrical mantle additionally produces its two exact
+straight tangent generators as Construction Segments. For cylinder radial basis
+X/Y and Workplane normal N, the radial coefficients are
+`±(N·Y, -N·X)/hypot(N·X,N·Y)`. Projection uses the existing local-frame and
+Part/subshape-placement contract once. Existing circular/elliptical rims and
+seams remain; coincident seam/silhouette segments use ordinary deduplication.
+
+Supported trims are one complete 360-degree rectangular UV boundary, with finite
+constant axial limits. Analytic p-curve interval coverage certifies the full
+rectangle; exact 3D cap/seam coefficients must agree with that trimmed cylinder
+within the requested tolerance. Only those finite axial intervals are emitted.
+Holes, partial mantles, oblique/curved cap trims and unverifiable boundaries fail
+atomically with `UnsupportedSilhouetteTrim`. Axis-parallel views, numerically
+unstable tangencies and collapsed rim projections retain explicit refusal; no
+replacement line/point or approximate outline is invented.
+
+The existing Project command, blue preview, Cancel, one-step Undo/Redo and native
+storage are reused. No new sketch type, schema, automatic Profile conversion,
+tessellation or general silhouette/hidden-line algorithm is introduced. Native
+Fedora KDE manual verification remains pending. Targeted Release builds (including
+OpenDesigner) and 7/7 relevant CTests pass: five pure projection tests and both
+normal/HiDPI Project sessions. The full regression suite runs independently in CI.
+
 ## Phase 6A.3 integration
 
 Standalone oblique Circle/Arc and analytic OCCT Ellipse/elliptical-arc edges,

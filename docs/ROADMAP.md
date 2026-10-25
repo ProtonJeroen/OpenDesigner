@@ -41,6 +41,11 @@
 - [x] 6A.3: exact oblique circle/ellipse and face-boundary projection, including
   parameter mapping and shared-support duplicate/overlap comparisons. Uses the
   existing Project 3D Geometry session and native schema v5.
+- [x] 6A.4: exact finite tangent generators for complete analytically cylindrical
+  mantles with certified rectangular UV trims. Reuses Construction Segments,
+  projection preview/history/storage and seam deduplication. Complex/partial
+  trims and degenerate views are explicitly refused; general silhouettes remain
+  outside this limited extension.
 - [ ] Full elliptic Overdraw remains separately gated pending its graph/domain,
   reverse traversal and ambiguity tests. Ellipse Offset/Common Tangent commands
   are outside this foundation.
