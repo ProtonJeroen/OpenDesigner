@@ -10,9 +10,39 @@
 ## Next milestones
 - CAD document ownership, persistent save/load and robust selection
 - Direct face modeling and workplanes
+- After Workplanes and Sketches: move cylindrical faces (holes and bosses)
 - Assemblies and 3D copilot
 - STEP, IGES, STL
 - GLB/glTF and FBX import/export
+
+## Planned after Workplanes & Sketches — Move cylindrical faces (holes & bosses, Issue #51)
+
+- [ ] **Move Cylindrical Face:** extend direct face editing beyond existing
+  planar Move Face and cylinder Pull/Resize. Translate a selected **internal
+  cylindrical face (hole)** or **external cylindrical face (boss / cylindrical
+  protrusion on a planar face)** laterally, perpendicular to its own axis, by
+  manipulator or exact numeric input; preserve diameter, direction and height.
+- [ ] **Reposition holes:** move the complete hole axis/inner wall and openings
+  without changing the exterior Part or other features. Rebuild the adjacent
+  planar faces and any affected edges to obtain a valid B-Rep solid.
+- [ ] **Reposition bosses:** move a complete **attached cylinder on a face**,
+  including its cylindrical mantle, cap and footprint on the support face, so
+  the support face closes at the old location and opens at the new one. The
+  cylinder remains attached to the Part, not a detached separate solid.
+- [ ] Start with exact and tractable examples: a complete circular **through-hole
+  in a block** and a complete circular **boss on a planar block face**.
+  Subsequently consider blind holes, multiple features and more complex analytic
+  Boolean B-Reps. Refuse ambiguous trims, collisions or invalid transitions
+  atomically and preserve the original solid.
+- [ ] Reuse CoCreate SolidDesigner/Modeling 2008 v16.0 selection/workflow as a
+  reference, OpenDesigner's live preview, exact numeric input, OK/Cancel,
+  Undo/Redo, native Save/Open and Part-placement handling.
+- [ ] Add tests for moved holes **and** moved attached bosses, exact geometry,
+  connected/manifold solids, unaffected faces, transformed Parts, safe refusal
+  and GUI/history regressions. Plan this **after** Workplane (6B) and Sketch
+  improvements, not as part of the current v0.4.2 delivery.
+
+See [planned cylindrical-face move: holes and bosses](https://github.com/ProtonJeroen/OpenDesigner/issues/51).
 
 ## v0.4.2 — Project 3D Geometry foundations
 
