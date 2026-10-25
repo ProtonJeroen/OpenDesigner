@@ -213,6 +213,42 @@ struct SketchProjectionSessionTest {
         check(!v.commandSession_ && v.sketchPreviews_.empty() && v.undoStack_.empty() && v.redoStack_.empty() && v.context_->NbSelected()==0 && v.activeSketchWorkplaneId_.isEmpty(),"Open retained projection session/history/pickers");
         w.documentDirty_=false;
     }
+    static void existingConstructionOverlap() {
+        MainWindow w;w.resize(1250,950);w.show();settle();auto doc=fixture();
+        doc.constructions[0].frame.SetLocation(gp_Pnt(0,0,70));
+        doc.sketchEntities[0].role=Sketch::Role::Construction;
+        doc.sketchEntities[0].geometry=Sketch::Segment{{-11,-59},{89,-59}};
+        doc.parts[0].shape=BRepPrimAPI_MakeBox(gp_Pnt(-17.224,-59,30),96.593,20,10).Shape();
+        QString error;auto& v=*w.viewport_;check(v.importDocumentSnapshot(doc,error),qPrintable(error));
+        check(v.activateSketchWorkplane("projection-wp",false),"cannot activate reported WP1");w.documentDirty_=false;
+        const auto baseline=v.sketchEntities_;const auto history=v.undoStack_.size();const auto face=top(v);
+        v.startSketchProjection();pick(v,{{0,face}});preview(v,4);
+        const auto checkBoundary=[](const auto& entities) {
+            return std::any_of(entities.begin(),entities.end(),[](const auto& e) {
+                const auto* s=std::get_if<Sketch::Segment>(&e.geometry);if(!s) return false;
+                const auto near=[](Sketch::Point a,Sketch::Point b){return std::hypot(a.x-b.x,a.y-b.y)<1.e-9;};
+                return (near(s->start,{-17.224,-59}) && near(s->end,{79.369,-59}))
+                    || (near(s->end,{-17.224,-59}) && near(s->start,{79.369,-59}));
+            });
+        };
+        check(checkBoundary(v.commandSession_->projection->result.additions),"reported face preview was truncated");
+        QTemporaryDir dir;chooseFile(dir.filePath("overlap-pending.odc"));check(w.saveDocument(),"Save during overlapping preview failed");
+        NativeDocumentSnapshot loaded;check(NativeDocumentStorage::load(w.documentPath_,loaded,error) && loaded.sketchEntities==baseline
+            && v.commandSession_ && v.undoStack_.size()==history,"Save committed partial preview or lost session/history");
+        v.cancelCommandSession();check(v.sketchEntities_==baseline && v.undoStack_.size()==history && v.sketchPreviews_.empty(),"Cancel changed overlapping document");
+        v.startSketchProjection();pick(v,{{0,face}});preview(v,4);const auto additions=v.commandSession_->projection->result.additions;
+        v.confirmCommandSession();auto expected=baseline;expected.insert(expected.end(),additions.begin(),additions.end());
+        check(v.sketchEntities_==expected && v.undoStack_.size()==history+1 && checkBoundary(additions),"overlapping face did not commit its entire exact contour once");
+        v.undoPull();check(v.sketchEntities_==baseline && v.context_->NbSelected()==0,"overlapping face Undo failed");
+        v.redoPull();check(v.sketchEntities_==expected && v.selectedSketchIds_.empty() && v.context_->NbSelected()==0,"overlapping face Redo lost stable values/selection");
+        v.startSketchProjection();pick(v,{{0,face.Reversed()}});preview(v,0);w.documentDirty_=false;v.confirmCommandSession();
+        check(v.undoStack_.size()==history+1 && !w.documentDirty_,"repeating overlapping face was not a no-op");
+        chooseFile(dir.filePath("overlap-confirmed.odc"));check(w.saveDocumentAs() && v.undoStack_.size()==history+1,"Save As lost overlapping geometry/history");
+        chooseFile(w.documentPath_);w.openDocument();
+        check(v.sketchEntities_==expected && v.undoStack_.empty() && v.redoStack_.empty() && !v.commandSession_
+            && v.context_->NbSelected()==0 && checkBoundary(v.sketchEntities_),"Open lost exact overlapping face or left history/selection");
+        w.documentDirty_=false;
+    }
     static void conicHistory() {
         MainWindow w;setup(w);auto& v=*w.viewport_;const auto baseline=v.sketchEntities_;const auto history=v.undoStack_.size();
         // Tilt the existing analytic elliptical prism: both edge and face modes
@@ -291,6 +327,6 @@ struct SketchProjectionSessionTest {
         check(bounds().contains(panel->frameGeometry()),"viewport restore lost projection panel");
         key(*panel->mode,Qt::Key_Escape);check(!v.commandSession_ && v.sketchPreviews_.empty(),"panel-focused Escape did not cancel");w.documentDirty_=false;
     }
-    static void run() {availabilityAndPicking();commitHistoryStorage();conicHistory();failuresAndLifecycle();panelAndNavigation();}
+    static void run() {availabilityAndPicking();commitHistoryStorage();existingConstructionOverlap();conicHistory();failuresAndLifecycle();panelAndNavigation();}
 };
 void runSketchProjectionSessions() {SketchProjectionSessionTest::run();}

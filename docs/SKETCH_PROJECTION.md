@@ -29,6 +29,26 @@ Ellipse outputs use existing schema v5; older outputs retain v3/v4 selection.
 No tessellation, silhouettes, Profile reconstruction, UI session or schema change
 is introduced. The older phase-specific restrictions below are historical.
 
+## Face boundary versus existing references
+
+A validated face can be projected even when its boundary partially overlaps
+existing Construction geometry. Each nonduplicate boundary edge is retained in
+full, with its exact original extent; existing references are not edited and no
+intervals are trimmed away. Complete duplicate edges are reused, so repeating
+an entire already-projected face remains a no-op. Face-plus-edge selection uses
+this policy independently of selection order.
+
+This exception applies only against pre-existing references. Standalone edges
+and nonduplicate overlapping sources within one new batch still use the strict
+`PartialOverlap` policy described below. Invalid boundaries remain atomic errors.
+Edge-on planar faces are still explicitly refused as collapsed projections.
+
+Regression coverage reproduces WP1 at Z=70 with existing `(-11,-59)→(89,-59)`
+and both reported overlapping boundaries, including hidden/locked references,
+face/edge selection order, duplicate no-ops and an elliptic boundary. Targeted
+Release builds and 7/7 relevant CTests pass, including normal/HiDPI preview,
+Cancel, Undo/Redo and Save/Open; native Fedora KDE retest remains pending.
+
 ## API and transaction boundary
 
 `SketchProjection.h/.cpp` exposes:
@@ -54,7 +74,7 @@ unchanged before-snapshot for one SketchChange. The existing collection is never
 rewritten. New UUIDs are allocated once for returned entities; retain these values
 through preview/confirmation rather than recomputing UUIDs on each redraw.
 
-One invalid source or overlap fails the entire request with no additions. All
+One invalid source or disallowed overlap fails the entire request with no additions. All
 input sources are checked so multiple source errors can be reported together.
 An empty or entirely duplicate batch succeeds with `changed()==false`; it must
 not create history or dirty the document. Context errors (invalid Workplane,

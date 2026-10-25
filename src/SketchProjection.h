@@ -42,7 +42,10 @@ struct Result {
 // Deduplicate against accepted batch values and existing Construction geometry
 // on this Workplane, including hidden/locked entities. Profile geometry and
 // other owners are not duplicate Construction references. Point/curve contacts
-// and crossings are allowed; nonzero collinear/cocircular overlaps are refused.
+// and crossings are allowed. A validated face keeps its full boundary when it
+// partially overlaps existing Construction references; only complete duplicate
+// pieces are reused, without trimming. Standalone edges and new within-batch
+// overlaps retain strict nonzero-interval refusal.
 // Parallel circular edges retain Circle/Arc. Oblique circles and analytic
 // ellipses use exact Ellipse/EllipticalArc coefficients and signed phase mapping.
 // Rank loss/unstable conversion fails; no tessellation/fitting. Conic supports

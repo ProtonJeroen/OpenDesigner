@@ -477,7 +477,7 @@ Result project(const std::vector<Source>& sources,const Construction::Object& wo
         }
         ids.insert(e.id);
     }
-    struct Candidate {size_t source;Sketch::Geometry geometry;QString context;};
+    struct Candidate {size_t source;Sketch::Geometry geometry;QString context;bool faceBoundary=false;};
     std::vector<Candidate> candidates;
     for(size_t i=0;i<sources.size();++i) {
         try {
@@ -486,7 +486,7 @@ Result project(const std::vector<Source>& sources,const Construction::Object& wo
                 std::vector<QString> skipped;
                 const auto pieces=faceGeometry(sources[i],workplane.frame,tolerance,skipped);
                 for(const auto& message:skipped) report(Code::DegenerateSkipped,message,i);
-                for(const auto& p:pieces) candidates.push_back({i,p.geometry,p.context});
+                for(const auto& p:pieces) candidates.push_back({i,p.geometry,p.context,true});
             } else candidates.push_back({i,geometry(sources[i],workplane.frame,tolerance),{}});
         }
         catch(const Failure& f) {report(f.code,f.message,i);}
@@ -502,12 +502,21 @@ Result project(const std::vector<Source>& sources,const Construction::Object& wo
         });
         if(old!=existing.end()) {report(Code::Duplicate,c.context+"Duplicate Construction geometry already exists; boundary piece skipped.",c.source,{},old->id);continue;}
         const auto earlier=std::find_if(unique.begin(),unique.end(),[&](const auto& p){return duplicate(c.geometry,p.geometry,tolerance);});
-        if(earlier!=unique.end()) {report(Code::Duplicate,c.context+"Duplicate projected geometry in this batch; boundary piece skipped.",c.source,earlier->source);continue;}
+        if(earlier!=unique.end()) {
+            // Selecting a face plus its edge in either order must preserve the
+            // validated boundary's policy even when the edge was seen first.
+            earlier->faceBoundary=earlier->faceBoundary || c.faceBoundary;
+            report(Code::Duplicate,c.context+"Duplicate projected geometry in this batch; boundary piece skipped.",c.source,earlier->source);continue;
+        }
         unique.push_back(c);
     }
     for(size_t i=0;i<unique.size();++i) {
         const auto& c=unique[i];
-        for(const auto& e:existing) if(e.workplaneId==workplane.id && e.role==Sketch::Role::Construction && overlap(c.geometry,e.geometry,tolerance))
+        // A valid face contributes its complete analytic boundary. Existing
+        // references may overlap it, but must never trim or block that contour.
+        // Exact duplicates were already reused above; standalone edge and
+        // within-batch overlap checks retain their existing strict behavior.
+        for(const auto& e:existing) if(!c.faceBoundary && e.workplaneId==workplane.id && e.role==Sketch::Role::Construction && overlap(c.geometry,e.geometry,tolerance))
             report(Code::PartialOverlap,c.context+"The projected geometry overlaps existing Construction geometry; no automatic trimming is performed.",c.source,{},e.id);
         for(size_t j=0;j<i;++j) if(overlap(c.geometry,unique[j].geometry,tolerance))
             report(Code::PartialOverlap,c.context+"Projected curves overlap over a nonzero interval; no automatic trimming is performed. "+unique[j].context,c.source,unique[j].source);
