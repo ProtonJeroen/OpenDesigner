@@ -1135,7 +1135,7 @@ void CadViewport::fitAll() {
     const bool visiblePart=std::any_of(boxes_.begin(),boxes_.end(),[](const auto& part){return part.active && part.visible;});
     if(!visiblePart && !constructions_.empty()) {
         Bnd_Box bounds;
-        for(const auto& object:constructions_) if(object.visible) for(const auto& point:Construction::displayBounds(object)) {
+        for(const auto& object:constructions_) if(object.visible) for(const auto& point:constructionDisplayCorners(object)) {
             const double e=object.kind==Construction::Kind::Point?5.0:0;
             bounds.Add(point.Translated(gp_Vec(-e,-e,-e)));bounds.Add(point.Translated(gp_Vec(e,e,e)));
         }
@@ -1215,7 +1215,7 @@ void CadViewport::resetDocument() {
         if(!context_.IsNull()) context_->Remove(presentation,Standard_False);
     for(const auto& [id,label]:constructionLabels_) if(!context_.IsNull()) context_->Remove(label,Standard_False);
     for(const auto& [id,presentation]:sketchPresentations_) if(!context_.IsNull()) context_->Remove(presentation,Standard_False);
-    sketchEntities_.clear();sketchPresentations_.clear();clearSketchSelection();emit sketchEntitiesChanged();
+    sketchEntities_.clear();sketchPresentations_.clear();workplaneDisplayRectangles_.clear();clearSketchSelection();emit sketchEntitiesChanged();
     constructionLabels_.clear();constructionNameCounters_={};
     constructions_.clear();constructionPresentations_.clear();selectedConstructionIds_.clear();
     emit constructionsChanged();emit constructionSelectionChanged({});
@@ -1425,7 +1425,7 @@ bool CadViewport::importDocumentSnapshot(const NativeDocumentSnapshot& snapshot,
                 context_->Activate(loaded.presentation,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
         }
         for(const auto& object:snapshot.constructions) {
-            auto presentation=constructionPresentation(object);importedConstructions[object.id]=presentation;
+            auto presentation=constructionPresentation(object,false,&snapshot.sketchEntities);importedConstructions[object.id]=presentation;
             auto label=constructionLabel(object);importedLabels[object.id]=label;
             if(object.visible) {
                 context_->Display(label,0,-1,Standard_False);context_->Deactivate(label);
@@ -1435,7 +1435,7 @@ bool CadViewport::importDocumentSnapshot(const NativeDocumentSnapshot& snapshot,
         }
         for(const auto& entity:snapshot.sketchEntities) {
             const auto owner=std::find_if(snapshot.constructions.begin(),snapshot.constructions.end(),[&](const auto& o){return o.id==entity.workplaneId;});
-            auto presentation=sketchPresentation(entity,*owner);importedSketches[entity.id]=presentation;
+            auto presentation=sketchPresentation(entity,*owner,false,&snapshot.sketchEntities);importedSketches[entity.id]=presentation;
             displaySketchPresentation(entity,*owner,presentation);
         }
         resetDocument();

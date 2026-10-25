@@ -54,7 +54,7 @@ set(OPENDESIGNER_LIBRARIES
     TKMath
     TKernel
 )
-add_library(OpenDesignerConstruction STATIC src/ConstructionGeometry.cpp src/ConstructionGeometry.h src/SketchGeometry.cpp src/SketchGeometry.h src/SketchSnapping.cpp src/SketchSnapping.h src/SketchOverdraw.cpp src/SketchOverdraw.h src/SketchConstruction.cpp src/SketchConstruction.h src/SketchProjection.cpp src/SketchProjection.h)
+add_library(OpenDesignerConstruction STATIC src/SketchDisplayBounds.cpp src/SketchDisplayBounds.h src/ConstructionGeometry.cpp src/ConstructionGeometry.h src/SketchGeometry.cpp src/SketchGeometry.h src/SketchSnapping.cpp src/SketchSnapping.h src/SketchOverdraw.cpp src/SketchOverdraw.h src/SketchConstruction.cpp src/SketchConstruction.h src/SketchProjection.cpp src/SketchProjection.h)
 target_include_directories(OpenDesignerConstruction PUBLIC src ${OpenCASCADE_INCLUDE_DIR})
 target_link_libraries(OpenDesignerConstruction PUBLIC ${OPENDESIGNER_LIBRARIES})
 add_library(OpenDesignerDeleteFaceGeometry STATIC src/DeleteFaceGeometry.cpp src/DeleteFaceGeometry.h
@@ -76,6 +76,9 @@ install(TARGETS OpenDesigner RUNTIME DESTINATION bin)
 option(OPENDESIGNER_BUILD_TESTS "Build viewport pull regression tests" OFF)
 if(OPENDESIGNER_BUILD_TESTS)
     enable_testing()
+    add_executable(OpenDesignerSketchBoundsTests tests/SketchDisplayBoundsTest.cpp)
+    target_link_libraries(OpenDesignerSketchBoundsTests PRIVATE OpenDesignerConstruction)
+    add_test(NAME sketch-display-bounds COMMAND OpenDesignerSketchBoundsTests)
     add_executable(OpenDesignerSketchEllipseTests tests/SketchEllipseTest.cpp src/NativeDocument.cpp)
     target_link_libraries(OpenDesignerSketchEllipseTests PRIVATE OpenDesignerConstruction)
     add_test(NAME sketch-ellipse-foundation COMMAND OpenDesignerSketchEllipseTests)
@@ -164,7 +167,7 @@ if(OPENDESIGNER_BUILD_TESTS)
     target_link_libraries(OpenDesignerMoveFaceTests PRIVATE ${OPENDESIGNER_LIBRARIES})
     add_test(NAME move-face COMMAND OpenDesignerMoveFaceTests)
     add_executable(OpenDesignerSelectionContextTests
-        tests/SelectionContextTest.cpp tests/NativeDocumentSessionTest.cpp tests/ConstructionSessionTest.cpp tests/SketchSessionTest.cpp tests/SketchDrawingTest.cpp tests/SketchOverdrawSessionTest.cpp tests/SketchConstructionSessionTest.cpp tests/SketchReleaseSessionTest.cpp tests/SketchPointSessionTest.cpp tests/SketchEllipseSessionTest.cpp tests/SketchEllipseDrawingTest.cpp tests/CommandPanelSessionTest.cpp tests/SketchProjectionSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
+        tests/SelectionContextTest.cpp tests/SketchDisplayBoundsSessionTest.cpp tests/NativeDocumentSessionTest.cpp tests/ConstructionSessionTest.cpp tests/SketchSessionTest.cpp tests/SketchDrawingTest.cpp tests/SketchOverdrawSessionTest.cpp tests/SketchConstructionSessionTest.cpp tests/SketchReleaseSessionTest.cpp tests/SketchPointSessionTest.cpp tests/SketchEllipseSessionTest.cpp tests/SketchEllipseDrawingTest.cpp tests/CommandPanelSessionTest.cpp tests/SketchProjectionSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
         src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
         src/MoveFace.cpp src/FaceOperations.cpp src/FaceTransformGeometry.cpp
         src/FaceTransformGeometry.h src/SelectionContext.cpp src/MoveFaceGeometry.h src/BRepReconstruction.cpp src/MoveFaceGeometry.cpp)
@@ -174,6 +177,10 @@ if(OPENDESIGNER_BUILD_TESTS)
     add_test(NAME native-document-sessions COMMAND OpenDesignerSelectionContextTests --documents)
     add_test(NAME native-partless-documents COMMAND OpenDesignerSelectionContextTests --partless)
     set_tests_properties(native-partless-documents PROPERTIES TIMEOUT 120)
+    add_test(NAME sketch-display-bounds-sessions COMMAND OpenDesignerSelectionContextTests --display-bounds)
+    add_test(NAME sketch-display-bounds-sessions-hidpi COMMAND OpenDesignerSelectionContextTests --display-bounds)
+    set_tests_properties(sketch-display-bounds-sessions sketch-display-bounds-sessions-hidpi PROPERTIES TIMEOUT 120)
+    set_tests_properties(sketch-display-bounds-sessions-hidpi PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=2")
     add_test(NAME sketch-sessions COMMAND OpenDesignerSelectionContextTests --sketch)
     add_test(NAME sketch-point-sessions COMMAND OpenDesignerSelectionContextTests --sketch-points)
     add_test(NAME sketch-ellipse-sessions COMMAND OpenDesignerSelectionContextTests --ellipses)

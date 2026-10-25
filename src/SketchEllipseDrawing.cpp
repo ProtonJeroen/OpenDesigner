@@ -166,5 +166,5 @@ void CadViewport::refreshSketchEllipseDrawing() {
     p->setStep(int(n),d.complete,session.valid,error);updateSketchFeedback();
     if(n==0 && input) showSketchMarker(sketchAnchorMarker_,e.center,Quantity_Color(0.1,0.65,1,Quantity_TOC_RGB));
     else if(start && n>=3) showSketchMarker(sketchAnchorMarker_,Sketch::ellipsePoint(e,*start),Quantity_Color(0.1,0.65,1,Quantity_TOC_RGB));
-    view_->Redraw();
+    updateConstructionLabels();view_->Redraw();
 }

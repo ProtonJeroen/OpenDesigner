@@ -12,6 +12,7 @@
 #include <Graphic3d_ZLayerId.hxx>
 #include <Aspect_TypeOfDisplayText.hxx>
 #include <algorithm>
+#include <numeric>
 #include <cmath>
 
 namespace {
@@ -69,7 +70,8 @@ void CadViewport::refreshSketchPicking(bool restore3D) {
 }
 void CadViewport::lookNormalToSketch() {
     const auto* owner=constructionObject(activeSketchWorkplaneId_);if(!owner || view_.IsNull()) return;
-    const auto center=Construction::displayCenter(*owner);const auto camera=view_->Camera();
+    const auto r=workplaneDisplayRectangle(*owner);
+    const auto center=Sketch::worldPoint({std::midpoint(r.minX,r.maxX),std::midpoint(r.minY,r.maxY)},owner->frame);const auto camera=view_->Camera();
     const double distance=std::max(1.0,camera->Distance());
     camera->SetEyeAndCenter(center.Translated(gp_Vec(owner->frame.Direction())*distance),center);
     camera->SetUp(owner->frame.YDirection());fitConstructions({owner->id});clearSketchFeedback();
@@ -238,7 +240,7 @@ void CadViewport::refreshSketchDrawing() {
         if(d.snap) feedback=d.snap->label;
     }
     if(d.complete && d.tool==Sketch::DrawTool::Arc) if(const auto* arc=std::get_if<Sketch::Arc>(&d.candidate.geometry)) sketchDrawingPanel_->setArcSweep(arc->sweepAngle*180/pi);
-    sketchDrawingPanel_->setStep(int(d.points.size()),d.complete,session.valid,feedback);updateSketchFeedback();view_->Redraw();
+    sketchDrawingPanel_->setStep(int(d.points.size()),d.complete,session.valid,feedback);updateSketchFeedback();updateConstructionLabels();view_->Redraw();
 }
 void CadViewport::updateSketchFeedback() {
     if(!commandSession_ || !commandSession_->drawing) return;
