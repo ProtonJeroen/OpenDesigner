@@ -2,6 +2,8 @@
 #include <BRep_Tool.hxx>
 #include <TopExp.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Vertex.hxx>
+#include <TopoDS_Edge.hxx>
 #include <cmath>
 #include <iostream>
 #include <numbers>
