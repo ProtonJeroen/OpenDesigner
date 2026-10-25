@@ -25,6 +25,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <numeric>
 #include <Aspect_TypeOfDisplayText.hxx>
 
 using namespace Construction;
@@ -39,7 +40,7 @@ const Object* CadViewport::constructionObject(const QString& id) const {
     for(const auto& object:constructions_) if(object.id==id) return &object;
     return nullptr;
 }
-Handle(AIS_Shape) CadViewport::constructionPresentation(const Object& object,bool preview) const {
+Handle(AIS_Shape) CadViewport::constructionPresentation(const Object& object,bool preview,const std::vector<Sketch::Entity>* displayEntities) const {
     TopoDS_Shape shape;
     auto frame=object.frame;frame.SetLocation(displayCenter(object));
     const auto arrow=[&](const gp_Pnt& origin,const gp_Dir& direction,double length) {
@@ -50,9 +51,12 @@ Handle(AIS_Shape) CadViewport::constructionPresentation(const Object& object,boo
     };
     if(object.kind==Kind::Workplane) {
         TopoDS_Compound compound;BRep_Builder builder;builder.MakeCompound(compound);
-        builder.Add(compound,BRepBuilderAPI_MakeFace(gp_Pln(frame),-object.extent,object.extent,-object.extent,object.extent).Shape());
-        builder.Add(compound,arrow(frame.Location(),frame.XDirection(),object.extent*0.65));
-        builder.Add(compound,arrow(frame.Location(),frame.YDirection(),object.extent*0.45));
+        const auto r=workplaneDisplayRectangle(object,displayEntities);
+        builder.Add(compound,BRepBuilderAPI_MakeFace(gp_Pln(object.frame),r.minX,r.maxX,r.minY,r.maxY).Shape());
+        const double extent=std::min(r.maxX-r.minX,r.maxY-r.minY)/2;
+        const auto center=Sketch::worldPoint({std::midpoint(r.minX,r.maxX),std::midpoint(r.minY,r.maxY)},object.frame);
+        builder.Add(compound,arrow(center,frame.XDirection(),extent*0.65));
+        builder.Add(compound,arrow(center,frame.YDirection(),extent*0.45));
         shape=compound;
     } else if(object.kind==Kind::Axis) {
         TopoDS_Compound compound;BRep_Builder builder;builder.MakeCompound(compound);
@@ -88,10 +92,11 @@ Handle(AIS_TextLabel) CadViewport::constructionLabel(const Object& object,bool p
 }
 void CadViewport::updateConstructionLabels() {
     if(view_.IsNull() || context_.IsNull()) return;
+    refreshWorkplaneDisplay();
     const gp_Vec right=gp_Vec(view_->Camera()->Direction()).Crossed(gp_Vec(view_->Camera()->Up())).Normalized();
     const gp_Vec up(view_->Camera()->Up());const double padding=view_->Convert(7);
     const auto update=[&](const Object& object,const Handle(AIS_TextLabel)& label) {
-        const auto bounds=displayBounds(object);auto anchor=bounds.front();
+        const auto bounds=constructionDisplayCorners(object);auto anchor=bounds.front();
         if(object.kind==Kind::Workplane) {
             // Lowest-left projected corner, recalculated as the camera rotates.
             int best=std::numeric_limits<int>::min();
@@ -174,7 +179,7 @@ void CadViewport::deleteConstructions(const QStringList& ids) {
 void CadViewport::fitConstructions(const QStringList& ids) {
     initializeViewer();Bnd_Box bounds;
     for(const auto& id:ids) if(const auto* object=constructionObject(id)) {
-        for(const auto& p:displayBounds(*object)) {
+        for(const auto& p:constructionDisplayCorners(*object)) {
             const double e=object->kind==Kind::Point?5.0:0;
             bounds.Add(gp_Pnt(p.X()-e,p.Y()-e,p.Z()-e));bounds.Add(gp_Pnt(p.X()+e,p.Y()+e,p.Z()+e));
         }

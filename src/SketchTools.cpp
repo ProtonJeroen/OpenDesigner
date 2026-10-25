@@ -14,8 +14,8 @@
 #include <Select3D_SensitiveEntity.hxx>
 #include <algorithm>
 
-Handle(AIS_Shape) CadViewport::sketchPresentation(const Sketch::Entity& entity,const Construction::Object& owner,bool preview) const {
-    Handle(AIS_Shape) presentation=new AIS_Shape(Sketch::shape(entity,owner.frame,owner.extent));
+Handle(AIS_Shape) CadViewport::sketchPresentation(const Sketch::Entity& entity,const Construction::Object& owner,bool preview,const std::vector<Sketch::Entity>* displayEntities) const {
+    Handle(AIS_Shape) presentation=new AIS_Shape(Sketch::displayShape(entity,owner.frame,workplaneDisplayRectangle(owner,displayEntities)));
     const bool construction=entity.role==Sketch::Role::Construction;
     const Quantity_Color color=preview?Quantity_Color(0.1,0.65,1,Quantity_TOC_RGB)
         :construction?Quantity_Color(1,0.4,0.8,Quantity_TOC_RGB):Quantity_Color(Quantity_NOC_WHITE);
@@ -25,6 +25,63 @@ Handle(AIS_Shape) CadViewport::sketchPresentation(const Sketch::Entity& entity,c
         presentation->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_PLUS,color,7.0));
     if(std::holds_alternative<Sketch::InfiniteLine>(entity.geometry)) presentation->SetInfiniteState(true);
     return presentation;
+}
+Sketch::DisplayRectangle CadViewport::workplaneDisplayRectangle(const Construction::Object& owner,const std::vector<Sketch::Entity>* entities) const {
+    if(entities) return Sketch::displayRectangle(owner,*entities);
+    if(commandSession_ && commandSession_->sketch) {
+        const auto& after=commandSession_->sketch->after;
+        // Incomplete drawing previews are intentionally absent from the transaction.
+        if(commandSession_->drawing && sketchPreviews_.contains(commandSession_->drawing->candidate.id)) {
+            auto shown=after;const auto& candidate=commandSession_->drawing->candidate;
+            std::erase_if(shown,[&](const auto& e){return e.id==candidate.id;});shown.push_back(candidate);
+            return Sketch::displayRectangle(owner,shown);
+        }
+        return Sketch::displayRectangle(owner,after);
+    }
+    return Sketch::displayRectangle(owner,sketchEntities_);
+}
+std::vector<gp_Pnt> CadViewport::constructionDisplayCorners(const Construction::Object& object) const {
+    if(object.kind!=Construction::Kind::Workplane) return Construction::displayBounds(object);
+    const auto corners=Sketch::displayCorners(workplaneDisplayRectangle(object),object.frame);
+    return {corners.begin(),corners.end()};
+}
+void CadViewport::refreshWorkplaneDisplay() {
+    if(context_.IsNull()) return;
+    bool changed=false;
+    const auto replace=[&](const Handle(AIS_Shape)& presentation,const TopoDS_Shape& shape) {
+        // Redisplay rebuilds OCCT owners. Preserve selection of this logical
+        // Workplane/Sketch entity without retaining owners of obsolete edges.
+        std::vector<Handle(SelectMgr_EntityOwner)> selected;
+        for(context_->InitSelected();context_->MoreSelected();context_->NextSelected())
+            if(context_->SelectedInteractive()==presentation) selected.push_back(context_->SelectedOwner());
+        for(const auto& owner:selected) context_->AddOrRemoveSelected(owner,Standard_False);
+        presentation->SetShape(shape);context_->Redisplay(presentation,Standard_False);
+        if(!selected.empty()) context_->AddOrRemoveSelected(presentation,Standard_False);
+    };
+    for(const auto& owner:constructions_) if(owner.kind==Construction::Kind::Workplane) {
+        const auto rectangle=workplaneDisplayRectangle(owner);
+        auto it=workplaneDisplayRectangles_.find(owner.id);
+        if(it!=workplaneDisplayRectangles_.end() && it->second==rectangle) continue;
+        workplaneDisplayRectangles_[owner.id]=rectangle;changed=true;
+        if(auto p=constructionPresentations_.find(owner.id);p!=constructionPresentations_.end()) {
+            replace(p->second,constructionPresentation(owner)->Shape());
+        }
+        const auto update=[&](const Sketch::Entity& entity,const auto& presentations,const Construction::Object& frameOwner) {
+            if(entity.workplaneId!=owner.id || !std::holds_alternative<Sketch::InfiniteLine>(entity.geometry)) return;
+            if(auto p=presentations.find(entity.id);p!=presentations.end()) {
+                replace(p->second,Sketch::displayShape(entity,frameOwner.frame,rectangle));
+                const auto selection=p->second->Selection(0);
+                if(!selection.IsNull()) for(const auto& sensitive:selection->Entities())
+                    sensitive->BaseSensitive()->OwnerId()->SetPriority(8);
+            }
+        };
+        for(const auto& entity:sketchEntities_) update(entity,sketchPresentations_,owner);
+        if(commandSession_ && commandSession_->sketch) {
+            for(const auto& entity:commandSession_->sketch->after) update(entity,sketchPreviews_,owner);
+            if(commandSession_->drawing) update(commandSession_->drawing->candidate,sketchPreviews_,owner);
+        }
+    }
+    if(changed && !view_.IsNull()) view_->ZFitAll();
 }
 void CadViewport::displaySketchPresentation(const Sketch::Entity& entity,const Construction::Object& owner,const Handle(AIS_Shape)& presentation,bool preview) {
     if(!entity.visible || !owner.visible) return;
@@ -67,6 +124,7 @@ void CadViewport::rebuildSketchPresentations() {
         }
     }
     selectedSketchIds_=retained;emit sketchSelectionChanged(retained);
+    workplaneDisplayRectangles_.clear();updateConstructionLabels();
     refreshSketchPicking();
     if(!view_.IsNull()) {view_->ZFitAll();view_->Redraw();}
 }
@@ -101,7 +159,7 @@ bool CadViewport::previewSketchEntities(const std::vector<Sketch::Entity>& entit
     std::map<QString,Handle(AIS_Shape)> previews;
     try {
         initializeViewer();
-        for(const auto& e:entities) previews[e.id]=sketchPresentation(e,*constructionObject(e.workplaneId),true);
+        for(const auto& e:entities) previews[e.id]=sketchPresentation(e,*constructionObject(e.workplaneId),true,&entities);
     } catch(const Standard_Failure& failure) {error=QString::fromUtf8(failure.GetMessageString());return false;}
     cancelCommandSession();
     commandSession_.emplace();commandSession_->kind=CommandSession::Kind::Sketch;
@@ -116,7 +174,7 @@ bool CadViewport::previewSketchEntities(const std::vector<Sketch::Entity>& entit
         commandPanel_->setWindowTitle(tr("2D Geometry Preview"));commandButtons_->show();
         showCommandPanel(commandPanel_);
     }
-    view_->Redraw();error.clear();return true;
+    updateConstructionLabels();view_->Redraw();error.clear();return true;
 }
 void CadViewport::finishSketchEdit(bool confirm) {
     if(!commandSession_ || commandSession_->kind!=CommandSession::Kind::Sketch) return;

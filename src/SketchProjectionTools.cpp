@@ -169,7 +169,7 @@ void CadViewport::refreshSketchProjection() {
         :tr("Blue preview only. OK adds all entities in one operation; Cancel leaves the document unchanged.");
     sketchProjectionPanel_->setResult(labels,int(result.additions.size()),message,diagnostics,s.valid);
     d.result=std::move(result);s.state=s.valid?CommandSession::State::Preview:CommandSession::State::Selection;
-    emit statusMessage(message);view_->Redraw();
+    emit statusMessage(message);updateConstructionLabels();view_->Redraw();
 }
 bool CadViewport::confirmSketchProjection() {
     if(!validateSketchProjectionSources()) return false;

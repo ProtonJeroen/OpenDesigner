@@ -144,7 +144,7 @@ void CadViewport::refreshOverdraw() {
     if(!d.error.isEmpty()) prompt=tr("Overdraw unavailable: %1").arg(d.error);
     session.state=session.valid?CommandSession::State::Preview:CommandSession::State::Selection;
     sketchOverdrawPanel_->update(prompt,d.graph.notice,labels,selectedIndex,int(d.picks.size()),d.currentNode.has_value(),session.valid);
-    emit statusMessage(prompt);view_->Redraw();
+    emit statusMessage(prompt);updateConstructionLabels();view_->Redraw();
 }
 void CadViewport::closeOverdrawPanel() {
     if(!overdrawHover_.IsNull()) {context_->Remove(overdrawHover_,Standard_False);overdrawHover_.Nullify();}

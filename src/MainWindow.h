@@ -15,6 +15,7 @@ private:
     friend struct NativeDocumentSessionTest;
     friend struct ConstructionSessionTest;
     friend struct SketchSessionTest;
+    friend struct SketchDisplayBoundsSessionTest;
     friend struct SketchDrawingTest;
     friend struct SketchOverdrawSessionTest;
     friend struct SketchConstructionSessionTest;

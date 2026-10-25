@@ -18,6 +18,38 @@ independent world-space 3D construction Point on a plane; it is not a 2D sketch
 entity, does not supply sketch snaps and does not follow subsequent Workplane
 transforms. No associative projection or feature history is implied.
 
+## Phase 6B.1: dynamic Workplane display bounds
+
+Each Workplane derives a rectangular local XY display frame from all its finite
+Sketch entities (both roles, including hidden/locked geometry). Segment endpoints,
+Construction Points, circles, arcs, rotated ellipses and elliptical arcs use
+analytic extrema within their signed parameter domains, without tessellation.
+Each dimension gets 10% padding on each side and a 20 mm minimum span. Empty or
+infinite-only Workplanes retain their existing display extent and offset. Parts
+and geometry on other Workplanes do not affect this rectangle.
+
+Infinite Construction Lines do not enlarge the frame. Their presentation is
+analytically clipped against its four sides, even when the line origin is far
+outside the frame. Outside lines and corner-only contacts have no visible edge;
+their infinite model values, snapping and Overdraw support remain unchanged.
+
+Frames, clipped lines, labels and Fit Selected follow confirmed changes, live
+previews, Cancel, Undo/Redo, Workplane transforms and document loading. Bounds are
+derived view data: no stored coordinates, analytical Workplane origin, history,
+dirty state or native schema changes. Preview bounds are discarded on Cancel.
+Existing colors/borders remain; grid and SolidDesigner styling belong to 6B.2.
+
+Fedora KDE checks (manual confirmation still required):
+
+- On an empty Workplane draw distant/narrow finite geometry, including a rotated
+  ellipse and CW/CCW arc. Check rectangular growth, shifting, label and Fit Selected.
+- Add infinite horizontal, vertical and oblique lines with origins outside the
+  frame; check all visible endpoints meet its sides. Outside lines stay invisible.
+- Preview a large circle/projected contour; Cancel restores the old frame, OK
+  keeps it. Delete the distant geometry, then Undo/Redo, and check shrink/growth.
+- Move/rotate the Workplane, Save/Open and check geometry placement, snapping,
+  selection and labels. Repeat on a second Workplane and at 200% scaling.
+
 ## Model and ownership
 
 ### Current phase 6A.2: Ellipse and Elliptical Arc
@@ -152,7 +184,7 @@ history step. Creation references for the Workplane remain evaluated once.
 
 `SketchTools.cpp` adapts curves to exact OCCT edges. Profile curves are white
 and solid; Construction curves are pink and dashed. Infinite lines are clipped
-only for display, using the Workplane extent, and excluded from automatic OCCT
+only for display, using the derived rectangular Workplane bounds, and excluded from automatic OCCT
 infinite-object fitting. Construction-only Fit All additionally considers finite
 display bounds and the drawn curves. Labels and rendering are never storage data.
 

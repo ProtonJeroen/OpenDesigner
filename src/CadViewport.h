@@ -33,6 +33,7 @@ class QContextMenuEvent;
 #include <QStringList>
 class ConstructionPanel;
 #include "NativeDocument.h"
+#include "SketchDisplayBounds.h"
 #include "SketchDrawingPanel.h"
 #include "SketchSnapping.h"
 #include "SketchOverdraw.h"
@@ -149,6 +150,7 @@ protected:
 private:
     friend struct ConstructionSessionTest;
     friend struct SketchSessionTest;
+    friend struct SketchDisplayBoundsSessionTest;
     friend struct SketchDrawingTest;
     friend struct SketchOverdrawSessionTest;
     friend struct SketchConstructionSessionTest;
@@ -398,8 +400,12 @@ private:
     std::vector<Sketch::Entity> sketchEntities_;
     QStringList selectedSketchIds_;
     std::map<QString,Handle(AIS_Shape)> sketchPresentations_, sketchPreviews_;
-    Handle(AIS_Shape) sketchPresentation(const Sketch::Entity& entity, const Construction::Object& owner, bool preview=false) const;
+    Handle(AIS_Shape) sketchPresentation(const Sketch::Entity& entity, const Construction::Object& owner, bool preview=false, const std::vector<Sketch::Entity>* displayEntities=nullptr) const;
     void displaySketchPresentation(const Sketch::Entity& entity, const Construction::Object& owner, const Handle(AIS_Shape)& presentation, bool preview=false);
+    Sketch::DisplayRectangle workplaneDisplayRectangle(const Construction::Object& owner, const std::vector<Sketch::Entity>* entities=nullptr) const;
+    std::vector<gp_Pnt> constructionDisplayCorners(const Construction::Object& object) const;
+    void refreshWorkplaneDisplay();
+    std::map<QString,Sketch::DisplayRectangle> workplaneDisplayRectangles_;
     void rebuildSketchPresentations();
     void restoreSketchEntities(const std::vector<Sketch::Entity>& entities);
     bool sketchMousePress(const QPoint& point, Qt::KeyboardModifiers modifiers);
@@ -420,7 +426,7 @@ private:
     double constructionHandleLength_ = 30.0;
     bool constructionRotating_ = false;
     const Construction::Object* constructionObject(const QString& id) const;
-    Handle(AIS_Shape) constructionPresentation(const Construction::Object& object,bool preview=false) const;
+    Handle(AIS_Shape) constructionPresentation(const Construction::Object& object,bool preview=false, const std::vector<Sketch::Entity>* displayEntities=nullptr) const;
     Handle(AIS_TextLabel) constructionLabel(const Construction::Object& object,bool preview=false) const;
     void updateConstructionLabels();
     void rebuildConstructionPresentations();

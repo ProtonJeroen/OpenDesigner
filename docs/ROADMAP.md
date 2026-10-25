@@ -54,6 +54,17 @@ See [ellipse plan and delivery boundary](ELLIPSE_IMPLEMENTATION_PLAN.md).
 No new Fedora KDE manual approval is implied; automated results are recorded in
 the phase-6A.1 PR. Earlier milestone results below retain their historical scope.
 
+### Phase 6B: Workplane presentation (Issue #48)
+
+- [x] 6B.1: derived rectangular local bounds from all finite Sketch geometry,
+  including analytic circular/elliptical arc extrema, per-side 10% padding,
+  20 mm minimum spans and legacy default for empty/infinite-only Workplanes.
+- [x] 6B.1: visually clip infinite Construction Lines to the actual rectangle;
+  refresh frames/labels for previews, Cancel, history, transforms and Open.
+  Analytical origins, geometry, native schema and styles remain unchanged.
+- [ ] 6B.2: SolidDesigner-style borders, front/back/active colors and grid.
+  These remain outside 6B.1; Issue #48 is not fully closed by this delivery.
+
 ### Completed phases 1–5
 
 - [x] Phase 1: independent local 2D Construction Points with stable UUIDs,

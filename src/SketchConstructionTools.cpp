@@ -136,7 +136,7 @@ void CadViewport::refreshSketchConstruction(bool recompute) {
         message=tr("Cannot preview the construction line: %1").arg(QString::fromUtf8(failure.GetMessageString()));
     }
     session.state=session.valid?CommandSession::State::Preview:CommandSession::State::Selection;
-    panel->setStatus(message,session.valid);emit statusMessage(message);view_->Redraw();
+    panel->setStatus(message,session.valid);emit statusMessage(message);updateConstructionLabels();view_->Redraw();
 }
 bool CadViewport::sketchConstructionMove(const QPoint& pixel) {
     if(!commandSession_ || !commandSession_->lineConstruction) return false;
