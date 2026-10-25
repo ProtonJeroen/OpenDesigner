@@ -1,4 +1,5 @@
 #include "CadViewport.h"
+#include <QIcon>
 #include "MoveFaceGeometry.h"
 #include "BRepReconstruction.h"
 #include <QMenu>
@@ -168,7 +169,8 @@ QMenu* CadViewport::createSelectionMenu(const QPoint& anchor) {
         auto* tangent=drawing->addAction(tr("Common Tangent Construction Line"));tangent->setObjectName("context.common_tangent");
         connect(tangent,&QAction::triggered,this,[this]{startSketchConstruction(Sketch::ConstructionTool::CommonTangent);});
         const auto add=[this,drawing](const QString& text,Sketch::DrawTool tool,Sketch::Role role) {
-            connect(drawing->addAction(text),&QAction::triggered,this,[this,tool,role]{startSketchDrawing(tool,role);});
+            auto* action=drawing->addAction(text);
+            connect(action,&QAction::triggered,this,[this,tool,role]{startSketchDrawing(tool,role);});return action;
         };
         add(tr("Profile Line"),Sketch::DrawTool::Segment,Sketch::Role::Profile);
         add(tr("Profile Circle"),Sketch::DrawTool::Circle,Sketch::Role::Profile);
@@ -177,6 +179,10 @@ QMenu* CadViewport::createSelectionMenu(const QPoint& anchor) {
         add(tr("Profile Elliptical Arc"),Sketch::DrawTool::EllipticalArc,Sketch::Role::Profile);
         add(tr("Construction Line"),Sketch::DrawTool::Segment,Sketch::Role::Construction);
         add(tr("Infinite Construction Line"),Sketch::DrawTool::InfiniteLine,Sketch::Role::Construction);
+        auto* horizontal=add(tr("Horizontal Infinite Construction Line"),Sketch::DrawTool::HorizontalInfiniteLine,Sketch::Role::Construction);
+        horizontal->setObjectName("context.infinite.horizontal");horizontal->setIcon(Sketch::orthogonalLineIcon(Sketch::DrawTool::HorizontalInfiniteLine));
+        auto* vertical=add(tr("Vertical Infinite Construction Line"),Sketch::DrawTool::VerticalInfiniteLine,Sketch::Role::Construction);
+        vertical->setObjectName("context.infinite.vertical");vertical->setIcon(Sketch::orthogonalLineIcon(Sketch::DrawTool::VerticalInfiniteLine));
         add(tr("Construction Circle"),Sketch::DrawTool::Circle,Sketch::Role::Construction);
         add(tr("Construction Arc"),Sketch::DrawTool::Arc,Sketch::Role::Construction);
         add(tr("Construction Ellipse"),Sketch::DrawTool::Ellipse,Sketch::Role::Construction);

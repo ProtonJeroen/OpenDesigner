@@ -423,6 +423,7 @@ bool CadViewport::eventFilter(QObject* watched, QEvent* event) {
                 else if(commandSession_->drawing && !commandSession_->drawing->complete && sketchDrawingPanel_) {
                     const bool polar=sketchDrawingPanel_->parameterWidget(widget);
                     useSketchNumeric(polar);
+                    if(commandSession_ && commandSession_->drawing && Sketch::orthogonalLineTool(commandSession_->drawing->tool)) confirmCommandSession();
                 } else confirmCommandSession();
             }
             return true;

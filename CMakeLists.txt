@@ -167,7 +167,7 @@ if(OPENDESIGNER_BUILD_TESTS)
     target_link_libraries(OpenDesignerMoveFaceTests PRIVATE ${OPENDESIGNER_LIBRARIES})
     add_test(NAME move-face COMMAND OpenDesignerMoveFaceTests)
     add_executable(OpenDesignerSelectionContextTests
-        tests/SelectionContextTest.cpp tests/SketchDisplayBoundsSessionTest.cpp tests/NativeDocumentSessionTest.cpp tests/ConstructionSessionTest.cpp tests/SketchSessionTest.cpp tests/SketchDrawingTest.cpp tests/SketchOverdrawSessionTest.cpp tests/SketchConstructionSessionTest.cpp tests/SketchReleaseSessionTest.cpp tests/SketchPointSessionTest.cpp tests/SketchEllipseSessionTest.cpp tests/SketchEllipseDrawingTest.cpp tests/CommandPanelSessionTest.cpp tests/SketchProjectionSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
+        tests/SelectionContextTest.cpp tests/SketchDisplayBoundsSessionTest.cpp tests/NativeDocumentSessionTest.cpp tests/ConstructionSessionTest.cpp tests/SketchSessionTest.cpp tests/SketchDrawingTest.cpp tests/SketchOrthogonalLineTest.cpp tests/SketchOverdrawSessionTest.cpp tests/SketchConstructionSessionTest.cpp tests/SketchReleaseSessionTest.cpp tests/SketchPointSessionTest.cpp tests/SketchEllipseSessionTest.cpp tests/SketchEllipseDrawingTest.cpp tests/CommandPanelSessionTest.cpp tests/SketchProjectionSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
         src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
         src/MoveFace.cpp src/FaceOperations.cpp src/FaceTransformGeometry.cpp
         src/FaceTransformGeometry.h src/SelectionContext.cpp src/MoveFaceGeometry.h src/BRepReconstruction.cpp src/MoveFaceGeometry.cpp)
@@ -198,6 +198,10 @@ if(OPENDESIGNER_BUILD_TESTS)
     add_test(NAME command-panel-sessions COMMAND OpenDesignerSelectionContextTests --command-panels)
     set_tests_properties(command-panel-sessions PROPERTIES TIMEOUT 120)
     set_tests_properties(sketch-point-sessions PROPERTIES TIMEOUT 120)
+    add_test(NAME sketch-orthogonal-lines COMMAND OpenDesignerSelectionContextTests --orthogonal-lines)
+    add_test(NAME sketch-orthogonal-lines-hidpi COMMAND OpenDesignerSelectionContextTests --orthogonal-lines)
+    set_tests_properties(sketch-orthogonal-lines sketch-orthogonal-lines-hidpi PROPERTIES TIMEOUT 120)
+    set_tests_properties(sketch-orthogonal-lines-hidpi PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=2")
     add_test(NAME sketch-drawing COMMAND OpenDesignerSelectionContextTests --drawing)
     add_test(NAME sketch-arc-direction COMMAND OpenDesignerSelectionContextTests --arc-direction)
     add_test(NAME sketch-overdraw-traversal COMMAND OpenDesignerSelectionContextTests --overdraw-traversal)

@@ -97,7 +97,7 @@ void CadViewport::startSketchDrawing(Sketch::DrawTool tool,Sketch::Role role) {
     session.sketch=std::make_shared<SketchChange>(SketchChange{sketchEntities_,sketchEntities_});
     session.drawing=std::make_shared<SketchDrawingState>();auto& drawing=*session.drawing;
     drawing.tool=tool;drawing.candidate.workplaneId=owner->id;
-    drawing.candidate.role=tool==Sketch::DrawTool::InfiniteLine?Sketch::Role::Construction:role;
+    drawing.candidate.role=Sketch::infiniteLineTool(tool)?Sketch::Role::Construction:role;
     session.valid=false;session.state=CommandSession::State::Selection;
     for(const auto& target:Sketch::snapTargets(sketchEntities_,owner->id,{})) if(target.kind==Sketch::SnapKind::Intersection) drawing.intersections.push_back(target);
     sketchDrawingPanel_=new SketchDrawingPanel(tool,drawing.candidate.role,owner->name,this);
@@ -117,6 +117,11 @@ void CadViewport::startSketchDrawing(Sketch::DrawTool tool,Sketch::Role role) {
         commandSession_->drawing->sweep.reset();refreshSketchDrawing();
     };
     sketchDrawingPanel_->ellipseParametersChanged=[this]{editSketchEllipseParameters();};
+    sketchDrawingPanel_->orthogonalPositionChanged=[this] {
+        if(!commandSession_ || !commandSession_->drawing || !sketchDrawingPanel_) return;
+        auto& d=*commandSession_->drawing;d.points.clear();d.complete=false;
+        acceptSketchPoint({sketchDrawingPanel_->x->value(),sketchDrawingPanel_->y->value()});
+    };
     showCommandPanel(sketchDrawingPanel_);refreshSketchDrawing();setFocus();
 }
 bool CadViewport::sketchDrawingMove(const QPoint& pixel,Qt::KeyboardModifiers modifiers) {
@@ -158,13 +163,23 @@ void CadViewport::acceptSketchPoint(Sketch::Point point) {
         const auto anchor=d.tool==Sketch::DrawTool::Arc?d.points[0]:d.points.back();
         if(distance(anchor,point)<=1.e-7) {sketchDrawingPanel_->setStep(int(d.points.size()),false,false,tr("Choose a distinct point."));return;}
     }
+    if(Sketch::orthogonalLineTool(d.tool)) {
+        // A mouse pick wins even if the coordinate editor still had focus.
+        auto* coordinate=d.tool==Sketch::DrawTool::HorizontalInfiniteLine?sketchDrawingPanel_->y:sketchDrawingPanel_->x;
+        const double value=d.tool==Sketch::DrawTool::HorizontalInfiniteLine?point.y:point.x;
+        if(coordinate->value()!=value) {const QSignalBlocker block(coordinate);coordinate->setValue(value);}
+    }
     d.points.push_back(point);d.cursor.reset();d.snap.reset();
-    d.complete=d.points.size()==(d.tool==Sketch::DrawTool::Arc?3:2);refreshSketchDrawing();
+    d.complete=d.points.size()==(Sketch::orthogonalLineTool(d.tool)?1:d.tool==Sketch::DrawTool::Arc?3:2);refreshSketchDrawing();
 }
 void CadViewport::useSketchNumeric(bool usePolar) {
     if(!commandSession_ || !commandSession_->drawing || !sketchDrawingPanel_) return;
-    auto& d=*commandSession_->drawing;if(d.complete) return;
+    auto& d=*commandSession_->drawing;if(d.complete && !Sketch::orthogonalLineTool(d.tool)) return;
     sketchDrawingPanel_->finishEditing();d.snap.reset();
+    if(Sketch::orthogonalLineTool(d.tool)) {
+        d.points.clear();d.complete=false;
+        acceptSketchPoint({sketchDrawingPanel_->x->value(),sketchDrawingPanel_->y->value()});return;
+    }
     if(Sketch::ellipseTool(d.tool)) {if(usePolar) useSketchEllipseNumeric();else acceptSketchEllipsePoint({sketchDrawingPanel_->x->value(),sketchDrawingPanel_->y->value()});return;}
     if(!usePolar) {acceptSketchPoint({sketchDrawingPanel_->x->value(),sketchDrawingPanel_->y->value()});return;}
     if(d.points.empty()) return;
@@ -200,7 +215,13 @@ void CadViewport::refreshSketchDrawing() {
     if(d.cursor && !d.complete) points.push_back(*d.cursor);
     for(const auto& [id,p]:sketchPreviews_) context_->Remove(p,Standard_False);
     sketchPreviews_.clear();session.sketch->after=session.sketch->before;session.valid=false;QString error;
-    if(points.size()>=2) {
+    bool ready=false;
+    if(Sketch::orthogonalLineTool(d.tool) && !points.empty()) {
+        const bool horizontal=d.tool==Sketch::DrawTool::HorizontalInfiniteLine;
+        d.candidate.geometry=horizontal?Sketch::InfiniteLine{{0,points.front().y},{1,0}}
+                                       :Sketch::InfiniteLine{{points.front().x,0},{0,1}};
+        d.candidate.role=Sketch::Role::Construction;ready=true;
+    } else if(points.size()>=2) {
         const auto a=points[0],b=points[1];const double size=distance(a,b);
         if(size>1.e-7) {
             if(d.tool==Sketch::DrawTool::Segment) d.candidate.geometry=Sketch::Segment{a,b};
@@ -215,14 +236,15 @@ void CadViewport::refreshSketchDrawing() {
                 // Show its support circle while choosing the start and end; never store it as the arc result.
                 d.candidate.geometry=Sketch::Circle{a,d.radius.value_or(size)};
             }
-            if(Sketch::valid(d.candidate,error)) {
-                try {
-                    auto p=sketchPresentation(d.candidate,*constructionObject(activeSketchWorkplaneId_),true);
-                    sketchPreviews_[d.candidate.id]=p;displaySketchPresentation(d.candidate,*constructionObject(activeSketchWorkplaneId_),p,true);
-                    if(d.complete) {session.sketch->after.push_back(d.candidate);session.valid=true;}
-                } catch(const Standard_Failure& e) {error=QString::fromUtf8(e.GetMessageString());}
-            }
+            ready=true;
         } else error=tr("Choose distinct points.");
+    }
+    if(ready && Sketch::valid(d.candidate,error)) {
+        try {
+            auto p=sketchPresentation(d.candidate,*constructionObject(activeSketchWorkplaneId_),true);
+            sketchPreviews_[d.candidate.id]=p;displaySketchPresentation(d.candidate,*constructionObject(activeSketchWorkplaneId_),p,true);
+            if(d.complete) {session.sketch->after.push_back(d.candidate);session.valid=true;}
+        } catch(const Standard_Failure& e) {error=QString::fromUtf8(e.GetMessageString());}
     }
     session.state=session.valid?CommandSession::State::Preview:CommandSession::State::Parameters;
     QString feedback=error;
@@ -259,14 +281,17 @@ void CadViewport::updateSketchFeedback() {
     const auto world=Sketch::worldPoint(*d.cursor,owner->frame);const auto camera=view_->Camera();
     const auto right=gp_Vec(camera->Direction()).Crossed(gp_Vec(camera->Up())).Normalized();
     sketchCursorLabel_->SetPosition(world.Translated((right+gp_Vec(camera->Up()))*view_->Convert(12)));
-    QString text=QString("%1X %2  Y %3").arg(d.snap?d.snap->label+" | ":QString()).arg(d.cursor->x,0,'f',6).arg(d.cursor->y,0,'f',6);
+    QString text=Sketch::orthogonalLineTool(d.tool)
+        ?QString("%1%2 %3 mm").arg(d.snap?d.snap->label+" | ":QString(),d.tool==Sketch::DrawTool::HorizontalInfiniteLine?"Y":"X")
+            .arg(d.tool==Sketch::DrawTool::HorizontalInfiniteLine?d.cursor->y:d.cursor->x,0,'f',6)
+        :QString("%1X %2  Y %3").arg(d.snap?d.snap->label+" | ":QString()).arg(d.cursor->x,0,'f',6).arg(d.cursor->y,0,'f',6);
     if(!d.points.empty() && Sketch::ellipseTool(d.tool)) {
         auto support=d.ellipse;
         if(const auto* e=std::get_if<Sketch::Ellipse>(&d.candidate.geometry)) support=*e;
         if(const auto* a=std::get_if<Sketch::EllipticalArc>(&d.candidate.geometry)) support=a->ellipse;
         text+=QString(" | a %1  b %2  Axis %3°").arg(support.majorRadius,0,'f',6).arg(support.minorRadius,0,'f',6).arg(support.axisAngle*180/pi,0,'f',4);
         if(const auto* a=std::get_if<Sketch::EllipticalArc>(&d.candidate.geometry)) text+=QString(" | Sweep %1°").arg(a->sweepParameter*180/pi,0,'f',4);
-    } else if(!d.points.empty()) {
+    } else if(!d.points.empty() && !Sketch::orthogonalLineTool(d.tool)) {
         const bool arcEnd=d.tool==Sketch::DrawTool::Arc && d.points.size()==2;
         const double size=arcEnd?d.radius.value_or(distance(d.points[0],d.points[1])):distance(d.points[0],*d.cursor);
         double angle=std::atan2(d.cursor->y-d.points[0].y,d.cursor->x-d.points[0].x);
@@ -298,5 +323,5 @@ void CadViewport::clearSketchFeedback() {
 void CadViewport::closeSketchDrawingPanel() {
     if(!sketchDrawingPanel_) return;
     auto* panel=sketchDrawingPanel_;sketchDrawingPanel_=nullptr;
-    panel->confirmed={};panel->cancelled={};panel->useXY={};panel->usePolar={};panel->back={};panel->roleChanged={};panel->directionChanged={};panel->ellipseParametersChanged={};panel->hide();panel->deleteLater();
+    panel->confirmed={};panel->cancelled={};panel->useXY={};panel->usePolar={};panel->back={};panel->roleChanged={};panel->directionChanged={};panel->ellipseParametersChanged={};panel->orthogonalPositionChanged={};panel->hide();panel->deleteLater();
 }
