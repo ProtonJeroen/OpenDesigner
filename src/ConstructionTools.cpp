@@ -60,13 +60,20 @@ Handle(AIS_Shape) CadViewport::constructionPresentation(const Object& object,boo
     }
     else shape=BRepBuilderAPI_MakeVertex(frame.Location()).Shape();
     Handle(AIS_Shape) result=new AIS_Shape(shape);
-    result->SetInfiniteState(true);
+    // AIS_Shape renders infinite presentations as wireframe even in AIS_Shaded.
+    // The Workplane ring is a finite face, independent of its analytical plane.
+    result->SetInfiniteState(object.kind!=Kind::Workplane);
     result->SetColor(preview?Quantity_Color(0.1,0.65,1.0,Quantity_TOC_RGB):object.kind==Kind::Workplane
         ?workplaneColor(object.id):object.kind==Kind::Axis
         ?Quantity_Color(0.3,0.9,0.4,Quantity_TOC_RGB):Quantity_Color(1.0,0.85,0.15,Quantity_TOC_RGB));
     result->SetWidth(2.0);
     if(object.kind==Kind::Axis) result->SetDisplayMode(AIS_Shaded);
-    if(object.kind==Kind::Workplane) {result->SetColor(workplaneColor(object.id));result->SetDisplayMode(AIS_Shaded);result->SetTransparency(0.5);}
+    if(object.kind==Kind::Workplane) {
+        result->SetColor(workplaneColor(object.id));result->SetDisplayMode(AIS_Shaded);result->SetTransparency(0.5);
+        // This reference surface uses its UI color, without a specular highlight
+        // washing green/light gray out when viewed normal to the plane.
+        result->Attributes()->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
+    }
     if(object.kind==Kind::Point) result->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_PLUS,preview?Quantity_Color(0.1,0.65,1.0,Quantity_TOC_RGB):Quantity_Color(Quantity_NOC_YELLOW),5.0));
     return result;
 }

@@ -48,6 +48,41 @@ struct WorkplaneRenderingTest {
         }
         check(green==(v.activeSketchWorkplaneId_.isEmpty()?0:1),"multiple active Workplanes");
     }
+    static void filledBorder(CadViewport& v,const QString& id) {
+        const auto* wp=v.constructionObject(id);const auto p=v.constructionPresentations_.at(id);
+        const auto r=Sketch::displayRectangle(*wp,v.sketchEntities_);
+        const double midX=(r.minX+r.maxX)/2,midY=(r.minY+r.maxY)/2,h=Sketch::WorkplaneBorderWidth/2;
+        v.activateSketchWorkplane(id);v.fitConstructions({id});
+        for(bool active:{true,false}) {
+            if(!active) v.endSketchEditing();
+            v.context_->ClearDetected(Standard_False);v.context_->ClearSelected(Standard_False);v.view_->Redraw();
+            Image_AlienPixMap image;check(v.view_->ToPixMap(image,v.width(),v.height()),"border raster capture failed");
+            const auto pixel=[&](const Image_AlienPixMap& raster,Sketch::Point local) {
+                const auto world=Sketch::worldPoint(local,wp->frame);int x,y;v.view_->Convert(world.X(),world.Y(),world.Z(),x,y);
+                check(x>=0 && y>=0 && x<int(raster.SizeX()) && y<int(raster.SizeY()),"border pixel outside capture");
+                return raster.PixelColor(x,y).GetRGB();
+            };
+            const auto background=pixel(image,{midX,midY});
+            std::optional<Quantity_Color> strip;
+            for(const auto sample:std::vector<Sketch::Point>{{r.minX-h,midY},{r.maxX+h,midY},{midX,r.minY-h},{midX,r.maxY+h},
+                    {r.minX-h,r.minY-h},{r.maxX+h,r.minY-h},{r.minX-h,r.maxY+h},{r.maxX+h,r.maxY+h}}) {
+                const auto color=pixel(image,sample);
+                check(color.Distance(background)>0.05,"Workplane strip interior is not filled (only contour lines are visible)");
+                if(active) check(color.Green()>color.Red()+0.05 && color.Green()>color.Blue()+0.05,"filled active border not green");
+                else check(std::abs(color.Red()-color.Green())<0.03 && std::abs(color.Green()-color.Blue())<0.03,"filled inactive border not gray");
+                if(strip) check(color.Distance(*strip)<0.03,"Workplane corner has overlapping/darker transparent surfaces");
+                else strip=color;
+            }
+            // Distinguish a translucent surface from an opaque fill, not only
+            // from wireframe. Restore the presentation immediately afterwards.
+            p->SetTransparency(0);v.context_->Redisplay(p,Standard_False);v.view_->Redraw();Image_AlienPixMap opaque;
+            check(v.view_->ToPixMap(opaque,v.width(),v.height()),"opaque comparison capture failed");
+            const auto solid=pixel(opaque,{r.minX-h,midY});
+            p->SetTransparency(0.5);v.context_->Redisplay(p,Standard_False);
+            check(solid.Distance(*strip)>0.05,"border transparency has no visible effect");
+            check(p->DisplayMode()==AIS_Shaded && !p->IsInfinite(),"finite ring is not using the shaded presentation path");
+        }
+    }
     static void visiblePreview(CadViewport& v,const Sketch::Entity& entity) {
         const auto* wp=v.constructionObject(entity.workplaneId);const auto rectangle=v.workplaneDisplayRectangle(*wp);
         check(v.workplaneDisplayRectangles_.at(wp->id)==rectangle,"frame and blue preview use different bounds");
@@ -80,6 +115,7 @@ struct WorkplaneRenderingTest {
         MainWindow w;w.resize(1300,1000);w.show();QApplication::processEvents();auto& v=*w.viewport_;QString error;
         for(bool rotated:{false,true}) {
             const auto doc=fixture(rotated);check(v.importDocumentSnapshot(doc,error),qPrintable(error));styles(v);
+            filledBorder(v,"wp");filledBorder(v,"other");
             check(v.activateSketchWorkplane("wp"),"activation failed");styles(v);v.activateSketchWorkplane("other");styles(v);v.endSketchEditing();styles(v);v.activateSketchWorkplane("wp");
             const auto wp=doc.constructions.front();const auto baseline=v.workplaneDisplayRectangle(wp);w.documentDirty_=false;
             for(bool vertical:{true,false}) {
