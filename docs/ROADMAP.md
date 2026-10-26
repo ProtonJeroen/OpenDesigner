@@ -46,7 +46,7 @@ marked complete. Priorities are *relative*, and phases may overlap.
 | After Workplanes and Sketches | Lateral Move Cylindrical Face: move holes **and** attached cylindrical bosses | **Planned**, [Issue #51](https://github.com/ProtonJeroen/OpenDesigner/issues/51) |
 | Solid-from-sketch | Extrude, Revolve and Sweep using validated 2D profiles | **Planned** |
 | Advanced direct modeling | Broader face/topology editing, curved neighbors and finish operations | **Planned**, some individual operations already supported |
-| Assemblies & native documents | True hierarchy, occurrences and large assemblies | **Planned**, simple one-file multi-Part root already supported |
+| Assemblies & native documents | True hierarchy, occurrences, geometry-driven Part/Assembly Align and Sketch point-to-point positioning | **Planned**, single-file multi-Part root already supported; [Issue #56](https://github.com/ProtonJeroen/OpenDesigner/issues/56) |
 | Interoperability | STEP, IGES, STL, GLB/glTF and FBX | **Planned**, no general-purpose production importer/exporter claimed |
 | **UI/UX productization (release prerequisite)** | Replace prototype interface with coherent, intuitive desktop UX, design system, discoverable commands and user-tested workflows | **Planned before broad multiplatform rollout**, [Issue #55](https://github.com/ProtonJeroen/OpenDesigner/issues/55) |
 | Multiplatform & input | Windows/macOS builds, Linux maturity, optional touch across platforms, iPadOS and Android tablets | **Planned after UI/UX readiness for broad releases**; technical CI exploration may run in parallel |
@@ -159,14 +159,42 @@ remain the authority for actual implementation status.
 - [ ] Reliable part duplication/instances and component reuse, assembly-level
   placement, reference frames and browser operations. Preserve independent
   geometry versus shared occurrence semantics explicitly.
+- [ ] **Geometry-driven Move/Align Part and Position Assembly:** choose a
+  **source Part or (sub)assembly** and a fixed **target reference**, then place
+  the source using exact **vertex-to-vertex / point-to-point** translation,
+  **axis-to-axis** (including cylindrical/Construction/Sketch axes), and
+  **face-to-face or face-to-Workplane** coincident/parallel alignment. Offer
+  explicit flip/orientation and signed offsets; do not guess any remaining
+  degrees of freedom. Distinguish these **rigid object transforms** from
+  topology-changing **Move Face / Align Face** operations.
+- [ ] **Sketch-guided component positioning:** use Construction Points,
+  line intersections, endpoints, centers of circles, and projected 3D points
+  **on any transformed Workplane** as exact 3D placement destinations. Support
+  e.g. **move a selected Part vertex onto a chosen Sketch point**, with correct
+  local-to-world coordinate conversion and snapping, plus optional numerical
+  displacement.
+- [ ] **Assembly-level alignment:** transform a complete assembly or selected
+  group rigidly while preserving all relative placements and geometry of its
+  child Parts; do not move each child's vertices independently. Support
+  mixed reference types (Part/Face/Edge/Vertex/Construction/Sketch) when
+  geometrically defined, and allow position plus explicit orientation references.
+- [ ] **Predictable placement interaction:** source vs target selection,
+  visible geometry/snap feedback, blue **whole-Part/Assembly preview**,
+  exact numeric mm/degrees, OK/Cancel and one Undo/Redo action, native Save/Open,
+  lock/visibility checks and safe refusal on ambiguous references. Begin
+  with **one-time direct positioning**; persistent assembly mates/constraints
+  remain an optional later design decision, not a prerequisite.
+  See [Issue #56: geometry-based Part and Assembly alignment](https://github.com/ProtonJeroen/OpenDesigner/issues/56).
 - [ ] Structure Browser improvements: search/filter, active component/workplane
   context, typed multi-selection, drag/drop or reorder where safe, and coherent
   model/viewport state.
 - [ ] Document evolution: schema migration/backward compatibility,
   scalable large-model handling, recoverable errors and safe undo/redo boundaries.
   No requirement to invent a SolidDesigner-compatible proprietary document format.
-- [?] Full mechanical **assembly constraints/mates** and external-link update
-  semantics need separate design; they are not already implemented.
+- [?] Full persistent **assembly constraints/mates** that maintain relationships
+  after later changes, and external-link update semantics, need separate design.
+  These are distinct from the planned **one-time geometric Align/Move** in #56
+  and are not already implemented.
 
 ### 5. Import/export and downstream 3D workflows
 
