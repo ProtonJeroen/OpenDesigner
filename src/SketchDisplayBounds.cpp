@@ -1,5 +1,10 @@
 #include "SketchDisplayBounds.h"
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Wire.hxx>
+#include <gp_Pln.hxx>
 #include <BRep_Builder.hxx>
 #include <TopoDS_Compound.hxx>
 #include <algorithm>
@@ -98,6 +103,22 @@ DisplayRectangle displayRectangle(const Construction::Object& owner,const std::v
 std::array<gp_Pnt,4> displayCorners(const DisplayRectangle& r,const gp_Ax3& frame) {
     return {worldPoint({r.minX,r.minY},frame),worldPoint({r.maxX,r.minY},frame),
             worldPoint({r.maxX,r.maxY},frame),worldPoint({r.minX,r.maxY},frame)};
+}
+DisplayRectangle borderedDisplayRectangle(const DisplayRectangle& r) {
+    return {r.minX-WorkplaneBorderWidth,r.minY-WorkplaneBorderWidth,r.maxX+WorkplaneBorderWidth,r.maxY+WorkplaneBorderWidth};
+}
+DisplayRectangle displayOuterRectangle(const Construction::Object& owner,const std::vector<Entity>& entities) {
+    return borderedDisplayRectangle(displayRectangle(owner,entities));
+}
+TopoDS_Shape workplaneBorder(const DisplayRectangle& opening,const gp_Ax3& frame) {
+    const auto wire=[&](const DisplayRectangle& r) {
+        BRepBuilderAPI_MakePolygon polygon;
+        for(const auto& p:displayCorners(r,frame)) polygon.Add(p);
+        polygon.Close();return polygon.Wire();
+    };
+    BRepBuilderAPI_MakeFace border(gp_Pln(frame),wire(borderedDisplayRectangle(opening)),Standard_True);
+    border.Add(TopoDS::Wire(wire(opening).Reversed()));
+    return border.Shape();
 }
 std::optional<Segment> clipLine(const InfiniteLine& line,const DisplayRectangle& r) {
     // Re-anchor near the rectangle before computing slab parameters. A remote

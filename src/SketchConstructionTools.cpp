@@ -65,7 +65,7 @@ void CadViewport::refreshSketchConstruction(bool recompute) {
     const auto* owner=constructionObject(activeSketchWorkplaneId_);if(!owner) return;
     for(const auto& [id,p]:sketchPreviews_) context_->Remove(p,Standard_False);
     sketchPreviews_.clear();for(const auto& p:constructionLineAlternatives_) context_->Remove(p,Standard_False);constructionLineAlternatives_.clear();clearSketchFeedback();
-    session.sketch->after=session.sketch->before;session.valid=false;d.referenceHits.clear();d.solutionHits.clear();
+    session.sketch->after=session.sketch->before;session.sketchDisplayCandidates.clear();session.valid=false;d.referenceHits.clear();d.solutionHits.clear();
     const auto source=[&](int role)->const Sketch::Entity* {
         const auto id=panel->references[role]->currentData().toString();
         for(const auto& e:session.sketch->before) if(e.id==id && eligible(e,owner->id,d.tool)) return &e;
@@ -114,6 +114,11 @@ void CadViewport::refreshSketchConstruction(bool recompute) {
         else message=d.error.isEmpty()?tr("Choose one of %1 green candidates explicitly in the list or click a separate line.").arg(d.lines.size()):d.error;
         if(!d.notice.isEmpty() && message!=d.notice) message+='\n'+d.notice;
     }
+    if(session.valid) session.sketch->after.push_back(d.candidate);
+    if(d.pickRole<0 && d.tool==Sketch::ConstructionTool::CommonTangent && d.error.isEmpty())
+        for(size_t i=0;i<d.lines.size();++i) if(int(i)!=d.selected) {
+            auto e=d.candidate;e.id+=QString(":alternative%1").arg(i);e.geometry=d.lines[i];session.sketchDisplayCandidates.push_back(e);
+        }
     try {
         if(d.pickRole<0 && d.tool==Sketch::ConstructionTool::CommonTangent && d.error.isEmpty()) {
             for(size_t i=0;i<d.lines.size();++i) if(int(i)!=d.selected) {
@@ -127,10 +132,9 @@ void CadViewport::refreshSketchConstruction(bool recompute) {
             if(d.tool==Sketch::ConstructionTool::CommonTangent) {
                 const auto& t=d.solutions[size_t(d.selected)];showSketchMarker(sketchAnchorMarker_,t.first,Quantity_Color(Quantity_NOC_ORANGE));showSketchMarker(sketchSnapMarker_,t.second,Quantity_Color(Quantity_NOC_ORANGE));
             }
-            session.sketch->after.push_back(d.candidate);
         }
     } catch(const Standard_Failure& failure) {
-        session.valid=false;session.sketch->after=session.sketch->before;
+        session.valid=false;session.sketch->after=session.sketch->before;session.sketchDisplayCandidates.clear();
         for(const auto& [id,p]:sketchPreviews_) context_->Remove(p,Standard_False);sketchPreviews_.clear();
         for(const auto& p:constructionLineAlternatives_) context_->Remove(p,Standard_False);constructionLineAlternatives_.clear();clearSketchFeedback();
         message=tr("Cannot preview the construction line: %1").arg(QString::fromUtf8(failure.GetMessageString()));

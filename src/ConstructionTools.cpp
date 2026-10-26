@@ -50,29 +50,35 @@ Handle(AIS_Shape) CadViewport::constructionPresentation(const Object& object,boo
         return compound;
     };
     if(object.kind==Kind::Workplane) {
-        TopoDS_Compound compound;BRep_Builder builder;builder.MakeCompound(compound);
-        const auto r=workplaneDisplayRectangle(object,displayEntities);
-        builder.Add(compound,BRepBuilderAPI_MakeFace(gp_Pln(object.frame),r.minX,r.maxX,r.minY,r.maxY).Shape());
-        const double extent=std::min(r.maxX-r.minX,r.maxY-r.minY)/2;
-        const auto center=Sketch::worldPoint({std::midpoint(r.minX,r.maxX),std::midpoint(r.minY,r.maxY)},object.frame);
-        builder.Add(compound,arrow(center,frame.XDirection(),extent*0.65));
-        builder.Add(compound,arrow(center,frame.YDirection(),extent*0.45));
-        shape=compound;
+        const auto outer=workplaneDisplayRectangle(object,displayEntities);
+        const Sketch::DisplayRectangle opening{outer.minX+Sketch::WorkplaneBorderWidth,outer.minY+Sketch::WorkplaneBorderWidth,
+                                               outer.maxX-Sketch::WorkplaneBorderWidth,outer.maxY-Sketch::WorkplaneBorderWidth};
+        shape=Sketch::workplaneBorder(opening,object.frame);
     } else if(object.kind==Kind::Axis) {
         TopoDS_Compound compound;BRep_Builder builder;builder.MakeCompound(compound);
         builder.Add(compound,arrow(frame.Location().Translated(gp_Vec(frame.Direction())*(-object.extent)),frame.Direction(),2*object.extent));shape=compound;
     }
     else shape=BRepBuilderAPI_MakeVertex(frame.Location()).Shape();
     Handle(AIS_Shape) result=new AIS_Shape(shape);
-    result->SetInfiniteState(true);
+    // AIS_Shape renders infinite presentations as wireframe even in AIS_Shaded.
+    // The Workplane ring is a finite face, independent of its analytical plane.
+    result->SetInfiniteState(object.kind!=Kind::Workplane);
     result->SetColor(preview?Quantity_Color(0.1,0.65,1.0,Quantity_TOC_RGB):object.kind==Kind::Workplane
-        ?Quantity_Color(0.2,0.65,0.65,Quantity_TOC_RGB):object.kind==Kind::Axis
+        ?workplaneColor(object.id):object.kind==Kind::Axis
         ?Quantity_Color(0.3,0.9,0.4,Quantity_TOC_RGB):Quantity_Color(1.0,0.85,0.15,Quantity_TOC_RGB));
     result->SetWidth(2.0);
     if(object.kind==Kind::Axis) result->SetDisplayMode(AIS_Shaded);
-    if(object.kind==Kind::Workplane) {result->SetDisplayMode(AIS_Shaded);result->SetTransparency(preview?0.55:0.85);}
+    if(object.kind==Kind::Workplane) {
+        result->SetColor(workplaneColor(object.id));result->SetDisplayMode(AIS_Shaded);result->SetTransparency(0.5);
+        // This reference surface uses its UI color, without a specular highlight
+        // washing green/light gray out when viewed normal to the plane.
+        result->Attributes()->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
+    }
     if(object.kind==Kind::Point) result->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_PLUS,preview?Quantity_Color(0.1,0.65,1.0,Quantity_TOC_RGB):Quantity_Color(Quantity_NOC_YELLOW),5.0));
     return result;
+}
+Quantity_Color CadViewport::workplaneColor(const QString& id) const {
+    return id==activeSketchWorkplaneId_?Quantity_Color(0.25,0.8,0.35,Quantity_TOC_RGB):Quantity_Color(0.75,0.75,0.75,Quantity_TOC_RGB);
 }
 Handle(AIS_TextLabel) CadViewport::constructionLabel(const Object& object,bool preview) const {
     Handle(AIS_TextLabel) label=new AIS_TextLabel;
@@ -80,10 +86,11 @@ Handle(AIS_TextLabel) CadViewport::constructionLabel(const Object& object,bool p
     // Resolve the platform UI family through Qt before giving it to OCCT.
     label->SetFont(QFontInfo(QFontDatabase::systemFont(QFontDatabase::GeneralFont)).family().toUtf8().constData());
     label->SetText(TCollection_ExtendedString(object.name.toStdU16String().c_str()));
-    label->SetPosition(displayCenter(object));label->SetHeight(14);label->SetZoomable(false);
+    label->SetPosition(displayCenter(object));label->SetHeight(object.kind==Kind::Workplane?12:14);label->SetZoomable(false);
     label->SetColor(preview?Quantity_Color(0.1,0.65,1.0,Quantity_TOC_RGB):object.kind==Kind::Workplane
         ?Quantity_Color(0.3,0.9,0.9,Quantity_TOC_RGB):object.kind==Kind::Axis
         ?Quantity_Color(0.3,0.9,0.4,Quantity_TOC_RGB):Quantity_Color(Quantity_NOC_YELLOW));
+    if(object.kind==Kind::Workplane) label->SetColor(workplaneColor(object.id));
     label->SetDisplayType(Aspect_TODT_SUBTITLE);label->SetColorSubTitle(Quantity_Color(Quantity_NOC_GRAY20));
     label->SetInfiniteState(true);label->SetZLayer(Graphic3d_ZLayerId_Topmost);
     label->SetHJustification(object.kind==Kind::Point?Graphic3d_HTA_LEFT:Graphic3d_HTA_RIGHT);
@@ -96,6 +103,11 @@ void CadViewport::updateConstructionLabels() {
     const gp_Vec right=gp_Vec(view_->Camera()->Direction()).Crossed(gp_Vec(view_->Camera()->Up())).Normalized();
     const gp_Vec up(view_->Camera()->Up());const double padding=view_->Convert(7);
     const auto update=[&](const Object& object,const Handle(AIS_TextLabel)& label) {
+        bool restyle=false;
+        if(object.kind==Kind::Workplane) {
+            Quantity_Color previous;label->Color(previous);const auto color=workplaneColor(object.id);
+            if(previous.Distance(color)>1.e-9) {label->SetColor(color);restyle=true;}
+        }
         const auto bounds=constructionDisplayCorners(object);auto anchor=bounds.front();
         if(object.kind==Kind::Workplane) {
             // Lowest-left projected corner, recalculated as the camera rotates.
@@ -104,7 +116,7 @@ void CadViewport::updateConstructionLabels() {
                 if(y-x>best) {best=y-x;anchor=corner;}}
         }
         anchor.Translate((right+up)*(object.kind==Kind::Point?padding:-padding));
-        if(!label->Position().IsEqual(anchor,1.e-10)) {label->SetPosition(anchor);context_->Redisplay(label,Standard_False);}
+        if(restyle || !label->Position().IsEqual(anchor,1.e-10)) {label->SetPosition(anchor);context_->Redisplay(label,Standard_False);}
     };
     for(const auto& object:constructions_) if(auto it=constructionLabels_.find(object.id);it!=constructionLabels_.end()) update(object,it->second);
     if(!constructionPreviewLabel_.IsNull() && commandSession_ && commandSession_->construction)

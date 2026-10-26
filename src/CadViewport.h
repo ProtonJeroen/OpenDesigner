@@ -151,6 +151,7 @@ private:
     friend struct ConstructionSessionTest;
     friend struct SketchSessionTest;
     friend struct SketchDisplayBoundsSessionTest;
+    friend struct WorkplaneRenderingTest;
     friend struct SketchDrawingTest;
     friend struct SketchOrthogonalLineTest;
     friend struct SketchOverdrawSessionTest;
@@ -312,6 +313,7 @@ private:
         enum class Kind { Move, Rotate, MoveFace, RotateFace, AlignFace, Boolean, Pull, DeleteFace, Construction, Sketch };
         std::shared_ptr<ConstructionSessionState> construction;
         std::shared_ptr<SketchChange> sketch;
+        std::vector<Sketch::Entity> sketchDisplayCandidates; // Transient view overlay, never saved/committed.
         std::shared_ptr<SketchDrawingState> drawing;
         std::shared_ptr<SketchOverdrawState> overdraw;
         std::shared_ptr<SketchConstructionState> lineConstruction;
@@ -428,6 +430,7 @@ private:
     bool constructionRotating_ = false;
     const Construction::Object* constructionObject(const QString& id) const;
     Handle(AIS_Shape) constructionPresentation(const Construction::Object& object,bool preview=false, const std::vector<Sketch::Entity>* displayEntities=nullptr) const;
+    Quantity_Color workplaneColor(const QString& id) const;
     Handle(AIS_TextLabel) constructionLabel(const Construction::Object& object,bool preview=false) const;
     void updateConstructionLabels();
     void rebuildConstructionPresentations();

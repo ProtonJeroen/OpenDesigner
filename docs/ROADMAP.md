@@ -97,8 +97,22 @@ the phase-6A.1 PR. Earlier milestone results below retain their historical scope
   Construction Line tools in the menu, toolbar and context menu, with H/V icons.
   Reuses exact local InfiniteLine geometry, forced Construction role, dynamic
   bounds, snapping, preview/history and native storage without a schema change.
-- [ ] 6B.2: SolidDesigner-style borders, front/back/active colors and grid.
-  These remain outside 6B.1; Issue #48 is not fully closed by this delivery.
+- [x] 6B.2: one open rectangular Workplane ring, exactly 15 mm wide outside the
+  existing margin, transparency 0.5, active green/inactive light gray, subtle
+  corner labels and no default X/Y arrows. Explicit manipulators remain.
+- [x] 6B.2: complete transient candidate sets determine display bounds before
+  blue AIS construction; immediate outside-frame drawing/Offset/projection
+  previews, consistent foreground visibility and clipping to the outer ring.
+  Cancel/history/Open restore derived presentation without schema/model changes.
+- [x] 6B.2: analytical ring topology/width/area/opening tests and normal/200%
+  rendered preview, active-state, picking and lifecycle regressions.
+- [x] 6B.2 validation (2026-10-26): full CMake Release build, 55/55 CTests
+  (116.03 seconds, isolated Xvfb/xcb/software OpenGL), existing 2D/3D
+  regressions and diff/whitespace checks pass.
+- [ ] Native Fedora KDE acceptance of 6B.2 visuals and preview behavior; see
+  [checklist](SKETCH_EDITOR.md#phase-6b2-open-workplane-border-and-immediate-blue-previews).
+  Grid, separate front/back colors and visual Settings are outside this fixed
+  6B.2 delivery and remain future options.
 
 ### Completed phases 1–5
 

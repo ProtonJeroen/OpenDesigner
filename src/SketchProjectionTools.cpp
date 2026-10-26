@@ -139,7 +139,7 @@ void CadViewport::refreshSketchProjection() {
     if(!validateSketchProjectionSources() || !sketchProjectionPanel_) return;
     auto& s=*commandSession_;auto& d=*s.projection;
     for(const auto& [id,p]:sketchPreviews_) context_->Remove(p,Standard_False);sketchPreviews_.clear();
-    s.sketch->after=s.sketch->before;s.valid=false;
+    s.sketch->after=s.sketch->before;s.sketchDisplayCandidates.clear();s.valid=false;
     std::vector<SketchProjection::Source> sources;QStringList labels;
     for(const auto& ref:d.sources) {
         const auto label=tr("%1. %2 / %3").arg(sources.size()+1).arg(boxes_[ref.partIndex].name,typeName(ref.shape.ShapeType()));
@@ -152,12 +152,13 @@ void CadViewport::refreshSketchProjection() {
     }
     QStringList diagnostics;for(const auto& item:result.diagnostics) diagnostics<<tr("%1%2").arg(item.sourceLabel.isEmpty()?QString():item.sourceLabel+": ",item.message);
     if(result.success) {
+        s.sketch->after.insert(s.sketch->after.end(),result.additions.begin(),result.additions.end());
         try {
             for(const auto& value:result.additions) {
                 auto presentation=sketchPresentation(value,d.workplane,true);sketchPreviews_[value.id]=presentation;
                 displaySketchPresentation(value,d.workplane,presentation,true);context_->SetZLayer(presentation,Graphic3d_ZLayerId_Topmost);
             }
-            s.sketch->after.insert(s.sketch->after.end(),result.additions.begin(),result.additions.end());s.valid=!sources.empty();
+            s.valid=!sources.empty();
         } catch(const Standard_Failure& failure) {
             for(const auto& [id,p]:sketchPreviews_) context_->Remove(p,Standard_False);sketchPreviews_.clear();
             s.sketch->after=s.sketch->before;result.success=false;result.additions.clear();diagnostics<<tr("Cannot display preview: %1").arg(QString::fromUtf8(failure.GetMessageString()));

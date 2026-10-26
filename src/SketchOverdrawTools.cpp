@@ -94,7 +94,8 @@ void CadViewport::refreshOverdraw() {
     if(!commandSession_ || !commandSession_->overdraw || !sketchOverdrawPanel_) return;
     auto& session=*commandSession_;auto& d=*session.overdraw;const auto* owner=constructionObject(activeSketchWorkplaneId_);
     if(!owner) return;
-    session.sketch->after=session.sketch->before;session.valid=false;
+    session.sketch->after=session.sketch->before;session.sketchDisplayCandidates.clear();session.valid=false;
+    for(const auto& pick:d.picks) session.sketchDisplayCandidates.push_back(pick.profile);
     if(!overdrawHover_.IsNull()) {context_->Remove(overdrawHover_,Standard_False);overdrawHover_.Nullify();}
     try {
         const bool rebuild=sketchPreviews_.size()!=d.picks.size() || std::any_of(d.picks.begin(),d.picks.end(),[&](const auto& p){return !sketchPreviews_.contains(p.profile.id);});

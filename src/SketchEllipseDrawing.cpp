@@ -130,13 +130,9 @@ void CadViewport::refreshSketchEllipseDrawing() {
     bool usable=true;
     if(numeric) usable=numericInput(e,start,end,sweep,n,d.complete,*p,error);
     else if(input) usable=mouseInput(e,start,end,sweep,n,*d.cursor,p->direction->currentIndex()==1,error);
-    session.sketch->after=session.sketch->before;session.valid=false;std::set<QString> shown;
-    const auto present=[&](Sketch::Entity entity,const QString& id) {
-        entity.id=id;auto fresh=sketchPresentation(entity,*constructionObject(activeSketchWorkplaneId_),true);
-        auto [it,inserted]=sketchPreviews_.try_emplace(id,fresh);
-        if(!inserted) {it->second->SetShape(fresh->Shape());it->second->SetAttributes(fresh->Attributes());context_->Redisplay(it->second,Standard_False);}
-        displaySketchPresentation(entity,*constructionObject(activeSketchWorkplaneId_),it->second,true);shown.insert(id);
-    };
+    session.sketch->after=session.sketch->before;session.sketchDisplayCandidates.clear();session.valid=false;std::set<QString> shown;
+    std::vector<Sketch::Entity> candidates;
+    const auto present=[&](Sketch::Entity entity,const QString& id) {entity.id=id;candidates.push_back(entity);};
     try {
         if(usable && (n>0 || input)) {
             if(n>0 && supportValid(e,error)) {
@@ -156,7 +152,14 @@ void CadViewport::refreshSketchEllipseDrawing() {
                 auto axis=d.candidate;axis.geometry=Sketch::Segment{e.center,Sketch::ellipsePoint(e,0)};present(axis,d.candidate.id+":axis");
             }
         }
-    } catch(const Standard_Failure& failure) {error=QString::fromUtf8(failure.GetMessageString());session.valid=false;session.sketch->after=session.sketch->before;}
+        session.sketchDisplayCandidates=candidates;
+        for(const auto& entity:candidates) {
+            auto fresh=sketchPresentation(entity,*constructionObject(activeSketchWorkplaneId_),true);
+            auto [it,inserted]=sketchPreviews_.try_emplace(entity.id,fresh);
+            if(!inserted) {it->second->SetShape(fresh->Shape());it->second->SetAttributes(fresh->Attributes());context_->Redisplay(it->second,Standard_False);}
+            displaySketchPresentation(entity,*constructionObject(activeSketchWorkplaneId_),it->second,true);shown.insert(entity.id);
+        }
+    } catch(const Standard_Failure& failure) {session.sketchDisplayCandidates.clear();error=QString::fromUtf8(failure.GetMessageString());session.valid=false;session.sketch->after=session.sketch->before;}
     for(auto it=sketchPreviews_.begin();it!=sketchPreviews_.end();) {
         if(!shown.contains(it->first)) {context_->Remove(it->second,Standard_False);it=sketchPreviews_.erase(it);}else ++it;
     }

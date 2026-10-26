@@ -54,7 +54,7 @@ struct SketchDisplayBoundsSessionTest {
             source.geometry=Sketch::InfiniteLine{{direction.x*1.e6,direction.y*1.e6},direction};snapshot.sketchEntities={source};
             if(finite) {auto circle=source;circle.id="circle";circle.geometry=Sketch::Circle{{0,0},10};snapshot.sketchEntities.push_back(circle);}
             check(v.importDocumentSnapshot(snapshot,error),qPrintable(error));check(v.activateSketchWorkplane(wp.id),"activate offset Workplane failed");
-            w.documentDirty_=false;const auto base=Sketch::displayRectangle(wp,snapshot.sketchEntities);
+            w.documentDirty_=false;const auto base=Sketch::displayOuterRectangle(wp,snapshot.sketchEntities);
             const auto start=[&] {
                 v.selectSketchEntities({source.id});v.startSketchConstruction(Sketch::ConstructionTool::OffsetLine);
                 check(v.sketchConstructionPanel_,"Offset command did not start");
@@ -63,8 +63,8 @@ struct SketchDisplayBoundsSessionTest {
                 return v.commandSession_->lineConstruction->candidate;
             };
             auto offset=start();auto shown=snapshot.sketchEntities;shown.push_back(offset);
-            const auto expanded=Sketch::displayRectangle(wp,shown);
-            check(expanded!=base,"offset preview did not enlarge the frame");frame(v,wp,expanded);frame(v,other,Sketch::displayRectangle(other,{}));
+            const auto expanded=Sketch::displayOuterRectangle(wp,shown);
+            check(expanded!=base,"offset preview did not enlarge the frame");frame(v,wp,expanded);frame(v,other,Sketch::displayOuterRectangle(other,{}));
             clipped(v,wp,offset,v.sketchPreviews_.at(offset.id),expanded);
             NativeDocumentSnapshot pending;check(v.exportDocumentSnapshot(pending) && pending.sketchEntities==snapshot.sketchEntities
                 && v.undoStack_.empty() && !w.documentDirty_,"offset bounds preview changed saved data/history/dirty state");
@@ -82,7 +82,7 @@ struct SketchDisplayBoundsSessionTest {
             NativeDocumentSnapshot saved,loaded;check(v.exportDocumentSnapshot(saved),"offset snapshot export failed");
             QTemporaryDir dir;check(dir.isValid(),"offset round-trip directory failed");const auto path=dir.filePath("offset.odc");
             check(NativeDocumentStorage::save(path,saved,error) && NativeDocumentStorage::load(path,loaded,error),qPrintable(error));
-            check(v.importDocumentSnapshot(loaded,error),qPrintable(error));frame(v,moved,expanded);frame(v,other,Sketch::displayRectangle(other,{}));
+            check(v.importDocumentSnapshot(loaded,error),qPrintable(error));frame(v,moved,expanded);frame(v,other,Sketch::displayOuterRectangle(other,{}));
             check(v.sketchEntities_==shown && Construction::equivalent(*v.constructionObject(wp.id),moved),"offset Save/Open rewrote source/model values");
             clipped(v,moved,offset,v.sketchPresentations_.at(offset.id),expanded);
         }
@@ -92,22 +92,22 @@ struct SketchDisplayBoundsSessionTest {
         v.startConstruction(Construction::Method::PlaneXYZ);v.confirmCommandSession();
         auto wp=v.constructions_.front();
         auto other=wp;other.id="other";other.name="WP2";v.commitConstructions({wp,other});
-        frame(v,wp,Sketch::displayRectangle(wp,{}));
+        frame(v,wp,Sketch::displayOuterRectangle(wp,{}));
         Sketch::Entity axis;axis.workplaneId=wp.id;axis.role=Sketch::Role::Construction;axis.geometry=Sketch::InfiniteLine{{1.e6,3000},{1,0}};
         const auto originalWP=wp;
         check(v.previewSketchEntities({axis},error),qPrintable(error));v.confirmCommandSession();
         check(TopExp_Explorer(v.sketchPresentations_.at(axis.id)->Shape(),TopAbs_EDGE).More(),"outside line did not enlarge its infinite-only Workplane");
         Sketch::Entity segment;segment.workplaneId=wp.id;segment.geometry=Sketch::Segment{{1000,3000},{1100,3020}};
-        const auto expanded=Sketch::displayRectangle(wp,{axis,segment});
+        const auto expanded=Sketch::displayOuterRectangle(wp,{axis,segment});
         const auto history=v.undoStack_.size();w.documentDirty_=false;
         check(v.previewSketchEntities({axis,segment},error),qPrintable(error));
-        frame(v,wp,expanded);frame(v,other,Sketch::displayRectangle(other,{}));
+        frame(v,wp,expanded);frame(v,other,Sketch::displayOuterRectangle(other,{}));
         check(v.undoStack_.size()==history && !w.documentDirty_ && v.sketchEntities_==std::vector{axis},"bounds preview changed document/history");
-        v.cancelCommandSession();frame(v,wp,Sketch::displayRectangle(wp,{axis}));
+        v.cancelCommandSession();frame(v,wp,Sketch::displayOuterRectangle(wp,{axis}));
         check(!w.documentDirty_,"bounds Cancel dirtied document");
         check(v.previewSketchEntities({axis,segment},error),qPrintable(error));v.confirmCommandSession();frame(v,wp,expanded);
         const auto line=v.sketchPresentations_.at(axis.id)->Shape();
-        check(BRep_Tool::Pnt(TopExp::FirstVertex(TopoDS::Edge(line))).IsEqual(Sketch::worldPoint({990,3000},wp.frame),1.e-8),"line origin-based clipping survived resize");
+        check(BRep_Tool::Pnt(TopExp::FirstVertex(TopoDS::Edge(line))).IsEqual(Sketch::worldPoint({975,3000},wp.frame),1.e-8),"line origin-based clipping survived resize");
         v.selectConstructions({wp.id});const auto selected=v.constructionPresentations_.at(wp.id);
         check(v.context_->NbSelected()>0,"Workplane selection setup failed");
         v.workplaneDisplayRectangles_.clear();v.updateConstructionLabels();
@@ -115,16 +115,16 @@ struct SketchDisplayBoundsSessionTest {
         for(v.context_->InitSelected();v.context_->MoreSelected();v.context_->NextSelected()) if(v.context_->SelectedInteractive()==selected) selectedOwner=true;
         check(v.constructionPresentations_.at(wp.id)==selected && selectedOwner && v.constructionSelection()==QStringList{wp.id},"derived resize replaced selected Workplane");
         v.selectSketchEntities({segment.id});
-        check(v.previewSketchEntities({axis},error),qPrintable(error));frame(v,wp,Sketch::displayRectangle(wp,{axis}));
+        check(v.previewSketchEntities({axis},error),qPrintable(error));frame(v,wp,Sketch::displayOuterRectangle(wp,{axis}));
         v.cancelCommandSession();frame(v,wp,expanded);
         check(v.sketchSelection()==QStringList{segment.id},"Cancel lost prior sketch selection");
-        check(v.deleteSketchEntities({segment.id},error),qPrintable(error));frame(v,wp,Sketch::displayRectangle(wp,{axis}));
+        check(v.deleteSketchEntities({segment.id},error),qPrintable(error));frame(v,wp,Sketch::displayOuterRectangle(wp,{axis}));
         v.undoPull();frame(v,wp,expanded);check(v.sketchSelection().empty(),"Undo kept selection");
-        v.redoPull();frame(v,wp,Sketch::displayRectangle(wp,{axis}));v.undoPull();
+        v.redoPull();frame(v,wp,Sketch::displayOuterRectangle(wp,{axis}));v.undoPull();
         // Unconfirmed drawing must resize too, not only complete transactions.
         v.activateSketchWorkplane(wp.id,false);v.startSketchDrawing(Sketch::DrawTool::Circle);
         auto& d=*v.commandSession_->drawing;d.points={{-3000,-4000}};d.cursor=Sketch::Point{-2800,-4000};v.refreshSketchDrawing();
-        auto shown=v.sketchEntities_;shown.push_back(d.candidate);frame(v,wp,Sketch::displayRectangle(wp,shown));
+        auto shown=v.sketchEntities_;shown.push_back(d.candidate);frame(v,wp,Sketch::displayOuterRectangle(wp,shown));
         v.cancelCommandSession();frame(v,wp,expanded);
         auto rotated=wp;rotated.frame=gp_Ax3(gp_Pnt(70,20,-30),gp_Dir(1,2,3),gp_Dir(2,-1,0));
         check(v.updateConstruction(rotated),"Workplane move/rotation failed");frame(v,rotated,expanded);

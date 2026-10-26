@@ -16,6 +16,7 @@ private:
     friend struct ConstructionSessionTest;
     friend struct SketchSessionTest;
     friend struct SketchDisplayBoundsSessionTest;
+    friend struct WorkplaneRenderingTest;
     friend struct SketchDrawingTest;
     friend struct SketchOrthogonalLineTest;
     friend struct SketchOverdrawSessionTest;

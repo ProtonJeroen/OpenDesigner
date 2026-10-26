@@ -133,7 +133,7 @@ struct SketchOrthogonalLineTest {
             QTemporaryDir dir;check(dir.isValid(),"temporary directory failed");const auto path=dir.filePath("orthogonal.odc");
             check(NativeDocumentStorage::save(path,saved,error) && NativeDocumentStorage::load(path,loaded,error),qPrintable(error));
             check(v.importDocumentSnapshot(loaded,error),qPrintable(error));check(v.sketchEntities_==saved.sketchEntities && v.undoStack_.empty(),"H/V Save/Open changed geometry/history");
-            check(Construction::equivalent(*v.constructionObject(wp.id),wp) && v.workplaneDisplayRectangle(other)==Sketch::displayRectangle(other,{}),"H/V moved owner or affected other Workplane");
+            check(Construction::equivalent(*v.constructionObject(wp.id),wp) && v.workplaneDisplayRectangle(other)==Sketch::displayOuterRectangle(other,{}),"H/V moved owner or affected other Workplane");
             // Existing free line remains a two-point, arbitrary-angle operation.
             v.activateSketchWorkplane(wp.id);free->trigger();v.acceptSketchPoint({2,3});check(!v.commandSession_->drawing->complete,"free Infinite Line became one-click");
             v.acceptSketchPoint({5,7});check(v.commandSession_->valid,"free Infinite Line no longer works");
