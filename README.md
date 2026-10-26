@@ -2,6 +2,8 @@
 
 OpenDesigner is an open-source cross-platform 3D direct-modeling application inspired by classic CoCreate SolidDesigner.
 
+**[Complete roadmap and planned features](docs/ROADMAP.md#full-product-roadmap-planned-features):** implementation progress, next Workplane/Sketch work, future direct modeling, assemblies, file formats, tablet/touch support and the path to v1.0.
+
 **Status:** v0.4.2 phases 1–5 plus 6A.2 interactive ellipse drawing; not a packaged distribution.
 The supplied Delete Face and Unite seam cases were manually confirmed by the user
 on 2026-10-20. Native Save/Open and the cone/hole Pull fixes were tested and
