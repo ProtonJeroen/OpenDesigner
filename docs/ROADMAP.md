@@ -77,7 +77,7 @@ the phase-6A.1 PR. Earlier milestone results below retain their historical scope
 - [x] 6B.2: analytical ring topology/width/area/opening tests and normal/200%
   rendered preview, active-state, picking and lifecycle regressions.
 - [x] 6B.2 validation (2026-10-26): full CMake Release build, 55/55 CTests
-  (114.97 seconds, isolated Xvfb/xcb/software OpenGL), existing 2D/3D
+  (116.03 seconds, isolated Xvfb/xcb/software OpenGL), existing 2D/3D
   regressions and diff/whitespace checks pass.
 - [ ] Native Fedora KDE acceptance of 6B.2 visuals and preview behavior; see
   [checklist](SKETCH_EDITOR.md#phase-6b2-open-workplane-border-and-immediate-blue-previews).

@@ -104,11 +104,11 @@ std::array<gp_Pnt,4> displayCorners(const DisplayRectangle& r,const gp_Ax3& fram
     return {worldPoint({r.minX,r.minY},frame),worldPoint({r.maxX,r.minY},frame),
             worldPoint({r.maxX,r.maxY},frame),worldPoint({r.minX,r.maxY},frame)};
 }
-DisplayRectangle outerRectangle(const DisplayRectangle& r) {
+DisplayRectangle borderedDisplayRectangle(const DisplayRectangle& r) {
     return {r.minX-WorkplaneBorderWidth,r.minY-WorkplaneBorderWidth,r.maxX+WorkplaneBorderWidth,r.maxY+WorkplaneBorderWidth};
 }
 DisplayRectangle displayOuterRectangle(const Construction::Object& owner,const std::vector<Entity>& entities) {
-    return outerRectangle(displayRectangle(owner,entities));
+    return borderedDisplayRectangle(displayRectangle(owner,entities));
 }
 TopoDS_Shape workplaneBorder(const DisplayRectangle& opening,const gp_Ax3& frame) {
     const auto wire=[&](const DisplayRectangle& r) {
@@ -116,7 +116,7 @@ TopoDS_Shape workplaneBorder(const DisplayRectangle& opening,const gp_Ax3& frame
         for(const auto& p:displayCorners(r,frame)) polygon.Add(p);
         polygon.Close();return polygon.Wire();
     };
-    BRepBuilderAPI_MakeFace border(gp_Pln(frame),wire(outerRectangle(opening)),Standard_True);
+    BRepBuilderAPI_MakeFace border(gp_Pln(frame),wire(borderedDisplayRectangle(opening)),Standard_True);
     border.Add(TopoDS::Wire(wire(opening).Reversed()));
     return border.Shape();
 }

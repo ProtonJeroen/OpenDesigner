@@ -73,7 +73,7 @@ int main() {
         offsetLines();
         for(const auto& opening:std::vector<DisplayRectangle>{{-10,-10,10,10},{700,-200,1700,-160}}) {
             const gp_Ax3 frame(gp_Pnt(70,20,30),gp_Dir(1,2,3),gp_Dir(2,-1,0));
-            const auto outer=outerRectangle(opening);const auto border=workplaneBorder(opening,frame);
+            const auto outer=borderedDisplayRectangle(opening);const auto border=workplaneBorder(opening,frame);
             check(BRepCheck_Analyzer(border).IsValid(),"invalid Workplane ring");
             check(border.ShapeType()==TopAbs_FACE,"Workplane ring has extra arrows or shapes");
             int wires=0,edges=0;for(TopExp_Explorer it(border,TopAbs_WIRE);it.More();it.Next()) ++wires;
