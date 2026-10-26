@@ -35,14 +35,14 @@ bool CadViewport::activateSketchWorkplane(const QString& requested,bool alignVie
         emit statusMessage(tr("Create or select a visible, unlocked Workplane first (Modeling → Construction Geometry → Workplane)."));return false;
     }
     cancelCommandSession();initializeViewer();clearHistorySelection();
-    activeSketchWorkplaneId_=id;refreshSketchPicking();
+    activeSketchWorkplaneId_=id;refreshSketchPicking();updateConstructionLabels();
     emit activeSketchWorkplaneChanged(id);if(alignView) lookNormalToSketch();
     emit statusMessage(tr("2D editing: %1. Choose Line, Circle, Arc, Ellipse, Elliptical Arc or Infinite Line. Finish 2D returns to 3D picking.").arg(owner->name));return true;
 }
 void CadViewport::endSketchEditing() {
     if(activeSketchWorkplaneId_.isEmpty()) return;
     cancelCommandSession();clearSketchFeedback();clearSketchSelection();activeSketchWorkplaneId_.clear();
-    refreshSketchPicking(true);emit activeSketchWorkplaneChanged({});
+    refreshSketchPicking(true);updateConstructionLabels();emit activeSketchWorkplaneChanged({});
     if(!view_.IsNull()) view_->Redraw();
 }
 void CadViewport::validateActiveSketchContext() {
@@ -214,7 +214,7 @@ void CadViewport::refreshSketchDrawing() {
     auto& session=*commandSession_;auto& d=*session.drawing;auto points=d.points;
     if(d.cursor && !d.complete) points.push_back(*d.cursor);
     for(const auto& [id,p]:sketchPreviews_) context_->Remove(p,Standard_False);
-    sketchPreviews_.clear();session.sketch->after=session.sketch->before;session.valid=false;QString error;
+    sketchPreviews_.clear();session.sketchDisplayCandidates.clear();session.sketch->after=session.sketch->before;session.valid=false;QString error;
     bool ready=false;
     if(Sketch::orthogonalLineTool(d.tool) && !points.empty()) {
         const bool horizontal=d.tool==Sketch::DrawTool::HorizontalInfiniteLine;
@@ -240,11 +240,12 @@ void CadViewport::refreshSketchDrawing() {
         } else error=tr("Choose distinct points.");
     }
     if(ready && Sketch::valid(d.candidate,error)) {
+        session.sketchDisplayCandidates={d.candidate};
         try {
             auto p=sketchPresentation(d.candidate,*constructionObject(activeSketchWorkplaneId_),true);
             sketchPreviews_[d.candidate.id]=p;displaySketchPresentation(d.candidate,*constructionObject(activeSketchWorkplaneId_),p,true);
             if(d.complete) {session.sketch->after.push_back(d.candidate);session.valid=true;}
-        } catch(const Standard_Failure& e) {error=QString::fromUtf8(e.GetMessageString());}
+        } catch(const Standard_Failure& e) {session.sketchDisplayCandidates.clear();error=QString::fromUtf8(e.GetMessageString());}
     }
     session.state=session.valid?CommandSession::State::Preview:CommandSession::State::Parameters;
     QString feedback=error;

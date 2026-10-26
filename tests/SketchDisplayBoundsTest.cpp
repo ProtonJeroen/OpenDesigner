@@ -4,6 +4,12 @@
 #include <TopoDS.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Edge.hxx>
+#include <TopoDS_Face.hxx>
+#include <BRepCheck_Analyzer.hxx>
+#include <BRepClass_FaceClassifier.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
+#include <TopExp_Explorer.hxx>
 #include <cmath>
 #include <iostream>
 #include <numbers>
@@ -65,6 +71,21 @@ void offsetLines() {
 int main() {
     try {
         offsetLines();
+        for(const auto& opening:std::vector<DisplayRectangle>{{-10,-10,10,10},{700,-200,1700,-160}}) {
+            const gp_Ax3 frame(gp_Pnt(70,20,30),gp_Dir(1,2,3),gp_Dir(2,-1,0));
+            const auto outer=outerRectangle(opening);const auto border=workplaneBorder(opening,frame);
+            check(BRepCheck_Analyzer(border).IsValid(),"invalid Workplane ring");
+            check(border.ShapeType()==TopAbs_FACE,"Workplane ring has extra arrows or shapes");
+            int wires=0,edges=0;for(TopExp_Explorer it(border,TopAbs_WIRE);it.More();it.Next()) ++wires;
+            for(TopExp_Explorer it(border,TopAbs_EDGE);it.More();it.Next()) ++edges;
+            check(wires==2 && edges==8,"ring is not exactly one outer wire and one hole");
+            for(double width:{opening.minX-outer.minX,opening.minY-outer.minY,outer.maxX-opening.maxX,outer.maxY-opening.maxY}) near(width,15);
+            GProp_GProps area;BRepGProp::SurfaceProperties(border,area);
+            near(area.Mass(),(outer.maxX-outer.minX)*(outer.maxY-outer.minY)-(opening.maxX-opening.minX)*(opening.maxY-opening.minY));
+            const auto face=TopoDS::Face(border);
+            check(BRepClass_FaceClassifier(face,worldPoint({opening.minX+1,opening.minY+1},frame),1.e-7).State()==TopAbs_OUT,"Workplane center is filled");
+            check(BRepClass_FaceClassifier(face,worldPoint({outer.minX+7,opening.minY+1},frame),1.e-7).State()==TopAbs_IN,"15 mm border missing");
+        }
         rectangle(Segment{{8,-3},{-2,5}},{-2,-3,8,5});
         rectangle(ConstructionPoint{{10,-20}},{10,-20,10,-20});
         rectangle(Circle{{8,-3},5},{3,-8,13,2});

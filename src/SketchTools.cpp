@@ -13,6 +13,7 @@
 #include <SelectMgr_SensitiveEntity.hxx>
 #include <Select3D_SensitiveEntity.hxx>
 #include <algorithm>
+#include <Graphic3d_ZLayerId.hxx>
 
 Handle(AIS_Shape) CadViewport::sketchPresentation(const Sketch::Entity& entity,const Construction::Object& owner,bool preview,const std::vector<Sketch::Entity>* displayEntities) const {
     Handle(AIS_Shape) presentation=new AIS_Shape(Sketch::displayShape(entity,owner.frame,workplaneDisplayRectangle(owner,displayEntities)));
@@ -24,21 +25,19 @@ Handle(AIS_Shape) CadViewport::sketchPresentation(const Sketch::Entity& entity,c
     if(std::holds_alternative<Sketch::ConstructionPoint>(entity.geometry))
         presentation->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_PLUS,color,7.0));
     if(std::holds_alternative<Sketch::InfiniteLine>(entity.geometry)) presentation->SetInfiniteState(true);
+    if(preview) presentation->SetZLayer(Graphic3d_ZLayerId_Topmost);
     return presentation;
 }
 Sketch::DisplayRectangle CadViewport::workplaneDisplayRectangle(const Construction::Object& owner,const std::vector<Sketch::Entity>* entities) const {
-    if(entities) return Sketch::displayRectangle(owner,*entities);
+    if(entities) return Sketch::displayOuterRectangle(owner,*entities);
     if(commandSession_ && commandSession_->sketch) {
-        const auto& after=commandSession_->sketch->after;
-        // Incomplete drawing previews are intentionally absent from the transaction.
-        if(commandSession_->drawing && sketchPreviews_.contains(commandSession_->drawing->candidate.id)) {
-            auto shown=after;const auto& candidate=commandSession_->drawing->candidate;
+        auto shown=commandSession_->sketch->after;
+        for(const auto& candidate:commandSession_->sketchDisplayCandidates) {
             std::erase_if(shown,[&](const auto& e){return e.id==candidate.id;});shown.push_back(candidate);
-            return Sketch::displayRectangle(owner,shown);
         }
-        return Sketch::displayRectangle(owner,after);
+        return Sketch::displayOuterRectangle(owner,shown);
     }
-    return Sketch::displayRectangle(owner,sketchEntities_);
+    return Sketch::displayOuterRectangle(owner,sketchEntities_);
 }
 std::vector<gp_Pnt> CadViewport::constructionDisplayCorners(const Construction::Object& object) const {
     if(object.kind!=Construction::Kind::Workplane) return Construction::displayBounds(object);
@@ -59,6 +58,10 @@ void CadViewport::refreshWorkplaneDisplay() {
         if(!selected.empty()) context_->AddOrRemoveSelected(presentation,Standard_False);
     };
     for(const auto& owner:constructions_) if(owner.kind==Construction::Kind::Workplane) {
+        if(auto p=constructionPresentations_.find(owner.id);p!=constructionPresentations_.end()) {
+            Quantity_Color previous;p->second->Color(previous);const auto color=workplaneColor(owner.id);
+            if(previous.Distance(color)>1.e-9) {p->second->SetColor(color);context_->Redisplay(p->second,Standard_False);}
+        }
         const auto rectangle=workplaneDisplayRectangle(owner);
         auto it=workplaneDisplayRectangles_.find(owner.id);
         if(it!=workplaneDisplayRectangles_.end() && it->second==rectangle) continue;
@@ -78,7 +81,7 @@ void CadViewport::refreshWorkplaneDisplay() {
         for(const auto& entity:sketchEntities_) update(entity,sketchPresentations_,owner);
         if(commandSession_ && commandSession_->sketch) {
             for(const auto& entity:commandSession_->sketch->after) update(entity,sketchPreviews_,owner);
-            if(commandSession_->drawing) update(commandSession_->drawing->candidate,sketchPreviews_,owner);
+            for(const auto& entity:commandSession_->sketchDisplayCandidates) update(entity,sketchPreviews_,owner);
         }
     }
     if(changed && !view_.IsNull()) view_->ZFitAll();

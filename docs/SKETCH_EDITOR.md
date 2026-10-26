@@ -43,7 +43,7 @@ Frames, clipped lines, labels and Fit Selected follow confirmed changes, live
 previews, Cancel, Undo/Redo, Workplane transforms and document loading. Bounds are
 derived view data: no stored coordinates, analytical Workplane origin, history,
 dirty state or native schema changes. Preview bounds are discarded on Cancel.
-Existing colors/borders remain; grid and SolidDesigner styling belong to 6B.2.
+Phase 6B.2 adds the border outside this padded rectangle, as described below.
 
 Fedora KDE checks (manual confirmation still required):
 
@@ -56,6 +56,59 @@ Fedora KDE checks (manual confirmation still required):
   keeps it. Delete the distant geometry, then Undo/Redo, and check shrink/growth.
 - Move/rotate the Workplane, Save/Open and check geometry placement, snapping,
   selection and labels. Repeat on a second Workplane and at 200% scaling.
+
+## Phase 6B.2: open Workplane border and immediate blue previews
+
+Workplanes use one rectangular planar ring with a real inner wire: the opening
+contains no filling face, including no invisible face. The ring is exactly
+**15 mm wide in local model coordinates**, outside the existing free Sketch
+margin. It has **transparency 0.5**. The active Sketch Workplane is green; other
+Workplanes are light gray. These RGB choices are OpenDesigner defaults, not
+claimed original SolidDesigner v16 color values. No grid or Settings changes
+are introduced.
+
+The usual Workplane X/Y arrows are removed. Explicit Move/Rotate manipulators
+remain. A smaller name label follows the projected lower-left outer corner.
+The border and label follow transformations without changing the analytical
+Workplane origin. Infinite Lines clip to the **outer edge of the ring**, while
+the padded bounds from 6B.1 remain the free opening. The ring is presentation
+geometry only and is never included in Parts or native Sketch data.
+
+All temporary Sketch candidates are collected before creating their AIS shapes.
+This includes incomplete drawing/support geometry, numeric updates, Offset and
+Common Tangent candidates, projected batches and Workplane-transform previews.
+The same complete set determines the ring and clipped line extents. Previously
+some routes constructed the initial blue shape against old bounds, then tried
+to repair it after display. Blue Sketch previews now consistently use the
+foreground layer so Parts and the translucent ring cannot hide them before OK.
+The view-only candidate overlay is excluded from Save, dirty state and history.
+Cancel restores the confirmed frame; OK commits the exact candidate values.
+
+Activation, Workplane switching, Finish 2D, hiding/locking, history and Open
+refresh colors as well as bounds. Only one Sketch Workplane can be active.
+Normal Workplane edge selection is retained; the opening does not intercept
+selection of Parts behind it. Occlusion and selection of confirmed Sketch
+geometry retain their existing behavior.
+
+`sketch-display-bounds` checks rotated ring topology, exact width/area and the
+empty opening. `workplane-rendering` and its 200% HiDPI variant inspect actual
+blue pixels before confirmation, frame/clip agreement, active/inactive states,
+Part picking through the opening, Cancel/history and native roundtrips.
+
+Fedora KDE acceptance checklist (native manual verification remains required):
+
+1. On an empty Workplane preview V at X=200 and H at Y=-150; change the numeric
+   positions, then try a free oblique Infinite Line. Blue lines and the frame
+   must update together before OK, with endpoints at the outer ring edge.
+2. Preview an Offset line and Project 3D Geometry circle outside the old frame,
+   also over a Part. Check visible blue feedback, Cancel/Esc restoration, OK,
+   Undo/Redo, Save/Open and unchanged analytical positions/snapping.
+3. With two Workplanes check green/gray colors through Edit Sketch, switching,
+   Finish 2D, hide/show, lock/unlock and history. Select a Part through the opening.
+4. Check the 15 mm non-overlapping translucent ring, corner label and absence of
+   default arrows; explicitly Move/Rotate a Workplane and check its manipulators.
+5. Repeat on a rotated Workplane, without Parts and at 200% scaling. Exercise
+   drawing, ellipses, Overdraw and projection with the command panels open.
 
 ## Horizontal and Vertical Infinite Construction Lines (Issue #50)
 

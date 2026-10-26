@@ -167,7 +167,7 @@ if(OPENDESIGNER_BUILD_TESTS)
     target_link_libraries(OpenDesignerMoveFaceTests PRIVATE ${OPENDESIGNER_LIBRARIES})
     add_test(NAME move-face COMMAND OpenDesignerMoveFaceTests)
     add_executable(OpenDesignerSelectionContextTests
-        tests/SelectionContextTest.cpp tests/SketchDisplayBoundsSessionTest.cpp tests/NativeDocumentSessionTest.cpp tests/ConstructionSessionTest.cpp tests/SketchSessionTest.cpp tests/SketchDrawingTest.cpp tests/SketchOrthogonalLineTest.cpp tests/SketchOverdrawSessionTest.cpp tests/SketchConstructionSessionTest.cpp tests/SketchReleaseSessionTest.cpp tests/SketchPointSessionTest.cpp tests/SketchEllipseSessionTest.cpp tests/SketchEllipseDrawingTest.cpp tests/CommandPanelSessionTest.cpp tests/SketchProjectionSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
+        tests/SelectionContextTest.cpp tests/SketchDisplayBoundsSessionTest.cpp tests/WorkplaneRenderingTest.cpp tests/NativeDocumentSessionTest.cpp tests/ConstructionSessionTest.cpp tests/SketchSessionTest.cpp tests/SketchDrawingTest.cpp tests/SketchOrthogonalLineTest.cpp tests/SketchOverdrawSessionTest.cpp tests/SketchConstructionSessionTest.cpp tests/SketchReleaseSessionTest.cpp tests/SketchPointSessionTest.cpp tests/SketchEllipseSessionTest.cpp tests/SketchEllipseDrawingTest.cpp tests/CommandPanelSessionTest.cpp tests/SketchProjectionSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
         src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
         src/MoveFace.cpp src/FaceOperations.cpp src/FaceTransformGeometry.cpp
         src/FaceTransformGeometry.h src/SelectionContext.cpp src/MoveFaceGeometry.h src/BRepReconstruction.cpp src/MoveFaceGeometry.cpp)
@@ -177,6 +177,10 @@ if(OPENDESIGNER_BUILD_TESTS)
     add_test(NAME native-document-sessions COMMAND OpenDesignerSelectionContextTests --documents)
     add_test(NAME native-partless-documents COMMAND OpenDesignerSelectionContextTests --partless)
     set_tests_properties(native-partless-documents PROPERTIES TIMEOUT 120)
+    add_test(NAME workplane-rendering COMMAND OpenDesignerSelectionContextTests --workplane-rendering)
+    add_test(NAME workplane-rendering-hidpi COMMAND OpenDesignerSelectionContextTests --workplane-rendering)
+    set_tests_properties(workplane-rendering workplane-rendering-hidpi PROPERTIES TIMEOUT 180)
+    set_tests_properties(workplane-rendering-hidpi PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=2")
     add_test(NAME sketch-display-bounds-sessions COMMAND OpenDesignerSelectionContextTests --display-bounds)
     add_test(NAME sketch-display-bounds-sessions-hidpi COMMAND OpenDesignerSelectionContextTests --display-bounds)
     set_tests_properties(sketch-display-bounds-sessions sketch-display-bounds-sessions-hidpi PROPERTIES TIMEOUT 120)
