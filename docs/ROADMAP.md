@@ -1,5 +1,7 @@
 # OpenDesigner roadmap
 
+**Start here:** [Full product roadmap and planned features](#full-product-roadmap-planned-features) lists all agreed feature areas, current gaps, tentative ordering and longer-term platforms. The version sections further down retain implementation history and test evidence.
+
 ## v0.1 — foundation
 - Qt 6 native desktop application
 - Open CASCADE 3D viewport
@@ -14,6 +16,256 @@
 - Assemblies and 3D copilot
 - STEP, IGES, STL
 - GLB/glTF and FBX import/export
+
+## Full product roadmap (planned features)
+
+This is the **consolidated OpenDesigner feature plan**, updated **2026-10-26**.
+The version sections below document work already implemented or being tested;
+this section also tracks the longer-term wishlist previously agreed for the
+product. It is a **planning document, not a claim that every item exists**, and
+does not assign delivery dates.
+
+**Product direction:** open-source GPL-3.0 3D *direct modeling*, inspired in
+workflow by **CoCreate SolidDesigner/Modeling 2008 v16.0**. Editing must not
+require a parametric feature-history tree. Implement independently in
+Qt 6 / C++20 / Open CASCADE, without distributing proprietary CoCreate assets.
+Keep existing desktop workflows while expanding to other input devices.
+
+**Status key:** `[x]` implemented in the stated supported scope;
+`[ ]` planned/not yet complete; `[?]` candidate or design decision requiring
+later prioritization. Partial support is described explicitly rather than
+marked complete. Priorities are *relative*, and phases may overlap.
+
+### Milestone overview and dependencies
+
+| Order | Milestone | State / scope |
+| --- | --- | --- |
+| Foundation (v0.1–v0.4.2) | Desktop CAD viewport, primitives, direct edits, Booleans, native documents, Workplanes, Sketch basics and projection | Implemented with documented limitations |
+| **Next: 6B.2** | Authentic SolidDesigner Workplane border and correct live blue Construction preview | **Planned**, [Issue #48](https://github.com/ProtonJeroen/OpenDesigner/issues/48) |
+| After Workplane UI | Finish usable closed 2D profiles, curve snapping and Sketch operations | **Planned / partially implemented** |
+| After Workplanes and Sketches | Lateral Move Cylindrical Face: move holes **and** attached cylindrical bosses | **Planned**, [Issue #51](https://github.com/ProtonJeroen/OpenDesigner/issues/51) |
+| Solid-from-sketch | Extrude, Revolve and Sweep using validated 2D profiles | **Planned** |
+| Advanced direct modeling | Broader face/topology editing, curved neighbors and finish operations | **Planned**, some individual operations already supported |
+| Assemblies & native documents | True hierarchy, occurrences and large assemblies | **Planned**, simple one-file multi-Part root already supported |
+| Interoperability | STEP, IGES, STL, GLB/glTF and FBX | **Planned**, no general-purpose production importer/exporter claimed |
+| Multiplatform & input | Windows/macOS builds, Linux maturity, optional touch across platforms, iPadOS and Android tablets | **Planned**, Linux desktop is current development platform |
+| Stable 1.0 | Reliable tested CAD workflows, cross-platform packages, documentation and compatibility | **Release goal; no date committed** |
+
+The order above defines **dependencies**, not a rigid promise that all features
+within one stream must finish before work in another. Issue-specific PRs and CI
+remain the authority for actual implementation status.
+
+### 1. Workplanes and 2D Sketch (highest near-term priority)
+
+- [x] Independent Workplanes, Axes and Points; XY/XZ/YZ presets, editing,
+  transforms and native storage.
+- [x] 2D Profile and Construction primitives: lines, infinite lines, circles,
+  arcs, ellipses/elliptical arcs and local construction points; numeric drawing,
+  basic snapping, Overdraw, offsets and supported common tangents.
+- [x] Independent **Horizontal** and **Vertical Infinite Construction Line**
+  commands with one-click or numeric local Y/X offset, alongside the unrestricted
+  two-point line. Landed via [PR #53](https://github.com/ProtonJeroen/OpenDesigner/pull/53);
+  linked [Issue #50](https://github.com/ProtonJeroen/OpenDesigner/issues/50).
+- [x] **6B.1:** dynamically sized rectangular Workplane bounds and infinite-line
+  clipping; lines outside the prior bounds enlarge the frame by perpendicular
+  offset. Landed via [PR #49](https://github.com/ProtonJeroen/OpenDesigner/pull/49).
+- [ ] **6B.2:** CoCreate-like Workplane as a **15 mm wide** rectangular ring in
+  local model units, with **50% opacity**, **active green / inactive light grey**;
+  **no interior face at all**. Preserve see-through visibility, picking and
+  snapping. Include 10% free interior geometry margin **plus 15 mm frame width
+  on every outside edge**; keep the opening nondegenerate and clip infinite
+  lines to the **outermost** edge. Subtle WP label; no large idle XYZ arrows.
+- [ ] **6B.2 live-preview fix:** blue *temporary* Construction geometry
+  **must be visible before OK**, even when it falls outside the earlier
+  Workplane bounds. The frame and blue AIS geometry must share the same
+  temporary enlarged rectangle during drawing, projection and offset,
+  including numeric changes. **Cancel** restores the previous scene/history;
+  **OK** must not make previously hidden geometry suddenly appear.
+  Cover finite and infinite lines, circles, projected contours and
+  rotated Workplanes; see [Issue #48](https://github.com/ProtonJeroen/OpenDesigner/issues/48).
+- [ ] Complete missing analytic **circle–ellipse and ellipse–ellipse
+  intersections**, coincident-support cases and elliptic tangent snapping.
+  Respect exact domains, locks, degeneracies and snap priorities.
+- [ ] Extend **elliptic Overdraw**, including bounded arcs, graph/domain
+  handling, reverse traversal and safe ambiguity refusal. Extend applicable
+  offset/tangent tools to further supported conic combinations.
+- [ ] **Closed-profile analysis and validation:** connected wires, holes/islands,
+  self-intersections, overlaps, orientations and exact tolerances. Independent
+  Profile geometry should be reliably usable by future 3D solid commands.
+- [ ] Expand 2D creation and editing where needed, including an interactive
+  Construction Point workflow and reliable multiple-entity edit/selection.
+- [?] Parametric 2D dimensions/constraints and additional curve types
+  (e.g. splines) are *later design candidates*, **not** prerequisites for
+  history-free direct modeling or the current Sketch deliverables.
+
+### 2. Create 3D solids from Workplane profiles
+
+- [ ] **Extrude / Pull Profile:** make or remove solid material from a validated
+  closed 2D contour; explicit direction/distance, add/subtract choices, numeric
+  input, live preview and safe intersections. Support profiles with inner holes.
+- [ ] **Revolve:** rotate a validated 2D section around a selected
+  Workplane/Construction axis or geometric reference; exact angle/full turn.
+- [ ] **Sweep:** sweep a profile along an eligible path with controlled
+  orientation, failure checks and geometric fidelity.
+- [ ] Integrate all three with multi-Part document ownership, existing
+  Boolean operations, transformations, Undo/Redo and native Save/Open.
+  Output should be real analytic B-Rep solids, not display-only mesh bodies.
+- [?] Loft, more complex profile treatments, associative dependencies and a
+  persistent parametric feature-history workflow are **possible extensions**,
+  not committed requirements for the direct-modeling core.
+
+### 3. Direct solid modeling and exact geometry
+
+- [x] Box, Cylinder, Sphere and Cone primitives with available Pull/Resize
+  controls; Move/Rotate Part, multi-selection, duplication, exact input,
+  Unite/Subtract/Intersect and supported planar Move/Rotate/Align/Delete Face.
+  These are real foundations, **not unrestricted arbitrary B-Rep editing**.
+- [ ] **Move Cylindrical Face laterally** after Workplanes and Sketches:
+  reposition an entire **inner cylindrical hole** or an **outer cylindrical
+  boss attached to a planar face**. Keep diameter, direction and depth/height,
+  reconstruct openings/support face/connected solid and preserve the rest
+  of the Part. Start with simple through-holes and attached bosses; later blind
+  holes and complex Booleans. [Issue #51](https://github.com/ProtonJeroen/OpenDesigner/issues/51).
+- [ ] Support a broader set of direct **Move / Rotate / Align / Delete Face**
+  operations across curved neighboring surfaces, multiple selected faces,
+  internal cavities and topology transitions. Provide controlled safe refusal
+  rather than broken solids; maintain an accurate Part/face selection mapping.
+- [ ] Extend exact manipulation of cylinders, cones and other supported
+  analytic B-Reps beyond the primitive-specific Pull commands. A moved hole
+  must be geometrically different from merely resizing its diameter.
+- [ ] Add or broaden classic finishing operations:
+  **fillet/blend**, **chamfer**, **shell/thickness**, and suitable **draft/offset
+  faces**. These are *planned functional areas*; detailed UX/OCCT acceptance
+  criteria and order still need individual issues before coding.
+- [ ] Improve transformations with freely positionable pivots and reference
+  axes, exact constraints, multi-face and multi-Part operations, reliable
+  snapping and 3D CoPilot-style manipulators, while keeping explicit commands
+  and OK/Cancel behavior.
+- [ ] Grow topology-safe edits from simple analytic one-solid cases to more
+  complex Boolean results and accepted multi-solid structures, with exact B-Rep
+  validity/material checks and clear feedback for unsupported cases.
+
+### 4. Structure Browser, documents and assemblies
+
+- [x] Native **single-file `.odc`** Save/Open holds several Parts, Workplanes
+  and Sketches; existing Structure Browser covers names, color, visibility
+  and selection. The present root is **not yet a full nested assembly model**.
+- [ ] True **assemblies and subassemblies**, with hierarchical structure,
+  nesting, per-component transforms, selection, grouping and visibility;
+  keep a single document capable of holding the **entire assembly**.
+- [ ] Optionally store or reference **individual Parts/subassemblies externally**,
+  but **never require** external files for a normal multi-Part assembly.
+- [ ] Reliable part duplication/instances and component reuse, assembly-level
+  placement, reference frames and browser operations. Preserve independent
+  geometry versus shared occurrence semantics explicitly.
+- [ ] Structure Browser improvements: search/filter, active component/workplane
+  context, typed multi-selection, drag/drop or reorder where safe, and coherent
+  model/viewport state.
+- [ ] Document evolution: schema migration/backward compatibility,
+  scalable large-model handling, recoverable errors and safe undo/redo boundaries.
+  No requirement to invent a SolidDesigner-compatible proprietary document format.
+- [?] Full mechanical **assembly constraints/mates** and external-link update
+  semantics need separate design; they are not already implemented.
+
+### 5. Import/export and downstream 3D workflows
+
+- [ ] **STEP** import and export as the priority exact B-Rep interchange route
+  for other CAD tools (including Fusion 360 exports); handle multiple
+  Parts/assembly hierarchy and placements where supported.
+  Imported STEP is geometry, **not a recovered Fusion 360 feature tree**.
+- [ ] **IGES** import/export for applicable exact surface/curve exchange,
+  with explicit limitations and healing.
+- [ ] **STL** import/export for triangle-mesh/3D-print workflows; keep mesh
+  exchange distinct from editable exact B-Reps.
+- [ ] **GLB / glTF** import/export for Blender, visualization, real-time engines
+  and VR-oriented workflows, preserving feasible component hierarchy,
+  transforms and material appearance.
+- [ ] **FBX** import/export for content pipelines where legally/technically
+  supportable, with documented mesh/material/animation limitations.
+- [ ] Clear unit/axis/scale conventions, color/material transfer, import
+  diagnostics, file-type capability notices and round-trip regression fixtures.
+- [?] Additional neutral/legacy formats and automated conversions can be
+  prioritized once the core list is dependable; no unapproved format support
+  is implied.
+
+### 6. CoCreate v16-style user experience and input
+
+- [x] Viewport orbit/pan/zoom, typed selection, context-sensitive direct
+  actions, manipulators and shared operation preview/OK/Cancel/Undo/Redo.
+- [ ] Continue converging on the **CoCreate Modeling 2008 v16.0 workflows**:
+  explicit action and operand selection, stable reference picking, 3D CoPilot
+  placement, edge/face/part selections, reliable numeric fields and predictable
+  contextual menus. Keep OpenDesigner independent and modern.
+- [ ] Expand edge-based references and multi-face selections where the
+  geometry kernel can perform the corresponding exact modeling command.
+- [ ] **3Dconnexion / SpaceNavigator / SpaceMouse** 6-DoF navigation,
+  especially Linux `spacenavd`, with configurable axis mapping, sensitivity
+  and natural unrestricted rotation; retain keyboard/mouse navigation.
+- [ ] **Platform-independent touch mode in Settings**: opt-in touch controls on
+  **Linux, Windows, macOS, iPadOS and Android**. Larger hit targets,
+  touch-friendly manipulators/selection, gestures, on-screen numeric fields,
+  plus mouse/keyboard when available. Desktop controls must remain usable.
+- [ ] **Input choices** (desktop, touch or hybrid) and custom shortcuts/
+  navigation mappings without forcing users into a touch-specific UI.
+  Support precision stylus/Apple Pencil interaction on compatible tablets.
+- [ ] Accessible, responsive GUI; HiDPI support, dock/panel layouts,
+  translations/localized numbers and consistent error presentation.
+- [?] Extensive skin/theme customization is lower-priority than reliable
+  modeling and input; optional after core workflows.
+
+### 7. Platforms, builds and distribution
+
+- [x] **Linux desktop** development and GitHub Actions Release build/tests;
+  current development and native GUI verification primarily use Fedora KDE.
+- [ ] Native **Windows** and **macOS** builds and regressions, with shared
+  C++/Qt/OCCT modeling logic and appropriate platform-specific GUI packaging.
+- [ ] **iPadOS** tablet application with full modeling-capable touch UI, not
+  merely a passive file viewer; support stylus and common document exchange.
+- [ ] **Android tablets** with the same cross-platform touch and CAD-core
+  goals. Both tablet ports are planned **after desktop/core stabilization**;
+  feasibility and packaging must be validated, not presumed.
+- [ ] Reproducible CI for supported platforms; geometry correctness, headless
+  tests and manual GUI/device testing on relevant native systems.
+- [ ] Installable and updateable distributions, with packaging channels chosen
+  per OS (e.g. Linux packages/Flatpak, Windows installer/portable, macOS
+  application). Actual formats, certificates/store requirements and release
+  obligations require later decisions.
+- [?] Steam Deck/handheld optimized controls and other device classes may be
+  explored as extensions, not launch commitments.
+
+### 8. Quality, performance, openness and extensibility
+
+- [ ] Keep B-Rep validity, material equivalence where appropriate,
+  safe rollback, stable identity and no silent data loss as acceptance gates.
+  Add unit, property, GUI/session, regression and real-model import tests.
+- [ ] Performance for large Parts and assemblies: responsive selection,
+  viewport tessellation/caching, memory management and later cancellable
+  long-running kernel operations.
+- [ ] Improve native save compatibility, error recovery, diagnostics,
+  automated testing, packaging and user-facing documentation/tutorials.
+- [ ] Maintain **GPL-3.0**, independent implementation and a clear
+  contributor workflow, with GitHub branches, reviewed PRs and CI. Do not
+  redistribute proprietary CoCreate source, manuals, icons or assets.
+- [?] Scripting/API, plugins, automation and CAD copilot-assisted workflows
+  are **future extensibility candidates**. Define secure APIs and meaningful
+  use cases before promising an implementation.
+- [ ] **Stable v1.0 goal:** essential direct edits, robust native documents,
+  core profile-to-solid workflows, dependable import/export, supported desktop
+  packages and tested interaction behavior. This is an aspiration without a
+  fixed release date or claim that mobile builds precede v1.0.
+
+### How to maintain this plan
+
+- Update this consolidated section when a feature is approved, completed,
+  descoped or postponed. Link the relevant GitHub issue/PR and keep checked
+  boxes aligned with *merged and tested* capability, not merely a draft branch.
+- Track large themes here; write exact geometry/UI acceptance cases in smaller
+  issues and technical design documents. Avoid marking a partially supported
+  geometry class as universally implemented.
+- Preserve the detailed historical release notes below rather than replacing
+  their validation results with an optimistic product-level checklist.
+
+---
 
 ## Planned after Workplanes & Sketches — Move cylindrical faces (holes & bosses, Issue #51)
 
