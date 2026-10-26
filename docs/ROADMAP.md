@@ -48,7 +48,8 @@ marked complete. Priorities are *relative*, and phases may overlap.
 | Advanced direct modeling | Broader face/topology editing, curved neighbors and finish operations | **Planned**, some individual operations already supported |
 | Assemblies & native documents | True hierarchy, occurrences and large assemblies | **Planned**, simple one-file multi-Part root already supported |
 | Interoperability | STEP, IGES, STL, GLB/glTF and FBX | **Planned**, no general-purpose production importer/exporter claimed |
-| Multiplatform & input | Windows/macOS builds, Linux maturity, optional touch across platforms, iPadOS and Android tablets | **Planned**, Linux desktop is current development platform |
+| **UI/UX productization (release prerequisite)** | Replace prototype interface with coherent, intuitive desktop UX, design system, discoverable commands and user-tested workflows | **Planned before broad multiplatform rollout**, [Issue #55](https://github.com/ProtonJeroen/OpenDesigner/issues/55) |
+| Multiplatform & input | Windows/macOS builds, Linux maturity, optional touch across platforms, iPadOS and Android tablets | **Planned after UI/UX readiness for broad releases**; technical CI exploration may run in parallel |
 | Stable 1.0 | Reliable tested CAD workflows, cross-platform packages, documentation and compatibility | **Release goal; no date committed** |
 
 The order above defines **dependencies**, not a rigid promise that all features
@@ -213,12 +214,70 @@ remain the authority for actual implementation status.
 - [?] Extensive skin/theme customization is lower-priority than reliable
   modeling and input; optional after core workflows.
 
-### 7. Platforms, builds and distribution
+### 7. Professional, intuitive UI/UX (required before multiplatform rollout)
+
+**Motivation:** The current interface is still visibly a **prototype**, even
+though the CAD geometry and commands are functional. Before broad Windows/macOS
+distribution and the planned iPadOS/Android tablet products, make the desktop
+UI **clean, visually consistent and intuitive for a new user**. Treat this as
+a separate product milestone and release-readiness gate, **not merely styling
+or an optional polish task**. Track details in
+[Issue #55](https://github.com/ProtonJeroen/OpenDesigner/issues/55).
+
+- [ ] **Audit the whole desktop UI:** viewport, Structure Browser, Sketch and
+  Modeling toolbars, File/Construction menus, context menus, floating command
+  panels, selection feedback, manipulators, dialogs and saved window layout.
+  Document confusing interactions, duplicate controls and prototype elements.
+- [ ] **User-tested information architecture:** a clear, predictable grouping
+  for 2D Sketch, direct 3D Modeling, Construction Geometry, Assemblies,
+  documents and View. Context-sensitive tools, recognizable icons, meaningful
+  labels/tooltips and a manageable number of visible actions.
+- [ ] **Unified command workflow:** make the currently active mode/selection,
+  operand requirements, live preview and confirm/cancel actions obvious.
+  Preserve both preselect→command and command→select workflows where appropriate;
+  consistently use blue Preview, OK/Enter, Cancel/Esc and Undo/Redo. Show
+  errors/unsupported operations understandably, without hidden state changes.
+- [ ] **Coherent design system:** modern, professional Qt styling for colors,
+  typography, iconography, spacing, focus/hover/active/disabled states and
+  high-contrast visual hierarchy. Review proposed layouts and UI mockups
+  **before** choosing a final theme or implementing a large visual rewrite.
+- [ ] **Structure Browser and contextual properties:** present Parts,
+  Workplanes, Sketches and future assembly hierarchy legibly, with clear
+  visibility, lock, active context and selection states; keep browser and
+  viewport synchronized.
+- [ ] **Responsive, configurable desktop workspace:** sensible toolbar
+  defaults, logically docked/rearrangeable panels, coherent context menus
+  and an uncluttered viewport. Retain mouse/keyboard power-user workflows,
+  configurable shortcuts and numeric precision.
+- [ ] **Accessibility and readiness:** good keyboard focus, tooltips,
+  legible contrast, DPI scaling (100%/200%), localized numeric entry,
+  small-screen handling and stable panel positions. Prepare shared UI/state
+  components for later optional touch/pen support **without forcing touch
+  controls on desktop users**.
+- [ ] **Iterative implementation and validation:** first UX inventory and
+  design prototypes, then small reviewable UI PRs, then practical beginner and
+  expert workflows on Fedora KDE. No unnecessary change to B-Rep operations,
+  analytic model values, native `.odc` files or already tested CAD semantics.
+- [ ] **Multiplatform UI gate:** *before broad release/distribution* for
+  Windows, macOS, iPadOS and Android, validate a clean, consistent workflow
+  with users and record accessibility/HiDPI regressions. Early technical
+  portability experiments and CI can proceed **in parallel**; the gate is
+  for supported product experience, **not** an arbitrary ban on builds.
+
+**Acceptance examples:** someone new can create a Part, start and finish a
+Sketch, select a Face/Part, use Move/Pull/Boolean, Undo/Redo and Save/Open
+without discovering undocumented state; an experienced user keeps precise
+keyboard/mouse and 3D-mouse access. Detailed tasks and review rules belong to
+Issue #55, not implementation assumptions in this broad roadmap.
+
+### 8. Platforms, builds and distribution
 
 - [x] **Linux desktop** development and GitHub Actions Release build/tests;
   current development and native GUI verification primarily use Fedora KDE.
 - [ ] Native **Windows** and **macOS** builds and regressions, with shared
   C++/Qt/OCCT modeling logic and appropriate platform-specific GUI packaging.
+  **Broad public platform rollout requires the preceding UI/UX milestone (#55);
+  early builds and CI portability tests may be developed in parallel.**
 - [ ] **iPadOS** tablet application with full modeling-capable touch UI, not
   merely a passive file viewer; support stylus and common document exchange.
 - [ ] **Android tablets** with the same cross-platform touch and CAD-core
@@ -233,7 +292,7 @@ remain the authority for actual implementation status.
 - [?] Steam Deck/handheld optimized controls and other device classes may be
   explored as extensions, not launch commitments.
 
-### 8. Quality, performance, openness and extensibility
+### 9. Quality, performance, openness and extensibility
 
 - [ ] Keep B-Rep validity, material equivalence where appropriate,
   safe rollback, stable identity and no silent data loss as acceptance gates.
@@ -250,8 +309,9 @@ remain the authority for actual implementation status.
   are **future extensibility candidates**. Define secure APIs and meaningful
   use cases before promising an implementation.
 - [ ] **Stable v1.0 goal:** essential direct edits, robust native documents,
-  core profile-to-solid workflows, dependable import/export, supported desktop
-  packages and tested interaction behavior. This is an aspiration without a
+  core profile-to-solid workflows, dependable import/export, **the validated
+  intuitive UI/UX milestone (#55)**, supported desktop packages and tested
+  interaction behavior. This is an aspiration without a
   fixed release date or claim that mobile builds precede v1.0.
 
 ### How to maintain this plan
