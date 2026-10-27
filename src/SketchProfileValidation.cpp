@@ -260,7 +260,7 @@ Result validate(const std::vector<Sketch::Entity>& entities,const QString& workp
         }
         if(depth>0 && !contours[i].parent) return failure(Status::Unsupported,Code::NumericalFailure,"Contour containment hierarchy is inconsistent.");
     }
-    Result result;result.status=Status::Valid;result.contours=std::move(contours);
+    Result result;result.connectionTolerance=tolerance;result.status=Status::Valid;result.contours=std::move(contours);
     for(size_t i=0;i<result.contours.size();++i) {
         const auto& contour=result.contours[i];
         if(contour.depth%2==0) {

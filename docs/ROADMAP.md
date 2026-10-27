@@ -44,6 +44,19 @@
 
 See [planned cylindrical-face move: holes and bosses](https://github.com/ProtonJeroen/OpenDesigner/issues/51).
 
+## v0.4.4 — OCCT Wire & Face Construction (6D.0)
+
+- [x] Headless `SketchProfileBuilder`: exact Segment/Arc/Circle wires and planar
+  faces on arbitrary Workplanes, including holes, islands and disjoint regions.
+- [x] Explicit bounded vertex policy capped by recorded Sketch tolerance;
+  independent OCCT connectivity, closure, orientation, validity, plane and area
+  checks. No healing or source-coordinate changes; atomic failure diagnostics.
+- [x] Source entity/contour/region references and effective tolerance reporting;
+  focused headless construction regressions. `.odc` and GUI remain unchanged.
+- [ ] Extrude/New Solid, Add Material and Cut belong to subsequent phases.
+
+See [closure policy and construction checks](CLOSED_PROFILES.md).
+
 ## v0.4.3 — Closed Profile analysis (6C.1 / 6C.2)
 
 - [x] Headless Profile-only analysis on one Workplane: ordered exact Segment/Arc
@@ -54,7 +67,7 @@ See [planned cylindrical-face move: holes and bosses](https://github.com/ProtonJ
 - [x] Source IDs and values remain unchanged; no healing or document/schema changes.
 - [x] Explicit construction-readiness diagnostics: tolerance-connected analysis
   does **not** certify an exact closed OCCT wire.
-- [ ] Ellipse/EllipticalArc profiles, OCCT wire adapter and Extrude/Add/Cut GUI.
+- [ ] Ellipse/EllipticalArc profiles and Extrude/Add/Cut GUI.
 
 See [closed profile validation](CLOSED_PROFILES.md) for output and limitations.
 

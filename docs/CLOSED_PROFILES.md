@@ -1,4 +1,4 @@
-# Closed Profile validation — phases 6C.1 / 6C.2
+# Closed Profile validation and construction — phases 6C / 6D.0
 
 `SketchProfileValidation::validate(entities, workplaneId, tolerance)` analyzes local
 XY Profile geometry, including hidden/locked entities. Construction geometry and
@@ -41,11 +41,67 @@ entry in `constructionDiagnostics`, separate from analysis error `diagnostics`.
 Each contour reports `maximumEndpointGap`; nonzero gaps additionally produce
 `TolerantClosure`, even when they are smaller than the Sketch tolerance. Values
 are never silently healed, including small floating-point Arc endpoint gaps.
-A future construction adapter must check exact closure and OCCT wire/B-Rep
-validity, and fail explicitly if construction cannot be certified. No wire,
+The separate construction adapter below checks closure and OCCT wire/B-Rep
+validity, failing explicitly if construction cannot be certified. No wire,
 solid, Boolean, GUI or persistent feature is created by this module.
 
 Regression target: `OpenDesignerProfileValidationTests`, CTest
 `sketch-closed-profile-validation` (headless, no application/display required).
 Native Fedora KDE GUI acceptance belongs to the later extrusion workflow.
 Native `.odc` data/schema and existing modeling tools are unchanged.
+
+## Exact wire and planar face construction (6D.0)
+
+`SketchProfileBuilder::build(validation, frame, policy)` converts a successful
+analysis into certified analytic wires and planar faces. `connectionTolerance`
+is recorded by successful validation and bounds the construction policy; this is
+analysis metadata, not persisted document data. The adapter reuses `validate()`
+to recheck the public result's source geometry, contour membership and material
+regions, rather than trusting a mutable status flag or duplicating intersections.
+
+Segment supports remain lines; Arc/Circle supports remain circles. Explicit
+edge ranges preserve signed traversal, seam crossings and short/long arc routes.
+`Sketch::worldPoint()` and the Workplane's local X/Y axes place all geometry in
+3D. Right- or left-handed frame axes are respected; the construction plane normal
+is X cross Y. No triangulation, approximation, ShapeFix or automatic healing is
+used. Each source curve yields one edge, with its original entity ID.
+
+### Bounded closure policy
+
+- `Policy::maximumVertexTolerance` defaults to 1e-7 mm. It must be finite, at
+  least OCCT `Precision::Confusion()` and no larger than the recorded Sketch
+  connection tolerance. A stricter construction limit can refuse an otherwise
+  valid analysis. No tolerance is silently increased.
+- Each junction vertex is anchored at the outgoing source curve's evaluated
+  start. The incoming curve retains its exact support and endpoint parameter;
+  both use the same topological vertex with **exactly** the policy tolerance.
+  Source endpoints, curve parameters and Sketch IDs are never rewritten.
+- Both local and world endpoint gaps must be within the construction limit.
+  Wire output reports the maximum world gap; successful result metadata reports
+  the effective vertex tolerance. This is certified **bounded-tolerance OCCT
+  closure**, not a claim that all distinct analytic endpoints coincide exactly.
+- Within each contour, distinct junction vertices within twice the limit, or a
+  full Circle radius within twice the limit, are refused as construction ambiguity. World-coordinate
+  ULP must remain below one-sixteenth of the limit; unresolved placement fails.
+
+Certification checks oriented shared vertex identity, endpoint/curve residuals,
+analytic support types, edge count, `BRep_Tool::IsClosed`, `BRepCheck_Wire` and
+`BRepCheck_Analyzer`. Vertex, edge and face tolerances must stay within policy.
+
+Each material region produces one planar face: an outward CCW wire and its
+reversed direct-hole wires relative to local XY. Islands remain separate faces.
+The adapter checks face/UV wire closure, nesting and orientation using
+`BRepCheck_Face`/`BRepCheck_Wire`, actual plane, boundary identity/count and area
+against the independently validated analytic region area. The area error bound
+is `8 * tolerance * boundaryLength + 256 * doubleEpsilon * abs(expectedArea)`;
+explicit nesting and boundary checks remain mandatory, irrespective of area.
+
+Success returns source-indexed wires/edges and region-indexed faces with outer,
+hole and entity references and measured areas. Any failure returns structured
+codes/messages and available contour/region/ID context, with **no partial wire
+or face output**. No document, selection or Undo/Redo state is accessed. `.odc`
+remains unchanged. Elliptical profiles, solids, Extrude/Cut and GUI are excluded.
+
+Headless regression target: `OpenDesignerProfileBuilderTests`, CTest
+`sketch-profile-wire-face-construction`. Tests include exact areas, actual hole
+classification, CW/CCW routes, transformations, bounded gaps and atomic refusal.
