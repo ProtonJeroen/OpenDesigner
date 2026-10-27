@@ -55,7 +55,8 @@ set(OPENDESIGNER_LIBRARIES
     TKernel
 )
 add_library(OpenDesignerConstruction STATIC src/SketchDisplayBounds.cpp src/SketchDisplayBounds.h src/ConstructionGeometry.cpp src/ConstructionGeometry.h src/SketchGeometry.cpp src/SketchGeometry.h src/SketchSnapping.cpp src/SketchSnapping.h src/SketchOverdraw.cpp src/SketchOverdraw.h src/SketchConstruction.cpp src/SketchConstruction.h src/SketchProjection.cpp src/SketchProjection.h)
-target_sources(OpenDesignerConstruction PRIVATE src/SketchProfileValidation.cpp src/SketchProfileValidation.h)
+target_sources(OpenDesignerConstruction PRIVATE src/SketchProfileValidation.cpp src/SketchProfileValidation.h
+    src/SketchProfileBuilder.cpp src/SketchProfileBuilder.h)
 target_include_directories(OpenDesignerConstruction PUBLIC src ${OpenCASCADE_INCLUDE_DIR})
 target_link_libraries(OpenDesignerConstruction PUBLIC ${OPENDESIGNER_LIBRARIES})
 add_library(OpenDesignerDeleteFaceGeometry STATIC src/DeleteFaceGeometry.cpp src/DeleteFaceGeometry.h
@@ -77,6 +78,9 @@ install(TARGETS OpenDesigner RUNTIME DESTINATION bin)
 option(OPENDESIGNER_BUILD_TESTS "Build viewport pull regression tests" OFF)
 if(OPENDESIGNER_BUILD_TESTS)
     enable_testing()
+    add_executable(OpenDesignerProfileBuilderTests tests/SketchProfileBuilderTest.cpp)
+    target_link_libraries(OpenDesignerProfileBuilderTests PRIVATE OpenDesignerConstruction)
+    add_test(NAME sketch-profile-wire-face-construction COMMAND OpenDesignerProfileBuilderTests)
     add_executable(OpenDesignerProfileValidationTests tests/SketchProfileValidationTest.cpp)
     target_link_libraries(OpenDesignerProfileValidationTests PRIVATE OpenDesignerConstruction)
     add_test(NAME sketch-closed-profile-validation COMMAND OpenDesignerProfileValidationTests)

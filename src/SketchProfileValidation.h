@@ -47,6 +47,7 @@ struct Result {
     // check exact closure, tolerances and B-Rep validity without implicit healing.
     WireReadiness wireReadiness=WireReadiness::NotCertified;
     std::vector<Diagnostic> constructionDiagnostics;
+    double connectionTolerance=0; // Recorded only for a successful analysis.
 };
 // Same model-space tolerance as Sketch snapping/Overdraw, independent of zoom.
 // Includes hidden/locked Profile geometry. Supports simple Segment/Arc contours,
