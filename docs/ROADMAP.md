@@ -44,6 +44,20 @@
 
 See [planned cylindrical-face move: holes and bosses](https://github.com/ProtonJeroen/OpenDesigner/issues/51).
 
+## v0.4.3 — Closed Profile analysis (6C.1 / 6C.2)
+
+- [x] Headless Profile-only analysis on one Workplane: ordered exact Segment/Arc
+  traversal, CW/CCW, full Circles, analytic area and intersections.
+- [x] Even-odd nesting: material regions with direct holes, islands and multiple
+  disconnected regions; atomic refusal of open, overlapping, branching,
+  crossing, touching or numerically ambiguous boundaries.
+- [x] Source IDs and values remain unchanged; no healing or document/schema changes.
+- [x] Explicit construction-readiness diagnostics: tolerance-connected analysis
+  does **not** certify an exact closed OCCT wire.
+- [ ] Ellipse/EllipticalArc profiles, OCCT wire adapter and Extrude/Add/Cut GUI.
+
+See [closed profile validation](CLOSED_PROFILES.md) for output and limitations.
+
 ## v0.4.2 — Project 3D Geometry foundations
 
 ### Phase 6A: exact ellipse extension
