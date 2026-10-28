@@ -1,5 +1,7 @@
 #include "CommandPanelPositioner.h"
 #include <QDialog>
+#include <QDebug>
+#include <cstdio>
 #include <QEvent>
 #include <QLabel>
 #include <QLayout>
@@ -10,6 +12,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QWindow>
+#include <QGuiApplication>
 #include <algorithm>
 
 namespace {
@@ -34,7 +38,15 @@ struct CommandPanelPositioner::Panel {
     QPointer<QScrollArea> scroll;
     QSize natural;
     QPoint localPosition,lastFramePosition,lastViewportOrigin,dragOffset;
-    bool anchor=true,placing=false,dragging=false;
+    std::vector<QPoint> nativePositions;
+    bool anchor=true,placing=false,dragging=false,opening=true,settling=false;
+    void expectNativePosition(const QPoint& position) {
+        // Native configure notifications can arrive after a later resize/move
+        // has already updated QWidget's geometry. Keep their client origins,
+        // independent of asynchronously changing frame margins.
+        if(nativePositions.size()==64) nativePositions.erase(nativePositions.begin());
+        nativePositions.push_back(position);
+    }
 };
 CommandPanelPositioner::CommandPanelPositioner(QWidget* viewport):QObject(viewport),viewport_(viewport) {
     for(auto* ancestor=viewport_;ancestor;ancestor=ancestor->parentWidget()) ancestor->installEventFilter(this);
@@ -82,8 +94,14 @@ void CommandPanelPositioner::manage(QWidget* widget,bool addDragHandle) {
 void CommandPanelPositioner::show(QWidget* widget) {
     manage(widget);
     if(!widget) return;
-    if(!widget->isVisible()) for(const auto& p:panels_) if(p->widget==widget) p->anchor=true;
-    widget->show();update();schedule();
+    if(!widget->isVisible()) for(const auto& p:panels_) if(p->widget==widget) {
+        p->anchor=true;p->opening=true;
+    }
+    // Mapping a native tool window is asynchronous. Wait for its first expose
+    // before placing it, so the WM's initial placement cannot overwrite ours.
+    widget->show();
+    if(widget->windowHandle()) widget->windowHandle()->installEventFilter(this);
+    update();schedule();
 }
 void CommandPanelPositioner::schedule() {
     if(pending_) return;
@@ -93,10 +111,19 @@ void CommandPanelPositioner::moveFrame(Panel& p,const QPoint& position) {
     p.lastFramePosition=position;p.lastViewportOrigin=viewport_->mapToGlobal(QPoint());
     p.localPosition=position-p.lastViewportOrigin;
     auto* w=p.widget.data();const auto delta=position-w->frameGeometry().topLeft();
-    if(!delta.isNull()) w->move(w->pos()+delta);
+    if(!delta.isNull()) {
+        p.expectNativePosition(w->mapToGlobal(QPoint()));
+        w->move(w->pos()+delta);
+        p.expectNativePosition(w->mapToGlobal(QPoint()));
+    }
+    if(qEnvironmentVariableIsSet("OPENDESIGNER_PANEL_TRACE")) {
+        QString trace;QDebug(&trace)<<"after move"<<w->frameGeometry()<<w->pos()<<"requested"<<position;
+        fprintf(stderr,"%s\n",qPrintable(trace));
+    }
 }
 void CommandPanelPositioner::fit(Panel& p) {
     if(!p.widget || !p.widget->isVisible() || !p.content || p.placing) return;
+    if(p.opening) return;
     p.placing=true;auto* w=p.widget.data();
     if(p.handle) p.handle->setText(w->windowTitle());
     // Do not measure w->sizeHint(): the outer layout caches the scroll area's
@@ -125,10 +152,19 @@ void CommandPanelPositioner::fit(Panel& p) {
         vertical=natural.height()>available.height()-(horizontal?barHeight:0);
     }
     const auto desired=(natural+QSize(vertical?barWidth:0,horizontal?barHeight:0)).boundedTo(available);
-    if(w->size()!=desired) w->resize(desired);
+    if(w->size()!=desired) {
+        p.expectNativePosition(w->mapToGlobal(QPoint()));
+        w->resize(desired);
+    }
     w->layout()->activate();
     const QRect bounds(viewport_->mapToGlobal(QPoint()),viewport_->size());
     const auto target=boundedFrame(bounds,w->frameGeometry().size(),bounds.topLeft()+p.localPosition,p.anchor);
+    if(qEnvironmentVariableIsSet("OPENDESIGNER_PANEL_TRACE")) {
+        QString trace; QDebug(&trace)<<"fit"<<w->windowTitle()<<"bounds"<<bounds<<"frame"<<w->frameGeometry()
+            <<"pos"<<w->pos()<<"global"<<w->mapToGlobal(QPoint())<<"dpr"<<w->devicePixelRatioF()
+            <<"anchor"<<p.anchor<<"local"<<p.localPosition<<"target"<<target;
+        fprintf(stderr,"%s\n",qPrintable(trace));
+    }
     moveFrame(p,target.topLeft());p.placing=false;
 }
 void CommandPanelPositioner::update() {for(const auto& p:panels_) fit(*p);}
@@ -138,6 +174,24 @@ bool CommandPanelPositioner::eventFilter(QObject* watched,QEvent* event) {
 #endif
     for(const auto& entry:panels_) {
         auto& p=*entry;if(!p.widget) continue;
+        if(watched==p.widget->windowHandle() && event->type()==QEvent::Expose) {
+            if(p.opening && !p.settling && p.widget->windowHandle()->isExposed()) {
+                p.settling=true;
+                QTimer::singleShot(0,this,[this,guard=QPointer<CommandPanelPositioner>(this),widget=p.widget] {
+                    // Drain the native mapping/configure events and obtain the
+                    // WM's frame margins before measuring or moving the frame.
+                    // sync() processes events: both objects may be deleted.
+                    QGuiApplication::sync();
+                    if(!guard || !widget) return;
+                    for(const auto& item:panels_) if(item->widget==widget) {
+                        item->settling=false;
+                        item->opening=!widget->windowHandle() || !widget->windowHandle()->isExposed();
+                    }
+                    update();
+                });
+            }
+            schedule();
+        }
         if(watched==p.handle && event->type()==QEvent::MouseButtonPress) {
             auto* mouse=static_cast<QMouseEvent*>(event);
             if(mouse->button()==Qt::LeftButton) {
@@ -159,9 +213,17 @@ bool CommandPanelPositioner::eventFilter(QObject* watched,QEvent* event) {
             // activation changes. That must not reset a user's command position.
             if(event->type()==QEvent::Hide) {p.dragging=false;if(p.handle && QWidget::mouseGrabber()==p.handle) p.handle->releaseMouse();}
             if(event->type()==QEvent::Move && !p.placing && p.widget->isVisible()) {
+                if(qEnvironmentVariableIsSet("OPENDESIGNER_PANEL_TRACE")) {
+                    QString trace; QDebug(&trace)<<"move"<<p.widget->windowTitle()<<"frame"<<p.widget->frameGeometry()<<"last"<<p.lastFramePosition<<"origin"<<viewport_->mapToGlobal(QPoint())<<"last origin"<<p.lastViewportOrigin<<"spontaneous"<<event->spontaneous();
+                    fprintf(stderr,"%s\n",qPrintable(trace));
+                }
                 const auto origin=viewport_->mapToGlobal(QPoint());
-                if(origin==p.lastViewportOrigin && p.widget->frameGeometry().topLeft()!=p.lastFramePosition) {
+                const auto native=std::find(p.nativePositions.begin(),p.nativePositions.end(),p.widget->mapToGlobal(QPoint()));
+                const bool acknowledgement=event->spontaneous() && native!=p.nativePositions.end();
+                if(acknowledgement) p.nativePositions.erase(native);
+                if(!p.opening && !acknowledgement && origin==p.lastViewportOrigin && p.widget->frameGeometry().topLeft()!=p.lastFramePosition) {
                     p.anchor=false;p.localPosition=p.widget->frameGeometry().topLeft()-origin;
+                    p.nativePositions.clear();
                 }
                 schedule();
             }

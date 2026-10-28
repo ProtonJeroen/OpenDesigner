@@ -76,12 +76,16 @@ void run() {
     moveFrame(panel,bounds(*viewport).bottomRight()-QPoint(100,100));inside(*viewport,panel);
     main.resize(720,500);settle();inside(*viewport,panel);
     panel.hide();helper.show(&panel);settle();anchored(*viewport,panel);
-    // Large content in a small viewport remains reachable using both scroll axes.
+    // Overflow both axes at 210x150, but fit a 1920x1080 screen at DPR 2
+    // when restored. A window manager may cap a top-level 1000x1000 request.
     QWidget small;small.resize(210,150);small.move(20,20);small.show();settle();CommandPanelPositioner tiny(&small);
     QDialog large(&small,Qt::Tool);auto* largeLayout=new QVBoxLayout(&large);
-    auto* wide=new QLineEdit;wide->setMinimumWidth(650);largeLayout->addWidget(wide);
-    auto* tall=new QLabel("Long form");tall->setMinimumHeight(700);largeLayout->addWidget(tall);
-    auto* confirm=new QPushButton("OK");largeLayout->addWidget(confirm);tiny.show(&large);settle();inside(small,large);
+    auto* wide=new QLineEdit;wide->setMinimumWidth(350);largeLayout->addWidget(wide);
+    auto* tall=new QLabel("Long form");tall->setMinimumHeight(350);largeLayout->addWidget(tall);
+    auto* confirm=new QPushButton("OK");largeLayout->addWidget(confirm);tiny.show(&large);settle();anchored(small,large);
+    // Native decorations and the WM's initial configure arrive asynchronously.
+    // Further event processing must preserve the frame's exact default anchor.
+    for(int i=0;i<3;++i) {settle();anchored(small,large);}
     auto* scroll=large.findChild<QScrollArea*>();check(scroll && scroll->horizontalScrollBar()->maximum()>0 && scroll->verticalScrollBar()->maximum()>0,"oversized content has no reachable scroll ranges");
     scroll->ensureWidgetVisible(confirm);settle();check(scroll->verticalScrollBar()->value()>0,"bottom controls cannot be reached");
     // Constrained sizes must never become the next natural-size measurement.
@@ -89,8 +93,11 @@ void run() {
     for(int i=0;i<3;++i) {small.resize(210,150);settle();inside(small,large);small.resize(1000,1000);settle();noScroll(large);check(large.size()==natural,"viewport shrink/restore ratcheted natural size down");}
     // One-dimensional overflow must not introduce an unnecessary second bar.
     const auto decorations=large.frameGeometry().size()-large.size();
-    small.resize(natural.width()+decorations.width()+24+40,300);settle();inside(small,large);
+    small.resize(natural.width()+decorations.width()+24+40,200);settle();inside(small,large);
     check(scroll->verticalScrollBar()->maximum()>0 && !scroll->horizontalScrollBar()->maximum(),"vertical overflow unnecessarily introduced horizontal scrolling");
+    const auto manual=bounds(small).topLeft()+QPoint(3,4);moveFrame(large,manual);
+    for(int i=0;i<3;++i) {tiny.show(&large);settle();check(large.frameGeometry().topLeft()==manual,"native decorated panel reset manual position");}
+    large.hide();tiny.show(&large);settle();anchored(small,large);
     // Only explicitly registered nonmodal Tool windows are affected.
     QDialog modal(viewport);modal.setModal(true);modal.resize(150,100);modal.move(100,100);const auto modalPos=modal.pos();
     helper.manage(&modal);helper.update();check(!modal.findChild<QScrollArea*>() && modal.pos()==modalPos,"modal dialog was wrapped/repositioned");
