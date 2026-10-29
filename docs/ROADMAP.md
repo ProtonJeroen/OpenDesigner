@@ -188,6 +188,20 @@ remain the authority for actual implementation status.
 - [ ] Structure Browser improvements: search/filter, active component/workplane
   context, typed multi-selection, drag/drop or reorder where safe, and coherent
   model/viewport state.
+- [ ] **Network document access — Open / Save / Save As on NAS shares:**
+  support existing OS-mounted SMB/CIFS and NFS shares on Linux, Windows
+  UNC/mapped network drives, and macOS-mounted SMB shares for native `.odc`
+  documents. Preserve standard native dialogs and ordinary local file access.
+  Start with mounted filesystem paths; investigate KDE KIO/GVfs `smb://`
+  browsing and remote URLs separately rather than assuming they work as paths.
+  Ensure safe writes and recovery when a network share disconnects, permissions
+  fail, storage fills or another editor changes the file; never silently
+  overwrite or corrupt an existing document. Verify `QSaveFile`/atomic rename
+  behavior on remote filesystems, and use OS-managed authentication without
+  storing credentials in the document. Test Fedora KDE SMB/NFS, Windows UNC,
+  macOS SMB and access over existing VPN (e.g. Tailscale). Deliver this in a
+  separate focused PR after core Sketch/Extrude stabilization and before broad
+  cross-platform distribution. See [Issue #62](https://github.com/ProtonJeroen/OpenDesigner/issues/62).
 - [ ] Document evolution: schema migration/backward compatibility,
   scalable large-model handling, recoverable errors and safe undo/redo boundaries.
   No requirement to invent a SolidDesigner-compatible proprietary document format.
