@@ -131,6 +131,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(tangent2D,&QAction::triggered,viewport_,[this]{viewport_->startSketchConstruction(Sketch::ConstructionTool::CommonTangent);});
     auto* projection2D=sketchMenu->addAction(tr("Project 3D Geometry"));projection2D->setObjectName("sketch.project_3d");projection2D->setEnabled(false);
     connect(projection2D,&QAction::triggered,viewport_,&CadViewport::startSketchProjection);
+    auto* extrude=sketchMenu->addAction(tr("Extrude Profile"));extrude->setObjectName("sketch.extrude");extrude->setEnabled(false);
+    connect(extrude,&QAction::triggered,viewport_,&CadViewport::startProfileExtrusion);
+    connect(viewport_,&CadViewport::activeSketchWorkplaneChanged,extrude,[extrude](const QString& id){extrude->setEnabled(!id.isEmpty());});
     auto* snap2D=sketchMenu->addAction(tr("Snapping"));snap2D->setObjectName("sketch.snapping");snap2D->setCheckable(true);snap2D->setChecked(true);
     connect(snap2D,&QAction::toggled,viewport_,&CadViewport::setSketchSnapping);
     connect(viewport_,&CadViewport::activeSketchWorkplaneChanged,this,[this,finishSketch,normalSketch,overdraw,offset2D,tangent2D,axes2D,projection2D](const QString& id) {
@@ -253,7 +256,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     sketchToolbar->addAction(circle2D);sketchToolbar->addAction(arc2D);sketchToolbar->addAction(overdraw);
     sketchToolbar->insertAction(overdraw,ellipse2D);sketchToolbar->insertAction(overdraw,ellipticalArc2D);
     sketchToolbar->addAction(axes2D->menuAction());
-    sketchToolbar->addAction(offset2D);sketchToolbar->addAction(tangent2D);sketchToolbar->addAction(projection2D);sketchToolbar->addSeparator();sketchToolbar->addAction(snap2D);
+    sketchToolbar->addAction(offset2D);sketchToolbar->addAction(tangent2D);sketchToolbar->addAction(projection2D);sketchToolbar->addAction(extrude);sketchToolbar->addSeparator();sketchToolbar->addAction(snap2D);
     auto* pixels=new QSpinBox(sketchToolbar);pixels->setObjectName("sketchSnapPixels");pixels->setRange(1,100);pixels->setValue(viewport_->sketchSnapPixels());pixels->setSuffix(tr(" px"));
     pixels->setToolTip(tr("2D snap radius in screen pixels; Shift temporarily bypasses snapping"));sketchToolbar->addWidget(pixels);
     connect(pixels,qOverload<int>(&QSpinBox::valueChanged),viewport_,&CadViewport::setSketchSnapPixels);rebuildSketchControls();

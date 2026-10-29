@@ -53,6 +53,12 @@ void CadViewport::validateActiveSketchContext() {
 }
 void CadViewport::refreshSketchPicking(bool restore3D) {
     if(context_.IsNull() || (activeSketchWorkplaneId_.isEmpty() && !restore3D)) return;
+    if(commandSession_ && commandSession_->extrusion) {
+        for(const auto& p:boxes_) if(p.active && p.visible) {context_->Deactivate(p.presentation);context_->Activate(p.presentation,0,Standard_False);}
+        for(const auto& [id,p]:sketchPresentations_) context_->Deactivate(p);
+        for(const auto& [id,p]:constructionPresentations_) context_->Deactivate(p);
+        return;
+    }
     if(commandSession_ && commandSession_->projection) {configureSketchProjectionPicking();return;}
     const bool editing=!activeSketchWorkplaneId_.isEmpty();
     for(const auto& part:boxes_) if(part.active && part.visible) {

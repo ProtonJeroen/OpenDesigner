@@ -41,6 +41,7 @@ class ConstructionPanel;
 #include "SketchConstructionPanel.h"
 #include "SketchProjectionPanel.h"
 #include "SketchProjection.h"
+#include "SketchProfileExtrusion.h"
 
 class CadViewport final : public QWidget {
     Q_OBJECT
@@ -58,6 +59,7 @@ public:
     void startSketchOverdraw();
     void startSketchConstruction(Sketch::ConstructionTool tool);
     void startSketchProjection();
+    void startProfileExtrusion();
     void startSketchAxes(bool localX,bool localY);
     void populateSketchAxesMenu(QMenu& menu);
     void setSketchSnapPixels(int pixels);
@@ -162,6 +164,7 @@ private:
     friend struct SketchEllipseDrawingTest;
     friend struct CommandPanelSessionTest;
     friend struct SketchProjectionSessionTest;
+    friend struct ProfileExtrusionSessionTest;
     friend struct CadViewportPullTest;
     friend struct NativeDocumentSessionTest;
     friend struct BooleanOperationsTest;
@@ -231,6 +234,21 @@ private:
         QJsonObject debugOperation;
     };
     struct FaceChange { CadPart before, after; };
+    struct ProfileExtrusionState {
+        Construction::Object workplane;
+        std::vector<Sketch::Entity> sketches;
+        std::vector<CadPart> originals;
+        SketchProfileBuilder::Result faces;
+        QString sourceError;
+        QStringList sketchSelection;
+        bool adding=false;
+        std::optional<size_t> target;
+        std::shared_ptr<CadPart> after;
+    };
+    QWidget* extrusionControls_=nullptr;
+    void refreshProfileExtrusion();
+    void finishProfileExtrusion(bool confirm);
+    void chooseExtrusionTarget(const std::vector<size_t>& indices);
     struct SketchDrawingState {
         Sketch::DrawTool tool = Sketch::DrawTool::Segment;
         Sketch::Entity candidate;
@@ -310,7 +328,7 @@ private:
     // Transaction state only: confirmed changes use the existing modeling history.
     struct CommandSession {
         enum class State { Selection, Parameters, Preview, Confirmed, Cancelled };
-        enum class Kind { Move, Rotate, MoveFace, RotateFace, AlignFace, Boolean, Pull, DeleteFace, Construction, Sketch };
+        enum class Kind { Move, Rotate, MoveFace, RotateFace, AlignFace, Boolean, Pull, DeleteFace, Construction, Sketch, Extrude };
         std::shared_ptr<ConstructionSessionState> construction;
         std::shared_ptr<SketchChange> sketch;
         std::vector<Sketch::Entity> sketchDisplayCandidates; // Transient view overlay, never saved/committed.
@@ -318,6 +336,7 @@ private:
         std::shared_ptr<SketchOverdrawState> overdraw;
         std::shared_ptr<SketchConstructionState> lineConstruction;
         std::shared_ptr<SketchProjectionState> projection;
+        std::shared_ptr<ProfileExtrusionState> extrusion;
         State state = State::Selection;
         Kind kind = Kind::Move;
         std::vector<PullChange> changes;

@@ -53,7 +53,14 @@ See [planned cylindrical-face move: holes and bosses](https://github.com/ProtonJ
   checks. No healing or source-coordinate changes; atomic failure diagnostics.
 - [x] Source entity/contour/region references and effective tolerance reporting;
   focused headless construction regressions. `.odc` and GUI remain unchanged.
-- [ ] Extrude/New Solid, Add Material and Cut belong to subsequent phases.
+- [x] 6D.1: **Extrude Profile → New Solid / Add Material** with exact signed
+  depth, blue preview, target selection, one-step history and native storage.
+  Certified prism solids/compounds; shared Boolean normalization; stable target
+  identity/local placement. Source Workplanes and Sketches remain independent.
+- [x] Headless extrusion/fusion and normal/200% viewport-session regressions.
+- [ ] Native Fedora KDE acceptance for 6D.1 before merge: see
+  [Extrude Profile and checklist](EXTRUDE_PROFILE.md).
+- [ ] Profile Cut (6D.2), advanced extrusion options and elliptical profiles.
 
 See [closure policy and construction checks](CLOSED_PROFILES.md).
 
