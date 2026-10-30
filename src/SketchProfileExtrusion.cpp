@@ -1,6 +1,7 @@
 #include "SketchProfileExtrusion.h"
 #include "BooleanGeometry.h"
 #include <BRepPrimAPI_MakePrism.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBndLib.hxx>
@@ -49,6 +50,40 @@ Result extrude(const SketchProfileBuilder::Result& faces,const gp_Dir& normal,do
         Result result;result.shape=faces.faces.size()==1?first:TopoDS_Shape(compound);
         if(!certified(result.shape,result.volume,result.solidCount) || result.solidCount!=faces.faces.size()
             || std::abs(result.volume-expected)>std::max(1.e-7L,std::abs(expected)*1.e-9L))return fail(Code::InvalidSolid,"Prism volume or solid count does not match its source regions.");
+        result.success=true;return result;
+    } catch(const Standard_Failure& e) {return fail(Code::NumericalFailure,QString::fromUtf8(e.GetMessageString()));}
+      catch(const std::exception& e) {return fail(Code::NumericalFailure,QString::fromUtf8(e.what()));}
+}
+Result cut(const SketchProfileBuilder::Result& faces,const gp_Ax3& frame,
+           const TopoDS_Shape& target,const gp_Trsf& placement,
+           double depth,bool reversed,bool throughAll) {
+    try {
+        double originalVolume=0;size_t count=0;
+        if(!certified(target,originalVolume,count) || placement.IsNegative()
+           || std::abs(placement.ScaleFactor()-1)>1.e-12)
+            return fail(Code::InvalidInput,"Cut requires a valid solid target with rigid positive placement.");
+        const auto world=BRepBuilderAPI_Transform(target,placement,true).Shape();
+        if(!certified(world,originalVolume,count))return fail(Code::InvalidSolid,"Transformed target is invalid.");
+        const gp_Vec direction=gp_Vec(frame.Direction())*(reversed?-1:1);
+        if(throughAll) {
+            Bnd_Box bounds;BRepBndLib::AddOptimal(world,bounds,false,false);
+            double lo[3],hi[3];bounds.Get(lo[0],lo[1],lo[2],hi[0],hi[1],hi[2]);
+            double reach=0;
+            for(int i=0;i<8;++i)reach=std::max(reach,gp_Vec(frame.Location(),gp_Pnt(
+                i&1?hi[0]:lo[0],i&2?hi[1]:lo[1],i&4?hi[2]:lo[2])).Dot(direction));
+            if(reach<=Precision::Confusion())return fail(Code::Unchanged,"Target lies outside the chosen cutting direction.");
+            depth=reach+std::max(16*Precision::Confusion(),std::sqrt(bounds.SquareExtent())*1.e-7);
+        }
+        if(!std::isfinite(depth) || depth<=0)return fail(Code::InvalidInput,"Enter a positive cutting depth in millimeters.");
+        auto tool=extrude(faces,frame.Direction(),reversed?-depth:depth);
+        if(!tool.success)return tool;
+        auto shape=BooleanGeometry::combine<BRepAlgoAPI_Cut>(world,tool.shape);
+        int solids=0;shape=BooleanGeometry::solidResult(shape,solids);
+        if(solids==0)return fail(Code::InvalidSolid,"Cut would remove the entire target.");
+        shape=BooleanGeometry::normalizeBooleanResult(shape);
+        Result result;result.shape=shape;
+        if(!certified(shape,result.volume,result.solidCount))return fail(Code::InvalidSolid,"Cut produced invalid solid geometry.");
+        if(result.volume>=originalVolume-std::max(1.e-9,originalVolume*1.e-12))return fail(Code::Unchanged,"Profiles remove no measurable material from the target.");
         result.success=true;return result;
     } catch(const Standard_Failure& e) {return fail(Code::NumericalFailure,QString::fromUtf8(e.GetMessageString()));}
       catch(const std::exception& e) {return fail(Code::NumericalFailure,QString::fromUtf8(e.what()));}

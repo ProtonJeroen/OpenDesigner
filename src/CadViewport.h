@@ -60,6 +60,7 @@ public:
     void startSketchConstruction(Sketch::ConstructionTool tool);
     void startSketchProjection();
     void startProfileExtrusion();
+    void startCutExtrusion();
     void startSketchAxes(bool localX,bool localY);
     void populateSketchAxesMenu(QMenu& menu);
     void setSketchSnapPixels(int pixels);
@@ -242,6 +243,7 @@ private:
         QString sourceError;
         QStringList sketchSelection;
         bool adding=false;
+        bool cutting=false;
         std::optional<size_t> target;
         std::shared_ptr<CadPart> after;
     };

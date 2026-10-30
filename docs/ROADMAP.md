@@ -7,6 +7,16 @@
 - Box creation and basic navigation
 - Linux CI build
 
+## v0.4.5 — Cut Extrude
+
+- In-place Blind and directional Through All subtraction reuse certified Profile
+  faces, extrusion prisms and the shared OCCT Boolean utilities.
+- Command Panel region/target selection, reverse direction and live result preview;
+  cancellation preserves the target and confirmation records one Undo operation.
+- Part identity, properties, placement, browser slot and native persistence retained.
+- Numerical geometry and session regressions extend existing extrusion tests,
+  including HiDPI panel placement. See [Cut Extrude](CUT_EXTRUDE.md).
+
 ## Next milestones
 - CAD document ownership, persistent save/load and robust selection
 - Direct face modeling and workplanes

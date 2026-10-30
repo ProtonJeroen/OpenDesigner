@@ -14,7 +14,7 @@
 #include <cmath>
 #include <stdexcept>
 // Shared, unchanged Boolean validation and normalization used by Unite and
-// profile Add Material. No Part, widget, history or document ownership here.
+// profile Add Material / Cut Extrude. No Part, widget, history or document ownership here.
 namespace BooleanGeometry {
 inline bool validSolid(const TopoDS_Shape& shape, double& volume) {
     if (shape.IsNull() || !TopExp_Explorer(shape,TopAbs_SOLID).More()

@@ -1,5 +1,7 @@
 #include "CadViewport.h"
 #include <QComboBox>
+#include <QCheckBox>
+#include <QListWidget>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QLabel>
@@ -43,6 +45,27 @@ void CadViewport::startProfileExtrusion() {
     connect(depth,&QLineEdit::textChanged,this,[this]{refreshProfileExtrusion();});
     refreshSketchPicking();refreshProfileExtrusion();showCommandPanel(commandPanel_);depth->setFocus();depth->selectAll();
 }
+void CadViewport::startCutExtrusion() {
+    startProfileExtrusion();
+    if(!commandSession_ || !commandSession_->extrusion)return;
+    auto& state=*commandSession_->extrusion;
+    auto* operation=extrusionControls_->findChild<QComboBox*>("extrusionOperation");
+    operation->setCurrentIndex(1);operation->setItemText(1,tr("Cut Extrude"));operation->setEnabled(false);
+    commandPanel_->setWindowTitle(tr("Cut Extrude"));
+    auto* layout=qobject_cast<QVBoxLayout*>(extrusionControls_->layout());
+    auto* form=qobject_cast<QFormLayout*>(layout->itemAt(0)->layout());
+    qobject_cast<QLabel*>(form->labelForField(extrusionControls_->findChild<QLineEdit*>("extrusionDistance")))->setText(tr("Depth (mm)"));
+    auto* regions=new QListWidget(extrusionControls_);regions->setObjectName("cutProfiles");
+    regions->setSelectionMode(QAbstractItemView::MultiSelection);regions->setMaximumHeight(100);
+    for(size_t i=0;i<state.faces.faces.size();++i){auto* item=new QListWidgetItem(tr("Profile region %1").arg(i+1),regions);item->setSelected(true);}
+    layout->insertWidget(0,new QLabel(tr("Profiles (select one or more regions)"),extrusionControls_));layout->insertWidget(1,regions);
+    auto* mode=new QComboBox(extrusionControls_);mode->setObjectName("cutMode");mode->addItems({tr("Blind"),tr("Through All")});layout->insertWidget(2,mode);
+    auto* reverse=new QCheckBox(tr("Reverse direction"),extrusionControls_);reverse->setObjectName("cutReverse");layout->insertWidget(3,reverse);
+    connect(regions,&QListWidget::itemSelectionChanged,this,[this]{refreshProfileExtrusion();});
+    connect(mode,qOverload<int>(&QComboBox::currentIndexChanged),this,[this](int i){extrusionControls_->findChild<QLineEdit*>("extrusionDistance")->setEnabled(i==0);refreshProfileExtrusion();});
+    connect(reverse,&QCheckBox::toggled,this,[this]{refreshProfileExtrusion();});
+    state.cutting=true;refreshProfileExtrusion();showCommandPanel(commandPanel_);
+}
 void CadViewport::chooseExtrusionTarget(const std::vector<size_t>& indices) {
     if(!commandSession_ || !commandSession_->extrusion || !extrusionControls_)return;
     auto* mode=extrusionControls_->findChild<QComboBox*>("extrusionOperation");
@@ -54,6 +77,7 @@ void CadViewport::chooseExtrusionTarget(const std::vector<size_t>& indices) {
 void CadViewport::refreshProfileExtrusion() {
     if(!commandSession_ || !commandSession_->extrusion || !extrusionControls_)return;
     auto& session=*commandSession_;auto& state=*session.extrusion;
+    if(state.cutting && state.target && isPartVisible(*state.target))context_->Display(boxes_[*state.target].presentation,Standard_False);
     if(!session.preview.IsNull()){context_->Remove(session.preview,Standard_False);session.preview.Nullify();}
     session.candidate.Nullify();session.valid=false;state.after.reset();commandButtons_->button(QDialogButtonBox::Ok)->setEnabled(false);
     auto* status=extrusionControls_->findChild<QLabel*>("extrusionStatus");
@@ -62,19 +86,26 @@ void CadViewport::refreshProfileExtrusion() {
     const auto* current=constructionObject(state.workplane.id);
     if(!current || !Construction::equivalent(*current,state.workplane) || sketchEntities_!=state.sketches){fail(tr("Source changed; cancel and restart Extrude Profile."));return;}
     bool ok=false;const auto text=extrusionControls_->findChild<QLineEdit*>("extrusionDistance")->text();double depth=QLocale().toDouble(text,&ok);
-    if(!ok){fail(tr("Enter a valid signed distance in millimeters."));return;}
+    if(!ok && !(state.cutting && extrusionControls_->findChild<QComboBox*>("cutMode")->currentIndex()==1)){fail(tr("Enter a valid signed distance in millimeters."));return;}
     state.adding=extrusionControls_->findChild<QComboBox*>("extrusionOperation")->currentIndex()==1;
-    auto result=SketchProfileExtrusion::extrude(state.faces,state.workplane.frame.Direction(),depth);
-    if(!result.success){fail(result.diagnostics.front().message);return;}
+    auto result=state.cutting?SketchProfileExtrusion::Result{}:SketchProfileExtrusion::extrude(state.faces,state.workplane.frame.Direction(),depth);
+    if(!state.cutting && !result.success){fail(result.diagnostics.front().message);return;}
     state.target.reset();
     try {
         if(state.adding) {
             const auto data=extrusionControls_->findChild<QComboBox*>("extrusionTarget")->currentData();
             const qlonglong index=data.isValid()?data.toLongLong():-1;
-            if(index<0 || size_t(index)>=state.originals.size() || !isPartActive(size_t(index))) {fail(tr("Select exactly one existing target Part."));return;}
+            if(index<0 || size_t(index)>=state.originals.size() || !isPartVisible(size_t(index))) {fail(tr("Select exactly one existing target Part."));return;}
             state.target=size_t(index);const auto& original=state.originals[*state.target];
             if(!boxes_[*state.target].shape.IsSame(original.shape)){fail(tr("Target changed; cancel and restart."));return;}
-            result=SketchProfileExtrusion::addMaterial(result,original.shape,original.orientation);
+            if(state.cutting) {
+                auto profiles=state.faces;profiles.faces.clear();
+                auto* regions=extrusionControls_->findChild<QListWidget*>("cutProfiles");
+                for(int i=0;i<regions->count();++i)if(regions->item(i)->isSelected())profiles.faces.push_back(state.faces.faces[size_t(i)]);
+                result=SketchProfileExtrusion::cut(profiles,state.workplane.frame,original.shape,original.orientation,depth,
+                    extrusionControls_->findChild<QCheckBox*>("cutReverse")->isChecked(),
+                    extrusionControls_->findChild<QComboBox*>("cutMode")->currentIndex()==1);
+            } else result=SketchProfileExtrusion::addMaterial(result,original.shape,original.orientation);
             if(!result.success){fail(result.diagnostics.front().message);return;}
             state.after=std::make_shared<CadPart>(original);
             state.after->shape=BRepBuilderAPI_Transform(result.shape,original.orientation.Inverted(),true).Shape();
@@ -87,6 +118,7 @@ void CadViewport::refreshProfileExtrusion() {
         session.candidate=result.shape;session.preview=new AIS_Shape(result.shape);session.preview->SetColor(Quantity_Color(0.1,0.65,1.0,Quantity_TOC_RGB));session.preview->SetTransparency(.35);
         context_->Display(session.preview,Standard_False);context_->SetDisplayMode(session.preview,AIS_Shaded,Standard_False);
         context_->SetZLayer(session.preview,Graphic3d_ZLayerId_Topmost);context_->Deactivate(session.preview);
+        if(state.cutting && state.target)context_->Erase(boxes_[*state.target].presentation,Standard_False);
         session.valid=true;session.state=CommandSession::State::Preview;commandButtons_->button(QDialogButtonBox::Ok)->setEnabled(true);
         status->setText(tr("Blue preview: %1 solid(s), %2 mm³. OK confirms one operation.").arg(result.solidCount).arg(result.volume,0,'g',10));view_->ZFitAll();view_->Redraw();
     } catch(const Standard_Failure& e) {session.candidate.Nullify();if(!session.preview.IsNull()){context_->Remove(session.preview,Standard_False);session.preview.Nullify();}fail(QString::fromUtf8(e.GetMessageString()));}
@@ -95,6 +127,7 @@ void CadViewport::finishProfileExtrusion(bool confirm) {
     if(!commandSession_ || !commandSession_->extrusion)return;
     if(confirm){refreshProfileExtrusion();if(!commandSession_->valid)return;}
     auto session=std::move(*commandSession_);commandSession_.reset();const auto state=session.extrusion;
+    if(state->cutting && state->target && isPartVisible(*state->target))context_->Display(boxes_[*state->target].presentation,Standard_False);
     if(!session.preview.IsNull())context_->Remove(session.preview,Standard_False);
     delete extrusionControls_;extrusionControls_=nullptr;commandPanel_->hide();commandButtons_->hide();resetModelingTools();
     if(confirm) {
@@ -111,7 +144,7 @@ void CadViewport::finishProfileExtrusion(bool confirm) {
             bounds.Get(part.min[0],part.min[1],part.min[2],part.max[0],part.max[1],part.max[2]);part.baseMin=part.min;part.baseMax=part.max;
             change->beforeSelection=session.selection;commitBooleanChange(change);
         }
-        emit statusMessage(tr("Extrude Profile confirmed. Source Sketch and Workplane were preserved."));
+        emit statusMessage(state->cutting?tr("Cut Extrude confirmed. Target identity and source profiles preserved."):tr("Extrude Profile confirmed. Source Sketch and Workplane were preserved."));
     } else {
         selectedPartIndices_=session.selection;selectedSketchIds_=state->sketchSelection;refreshPartSelection();
         for(const auto& entity:sketchEntities_) if(selectedSketchIds_.contains(entity.id) && sketchPickable(entity) && sketchPresentations_.contains(entity.id)
