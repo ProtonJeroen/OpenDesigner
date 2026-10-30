@@ -1,3 +1,4 @@
+#include "CommandPanelTestHelpers.h"
 #include "CadViewport.h"
 #include "MainWindow.h"
 #include <QApplication>
@@ -164,9 +165,8 @@ struct SketchEllipseDrawingTest {
             mouse(v,QEvent::MouseMove,point,Qt::ShiftModifier);check(!v.commandSession_->drawing->snap,"Shift did not bypass ellipse snap");v.cancelCommandSession();
         }
         begin(v,Sketch::DrawTool::EllipticalArc);center(v);major(v);minor(v);arcInput(v);
-        auto* p=v.sketchDrawingPanel_;settle();
-        const QRect bounds(v.mapToGlobal(QPoint()),v.size());check(bounds.contains(p->frameGeometry()),"ellipse command panel outside viewport");
-        const auto frame=p->frameGeometry();check(std::abs(bounds.right()-frame.right()-12)<=1 && std::abs(frame.top()-bounds.top()-12)<=1,"ellipse command panel not viewport upper-right +12");
+        auto* p=v.sketchDrawingPanel_;
+        CommandPanelTest::waitForInitialAnchor(*p,v,"ellipse command panel not viewport upper-right +12");
         p->move(p->pos()+QPoint(-40,20));settle();const auto moved=p->pos();p->minorRadius->setValue(4);
         settle();check(p->pos()==moved,"parameter edit reset dragged ellipse panel");
         w.resize(760,580);settle();

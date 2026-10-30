@@ -1,3 +1,4 @@
+#include "CommandPanelTestHelpers.h"
 #include "CadViewport.h"
 #include "MainWindow.h"
 #include <QApplication>
@@ -7,8 +8,6 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QDockWidget>
-#include <QDebug>
-#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QKeyEvent>
 #include <QLabel>
@@ -24,7 +23,6 @@
 #include <QTimer>
 #include <QTreeWidget>
 #include <QWheelEvent>
-#include <QWindow>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
@@ -62,39 +60,7 @@
 namespace {
 void check(bool ok,const char* message) {if(!ok) throw std::runtime_error(message);}
 void settle() {for(int i=0;i<3;++i) {QApplication::processEvents();QGuiApplication::sync();QEventLoop loop;QTimer::singleShot(10,&loop,&QEventLoop::quit);loop.exec();}}
-void waitForInitialAnchor(QWidget& panel,QWidget& viewport) {
-    // Mapping, exposure and the positioner's queued fit involve native events.
-    // A fixed settle interval can expire before the WM has placed the frame.
-    QElapsedTimer timer;timer.start();
-    constexpr int timeoutMs=2000;
-    for(;;) {
-        const QRect bounds(viewport.mapToGlobal(QPoint()),viewport.size());
-        const auto frame=panel.frameGeometry();
-        if(bounds.contains(frame) && std::abs(bounds.right()-frame.right()-12)<=1
-           && std::abs(frame.top()-bounds.top()-12)<=1) return;
-        const auto elapsed=timer.elapsed();
-        if(elapsed>=timeoutMs) {
-            auto* native=panel.windowHandle();
-            QString diagnostic;
-            QDebug(&diagnostic).nospace()<<"projection anchor timeout: panel frame="<<frame
-                <<" client="<<panel.geometry()<<" viewport="<<bounds
-                <<" expected frame top-left="<<QPoint(bounds.right()-frame.width()+1-12,bounds.top()+12)
-                <<" visible="<<panel.isVisible()<<" native="<<native
-                <<" native visible="<<(native && native->isVisible())
-                <<" exposed="<<(native && native->isExposed())
-                <<" window state="<<(native?native->windowState():panel.windowState())
-                <<" native geometry="<<(native?native->geometry():QRect())
-                <<" frame margins="<<(native?native->frameMargins():QMargins())
-                <<" platform="<<QGuiApplication::platformName()<<" dpr="<<panel.devicePixelRatioF()
-                <<" elapsed ms="<<elapsed;
-            std::cerr<<diagnostic.toStdString()<<'\n';
-            check(false,"projection panel not anchored to viewport +12");
-        }
-        QEventLoop loop;
-        QTimer::singleShot(static_cast<int>(std::min<qint64>(10,timeoutMs-elapsed)),&loop,&QEventLoop::quit);
-        loop.exec();
-    }
-}
+
 void key(QWidget& widget,int code) {QKeyEvent event(QEvent::KeyPress,code,Qt::NoModifier);QApplication::sendEvent(&widget,&event);settle();}
 // Compare exact curves/surfaces/locations/topology without AIS mesh caches.
 // XCAF assembly insertion during Save can clear TShape::Free; that first
@@ -371,7 +337,7 @@ struct SketchProjectionSessionTest {
     }
     static void panelAndNavigation() {
         MainWindow w;setup(w);auto& v=*w.viewport_;v.startSketchProjection();auto* panel=v.sketchProjectionPanel_;
-        waitForInitialAnchor(*panel,v);
+        CommandPanelTest::waitForInitialAnchor(*panel,v,"projection panel not anchored to viewport +12");
         const auto bounds=[&]{return QRect(v.mapToGlobal(QPoint()),v.size());};
         const auto frame=panel->frameGeometry();
         auto* scroll=panel->findChild<QScrollArea*>();check(scroll,"projection panel bypassed central positioner");
