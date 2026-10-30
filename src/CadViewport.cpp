@@ -172,6 +172,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     connect(cancelDimension_, &QShortcut::activated, this, &CadViewport::cancelCommandSession);
     commandPanelPositioner_->manage(commandPanel_,true);
     const auto invalidateProjection=[this] {
+        if(commandSession_ && commandSession_->extrusion) {cancelCommandSession();emit statusMessage(tr("Extrude Profile cancelled because the model changed."));return;}
         if(commandSession_ && commandSession_->projection) {
             cancelCommandSession();emit statusMessage(tr("Project 3D Geometry cancelled because the model changed."));
         }
@@ -275,6 +276,7 @@ bool CadViewport::updateCommandParameter(bool reportError) {
     return previewCommand(value);
 }
 void CadViewport::confirmCommandSession() {
+    if(commandSession_ && commandSession_->extrusion) {finishProfileExtrusion(true);return;}
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Sketch) {finishSketchEdit(true);return;}
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Construction) {
         if(constructionPanel_) constructionPanel_->finishEditing();
@@ -296,6 +298,7 @@ void CadViewport::confirmCommandSession() {
     }
 }
 void CadViewport::cancelCommandSession() {
+    if(commandSession_ && commandSession_->extrusion) {finishProfileExtrusion(false);return;}
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Sketch) {finishSketchEdit(false);return;}
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Construction) {
         closeConstructionSession(false);return;
@@ -1897,6 +1900,7 @@ void CadViewport::fitSelection(const std::vector<size_t>& indices) {
     view_->Redraw();
 }
 void CadViewport::selectParts(const std::vector<size_t>& indices) {
+    if(commandSession_ && commandSession_->extrusion) {chooseExtrusionTarget(indices);return;}
     if(commandSession_ && commandSession_->projection) {
         emit statusMessage(tr("Project 3D Geometry requires vertices, edges or faces picked in the viewport, not whole Parts."));return;
     }
@@ -2395,6 +2399,12 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
     panning_ = e->button() == Qt::MiddleButton && (e->modifiers() & Qt::ShiftModifier);
     if (rotating_ && !view_.IsNull()) view_->StartRotation(previous_.x(), previous_.y());
     if (e->button() == Qt::LeftButton && !context_.IsNull()) {
+        if(commandSession_ && commandSession_->extrusion) {
+            context_->MoveTo(e->pos().x(),e->pos().y(),view_,Standard_True);
+            if(context_->HasDetected()) for(size_t i=0;i<boxes_.size();++i)
+                if(boxes_[i].presentation==context_->DetectedInteractive()) {chooseExtrusionTarget({i});break;}
+            return;
+        }
         if(sketchProjectionClick(e->pos(),e->modifiers())) return;
         if(sketchConstructionClick(e->pos())) return;
         if(overdrawClick(e->pos())) return;

@@ -27,6 +27,7 @@ private:
     friend struct SketchEllipseDrawingTest;
     friend struct CommandPanelSessionTest;
     friend struct SketchProjectionSessionTest;
+    friend struct ProfileExtrusionSessionTest;
     bool maybeSave();
     bool saveDocument();
     bool saveDocumentAs();

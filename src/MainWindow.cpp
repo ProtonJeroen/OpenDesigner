@@ -96,7 +96,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     edit->addAction(undoAction);
     edit->addAction(redoAction);
     auto* model = menuBar()->addMenu(tr("&Modeling"));
-    auto* sketchMenu=model->addMenu(tr("2D Modeling"));
+    auto* sketchMenu=model->addMenu(tr("2D Modeling"));sketchMenu->setObjectName("modeling2DMenu");
     auto* editSketch=sketchMenu->addAction(tr("Edit Sketch"));editSketch->setObjectName("sketch.edit");
     connect(editSketch,&QAction::triggered,viewport_,[this]{viewport_->activateSketchWorkplane();});
     auto* finishSketch=sketchMenu->addAction(tr("Finish 2D"));finishSketch->setObjectName("sketch.finish");finishSketch->setEnabled(false);
@@ -148,46 +148,51 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             connect(action,&QAction::triggered,viewport_,[this,method=definition.method]{viewport_->startConstruction(method);});
         }
     }
-    auto* boxAction = model->addAction(tr("Create &Box"));
+    auto* model3D=model->addMenu(tr("3D Modeling"));model3D->setObjectName("modeling3DMenu");
+    auto* extrude=model3D->addAction(tr("Extrude Profile"));extrude->setObjectName("sketch.extrude");extrude->setEnabled(false);
+    connect(extrude,&QAction::triggered,viewport_,&CadViewport::startProfileExtrusion);
+    connect(viewport_,&CadViewport::activeSketchWorkplaneChanged,extrude,[extrude](const QString& id){extrude->setEnabled(!id.isEmpty());});
+    model3D->addSeparator();
+    auto* boxAction = model3D->addAction(tr("Create &Box"));
     connect(boxAction, &QAction::triggered, viewport_, &CadViewport::addBox);
-    auto* cylinderAction = model->addAction(tr("Create &Cylinder"));
+    auto* cylinderAction = model3D->addAction(tr("Create &Cylinder"));
     connect(cylinderAction, &QAction::triggered, viewport_, &CadViewport::addCylinder);
-    auto* sphereAction = model->addAction(tr("Create &Sphere"));
+    auto* sphereAction = model3D->addAction(tr("Create &Sphere"));
     connect(sphereAction, &QAction::triggered, viewport_, &CadViewport::addSphere);
-    auto* coneAction = model->addAction(tr("Create C&one"));
+    auto* coneAction = model3D->addAction(tr("Create C&one"));
     connect(coneAction, &QAction::triggered, viewport_, &CadViewport::addCone);
-    auto* booleanMenu = model->addMenu(tr("&Boolean"));
+    auto* booleanMenu = model3D->addMenu(tr("&Boolean"));
     connect(booleanMenu->addAction(tr("&Unite")),&QAction::triggered,viewport_,&CadViewport::uniteSelectedParts);
     connect(booleanMenu->addAction(tr("&Subtract...")),&QAction::triggered,viewport_,&CadViewport::subtractSelectedParts);
     connect(booleanMenu->addAction(tr("&Intersect")),&QAction::triggered,viewport_,&CadViewport::intersectSelectedParts);
-    auto* duplicateAction = model->addAction(tr("&Duplicate Selected Parts"));
+    auto* duplicateAction = model3D->addAction(tr("&Duplicate Selected Parts"));
     duplicateAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
     connect(duplicateAction, &QAction::triggered, viewport_, &CadViewport::duplicateSelectedParts);
-    auto* moveFaceAction = model->addAction(tr("Move Face"));
+    auto* moveFaceAction = model3D->addAction(tr("Move Face"));
     connect(moveFaceAction,&QAction::triggered,viewport_,&CadViewport::moveFace);
-    auto* rotateFaceAction = model->addAction(tr("Rotate Face"));
+    auto* rotateFaceAction = model3D->addAction(tr("Rotate Face"));
     connect(rotateFaceAction,&QAction::triggered,viewport_,&CadViewport::rotateFace);
-    auto* alignFaceAction = model->addAction(tr("Align Face"));
+    auto* alignFaceAction = model3D->addAction(tr("Align Face"));
     connect(alignFaceAction,&QAction::triggered,viewport_,&CadViewport::alignFace);
-    auto* deleteFaceAction=model->addAction(tr("Delete Face"));
+    auto* deleteFaceAction=model3D->addAction(tr("Delete Face"));
     deleteFaceAction->setObjectName(QStringLiteral("deleteFaceAction"));
     connect(deleteFaceAction,&QAction::triggered,viewport_,&CadViewport::deleteFace);
-    auto* pullAction = model->addAction(tr("Primitive Pull / Resize"));
+    auto* pullAction = model3D->addAction(tr("Primitive Pull / Resize"));
     connect(pullAction, &QAction::triggered, viewport_, &CadViewport::startPrimitivePull);
-    auto* movePartAction = model->addAction(tr("Move &Part Along Face..."));
+    auto* movePartAction = model3D->addAction(tr("Move &Part Along Face..."));
     connect(movePartAction, &QAction::triggered, viewport_, &CadViewport::movePartAlongSelectedFace);
-    auto* rotatePartAction = model->addAction(tr("&Rotate Part..."));
+    auto* rotatePartAction = model3D->addAction(tr("&Rotate Part..."));
     connect(rotatePartAction, &QAction::triggered, viewport_, &CadViewport::rotateSelectedPart);
-    auto* interactiveMove = model->addAction(tr("Interactive &Move Part Along Face"));
+    auto* interactiveMove = model3D->addAction(tr("Interactive &Move Part Along Face"));
     interactiveMove->setCheckable(true);
     connect(interactiveMove, &QAction::toggled, viewport_, &CadViewport::setMovePartMode);
-    auto* interactiveRotate = model->addAction(tr("Interactive &Rotate Part"));
+    auto* interactiveRotate = model3D->addAction(tr("Interactive &Rotate Part"));
     interactiveRotate->setCheckable(true);
     connect(interactiveRotate, &QAction::toggled, viewport_, &CadViewport::setRotateMode);
-    auto* directMove = model->addAction(tr("Interactive Move Part"));
+    auto* directMove = model3D->addAction(tr("Interactive Move Part"));
     directMove->setCheckable(true);
     connect(directMove, &QAction::toggled, viewport_, &CadViewport::setDirectMoveMode);
-    auto* angleMenu = model->addMenu(tr("Angle Snapping"));
+    auto* angleMenu = model3D->addMenu(tr("Angle Snapping"));
     auto* angleGroup = new QActionGroup(this);
     angleGroup->setExclusive(true);
     for (const int step : {0, 5, 15, 45}) {
@@ -199,7 +204,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             viewport_->setAngleSnap(static_cast<double>(step));
         });
     }
-    auto* snapMenu = model->addMenu(tr("Face &Snapping"));
+    auto* snapMenu = model3D->addMenu(tr("Face &Snapping"));
     auto* snapGroup = new QActionGroup(this);
     snapGroup->setExclusive(true);
     for (const int step : {0, 1, 5, 10}) {
@@ -219,11 +224,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
         QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.4.1 — 2D Modeling foundation."));
     });
-    auto* toolbar = addToolBar(tr("Modeling"));
+    auto* toolbar = addToolBar(tr("3D Modeling"));toolbar->setObjectName("modeling3DToolbar");
     connect(viewport_,&CadViewport::transformModesChanged,this,[interactiveMove,directMove,interactiveRotate](bool faceNormal,bool move,bool rotate) {
         const QSignalBlocker a(interactiveMove),b(directMove),c(interactiveRotate);
         interactiveMove->setChecked(faceNormal);directMove->setChecked(move);interactiveRotate->setChecked(rotate);
     });
+    toolbar->addAction(extrude);
     toolbar->addAction(boxAction);
     toolbar->addAction(duplicateAction);
     toolbar->addAction(pullAction);

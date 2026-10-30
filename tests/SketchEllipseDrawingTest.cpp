@@ -1,6 +1,9 @@
+#include "CommandPanelTestHelpers.h"
 #include "CadViewport.h"
 #include "MainWindow.h"
 #include <QApplication>
+#include <QEventLoop>
+#include <QTimer>
 #include <QAction>
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -22,6 +25,7 @@
 
 namespace {
 constexpr double radians=std::numbers::pi/180;
+void settle() {for(int i=0;i<3;++i) {QApplication::processEvents();QGuiApplication::sync();QEventLoop loop;QTimer::singleShot(10,&loop,&QEventLoop::quit);loop.exec();}}
 void check(bool ok,const char* message) {if(!ok) throw std::runtime_error(message);}
 bool near(Sketch::Point a,Sketch::Point b,double tolerance=1.e-9) {return std::hypot(a.x-b.x,a.y-b.y)<tolerance;}
 void key(QWidget* w,int code) {QKeyEvent event(QEvent::KeyPress,code,Qt::NoModifier);QApplication::sendEvent(w,&event);}
@@ -161,12 +165,11 @@ struct SketchEllipseDrawingTest {
             mouse(v,QEvent::MouseMove,point,Qt::ShiftModifier);check(!v.commandSession_->drawing->snap,"Shift did not bypass ellipse snap");v.cancelCommandSession();
         }
         begin(v,Sketch::DrawTool::EllipticalArc);center(v);major(v);minor(v);arcInput(v);
-        auto* p=v.sketchDrawingPanel_;QApplication::processEvents();
-        const QRect bounds(v.mapToGlobal(QPoint()),v.size());check(bounds.contains(p->frameGeometry()),"ellipse command panel outside viewport");
-        const auto frame=p->frameGeometry();check(std::abs(bounds.right()-frame.right()-12)<=1 && std::abs(frame.top()-bounds.top()-12)<=1,"ellipse command panel not viewport upper-right +12");
-        p->move(p->pos()+QPoint(-40,20));QApplication::processEvents();const auto moved=p->pos();p->minorRadius->setValue(4);
-        QApplication::processEvents();check(p->pos()==moved,"parameter edit reset dragged ellipse panel");
-        w.resize(760,580);QApplication::processEvents();QApplication::processEvents();
+        auto* p=v.sketchDrawingPanel_;
+        CommandPanelTest::waitForInitialAnchor(*p,v,"ellipse command panel not viewport upper-right +12");
+        p->move(p->pos()+QPoint(-40,20));settle();const auto moved=p->pos();p->minorRadius->setValue(4);
+        settle();check(p->pos()==moved,"parameter edit reset dragged ellipse panel");
+        w.resize(760,580);settle();
         check(QRect(v.mapToGlobal(QPoint()),v.size()).contains(p->frameGeometry()),"small/HiDPI ellipse panel not clamped");
         key(p,Qt::Key_Escape);begin(v,Sketch::DrawTool::Ellipse);center(v);w.documentDirty_=false;w.newDocument();
         check(!v.commandSession_ && v.sketchPreviews_.empty() && v.sketchEntities_.empty(),"New retained ellipse drawing state");
