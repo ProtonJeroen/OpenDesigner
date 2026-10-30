@@ -338,8 +338,16 @@ struct SketchProjectionSessionTest {
         const auto bounds=[&]{return QRect(v.mapToGlobal(QPoint()),v.size());};
         const auto frame=panel->frameGeometry();check(bounds().contains(frame) && std::abs(bounds().right()-frame.right()-12)<=1 && std::abs(frame.top()-bounds().top()-12)<=1,"projection panel not anchored to viewport +12");
         auto* scroll=panel->findChild<QScrollArea*>();check(scroll,"projection panel bypassed central positioner");
-        check(scroll->horizontalScrollBar()->maximum()==0 && scroll->verticalScrollBar()->maximum()==0,"projection panel unexpectedly scrolls on a fitting viewport");
-        const auto at=bounds().topLeft()+QPoint(25,25);panel->move(panel->pos()+at-panel->frameGeometry().topLeft());settle();
+        // KWin can cap the requested main-window size to the screen. At DPR 2
+        // a 1920x1080 display need not have room for the entire natural form.
+        const auto available=v.size()-(panel->frameGeometry().size()-panel->size())-QSize(24,24);
+        const bool fits=scroll->widget()->width()<=available.width() && scroll->widget()->height()<=available.height();
+        check(fits ? (scroll->horizontalScrollBar()->maximum()==0 && scroll->verticalScrollBar()->maximum()==0)
+                   : (scroll->horizontalScrollBar()->maximum()>0 || scroll->verticalScrollBar()->maximum()>0),
+              "projection panel scrolling does not match actual viewport capacity");
+        const auto at=bounds().topLeft()+QPoint(std::min(25,bounds().width()-frame.width()),
+                                               std::min(25,bounds().height()-frame.height()));
+        panel->move(panel->pos()+at-panel->frameGeometry().topLeft());settle();
         pick(v,{{0,top(v)}});settle();check(panel->frameGeometry().topLeft()==at,"selection/preview reset user panel position");
         QWheelEvent wheel(QPointF(100,120),QPointF(v.mapToGlobal(QPoint(100,120))),QPoint(),QPoint(0,120),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);
         QApplication::sendEvent(&v,&wheel);check(v.commandSession_ && !w.documentDirty_,"viewport navigation closed or committed projection");
