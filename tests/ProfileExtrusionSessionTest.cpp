@@ -25,6 +25,57 @@ double volume(const TopoDS_Shape& s){GProp_GProps p;BRepGProp::VolumeProperties(
 void key(QWidget* w,int k){QKeyEvent e(QEvent::KeyPress,k,Qt::NoModifier);QApplication::sendEvent(w,&e);QApplication::processEvents();}
 }
 struct ProfileExtrusionSessionTest {
+ static void activeTargetPrecedence() {
+    MainWindow window;window.resize(1400,1000);window.show();QApplication::processEvents();
+    auto& v=*window.viewport_;v.initializeViewer();
+    NativeDocumentSnapshot document;
+    NativePartState first;first.id="active-cut-part-1";first.name="Part 1";first.shape=BRepPrimAPI_MakeBox(100,100,20).Shape();
+    NativePartState second;second.id="selected-cut-part-2";second.name="Part 2";second.shape=BRepPrimAPI_MakeBox(gp_Pnt(150,0,0),100,100,40).Shape();
+    document.parts={first,second};QString error;check(v.importDocumentSnapshot(document,error),"two-Part fixture import failed");
+    Construction::Object wp;wp.id="two-part-cut-wp";wp.name="Cut Workplane";wp.kind=Construction::Kind::Workplane;
+    v.restoreConstructions({wp});std::vector<Sketch::Entity> profiles;
+    for(int region=0;region<2;++region) {
+        const double x=10+150*region;const Sketch::Point corners[]{{x,10},{x+10,10},{x+10,20},{x,20}};
+        for(int edge=0;edge<4;++edge) {
+            Sketch::Entity entity;entity.id=QString("target-profile-%1-%2").arg(region).arg(edge);entity.workplaneId=wp.id;
+            entity.geometry=Sketch::Segment{corners[edge],corners[(edge+1)%4]};profiles.push_back(entity);
+        }
+    }
+    v.restoreSketchEntities(profiles);v.activateSketchWorkplane(wp.id,false);v.setActivePart(first.id);
+    // Retain a sketch source while seeding the ordinary OCCT whole-Part selection.
+    // Going through the Part selection-mode action synchronizes its browser state.
+    v.context_->ClearSelected(false);v.context_->AddOrRemoveSelected(v.boxes_[1].presentation,false);
+    v.setSelectionMode(CadViewport::SelectionMode::Part);
+    check(v.selectedPartIndices_==std::vector<size_t>{1} && v.context_->IsSelected(v.boxes_[1].presentation),"Part 2 ordinary selection fixture failed");
+    int pickRequests=0;QObject::connect(&v,&CadViewport::statusMessage,&window,[&](const QString& message){if(message=="Select target part")++pickRequests;});
+    auto* cut=window.findChild<QAction*>("sketch.cutExtrude");check(cut && cut->isEnabled(),"Cut action unavailable with sketch source");cut->trigger();
+    CommandPanelTest::waitForInitialAnchor(*v.commandPanel_,v,"two-Part Cut panel anchor");
+    auto* target=v.extrusionControls_->findChild<QComboBox*>("extrusionTarget");
+    check(target->isEnabled() && target->currentText()==first.name && target->currentData(Qt::UserRole+1).toString()==first.id,"panel did not resolve Active Part ahead of ordinary selection");
+    check(v.commandSession_->extrusion->target==std::optional<size_t>(0) && v.commandSession_->valid
+        && std::abs(volume(v.commandSession_->candidate)-198000)<1.e-6,"preview did not cut Active Part 1");
+    check(pickRequests==0 && !v.targetPicking(),"eligible Active Part initialization entered viewport picking");
+    check(v.boxes_[0].shape.IsSame(first.shape) && v.boxes_[1].shape.IsSame(second.shape),"preview modified canonical geometry");
+    // Explicit viewport override uses Part 2, without modifying Active Part.
+    v.extrusionControls_->findChild<QPushButton*>("pickTargetPart")->click();
+    check(v.targetPicking(),"explicit target override did not start picking");
+    v.view_->SetProj(0,0,1);v.fitAll();Standard_Integer x,y;v.view_->Convert(200,50,40,x,y);
+    QMouseEvent click(QEvent::MouseButtonPress,QPointF(x,y),QPointF(x,y),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);v.mousePressEvent(&click);
+    QMouseEvent release(QEvent::MouseButtonRelease,QPointF(x,y),QPointF(x,y),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);v.mouseReleaseEvent(&release);
+    check(v.commandSession_->extrusion->target==std::optional<size_t>(1) && target->currentData(Qt::UserRole+1).toString()==second.id
+        && v.activePartId()==first.id && !v.targetPicking() && std::abs(volume(v.commandSession_->candidate)-398000)<1.e-6,"viewport override did not preserve Active Part/use Part 2");
+    v.cancelCommandSession();check(v.boxes_[0].shape.IsSame(first.shape) && v.boxes_[1].shape.IsSame(second.shape),"override Cancel changed geometry");
+    // Cancel restores ordinary Part 2 selection; restart must again prefer Part 1.
+    check(v.selectedPartIndices_==std::vector<size_t>{1},"Cancel lost original Part 2 selection");
+    cut->trigger();target=v.extrusionControls_->findChild<QComboBox*>("extrusionTarget");
+    check(v.commandSession_->extrusion->target==std::optional<size_t>(0) && target->currentText()==first.name,"restart lost Active Part precedence");
+    const auto previewVolume=volume(v.commandSession_->candidate);const auto history=v.undoStack_.size();
+    v.commandButtons_->button(QDialogButtonBox::Ok)->click();
+    check(!v.commandSession_ && v.undoStack_.size()==history+1 && v.undoStack_.back().partIndex==0
+        && std::abs(volume(v.boxes_[0].shape)-previewVolume)<1.e-6 && std::abs(previewVolume-198000)<1.e-6
+        && v.boxes_[1].shape.IsSame(second.shape) && v.activePartId()==first.id,"commit did not cut only the previewed Active Part");
+    window.documentDirty_=false;window.close();
+ }
  static void run(){
     MainWindow w;w.resize(1400,1000);w.show();QApplication::processEvents();auto& v=*w.viewport_;v.initializeViewer();
     Construction::Object wp;wp.id="extrude-wp";wp.name="WP1";wp.kind=Construction::Kind::Workplane;
@@ -109,6 +160,7 @@ struct ProfileExtrusionSessionTest {
     v.activateSketchWorkplane(wp.id);v.startProfileExtrusion();v.startSketchDrawing(Sketch::DrawTool::Segment,Sketch::Role::Construction);
     check(v.commandSession_ && !v.commandSession_->extrusion,"command switch did not cancel extrusion");v.cancelCommandSession();
     w.documentDirty_=false;w.close();
+    activeTargetPrecedence();
  }
 };
 void runProfileExtrusionSessions(){ProfileExtrusionSessionTest::run();}

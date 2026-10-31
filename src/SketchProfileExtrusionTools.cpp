@@ -10,6 +10,7 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QLocale>
+#include <QSignalBlocker>
 #include <QUuid>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepBndLib.hxx>
@@ -56,7 +57,13 @@ void CadViewport::startCutExtrusion() {
     if(!commandSession_ || !commandSession_->extrusion)return;
     auto& state=*commandSession_->extrusion;
     auto* operation=extrusionControls_->findChild<QComboBox*>("extrusionOperation");
-    operation->setCurrentIndex(1);operation->setItemText(1,tr("Cut Extrude"));operation->setEnabled(false);
+    {
+        // Cut resolves its own initial target after all Cut controls exist.
+        // Do not run Add Material's interactive pick handler during setup.
+        const QSignalBlocker blocker(operation);
+        operation->setCurrentIndex(1);operation->setItemText(1,tr("Cut Extrude"));
+    }
+    operation->setEnabled(false);
     commandPanel_->setWindowTitle(tr("Cut Extrude"));
     auto* layout=qobject_cast<QVBoxLayout*>(extrusionControls_->layout());
     auto* form=qobject_cast<QFormLayout*>(layout->itemAt(0)->layout());
@@ -72,6 +79,7 @@ void CadViewport::startCutExtrusion() {
     connect(reverse,&QCheckBox::toggled,this,[this]{refreshProfileExtrusion();});
     state.cutting=true;
     auto* target=extrusionControls_->findChild<QComboBox*>("extrusionTarget");
+    target->setEnabled(true);
     auto* pick=new QPushButton(tr("Pick target part"),extrusionControls_);pick->setObjectName("pickTargetPart");layout->insertWidget(4,pick);
     const auto beginPick=[this,target] {
         // Restore the original target display and remove its result preview so
