@@ -1,5 +1,16 @@
 #include "CadViewport.h"
 #include "MainWindow.h"
+#include "PartPresentation.h"
+#include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_Sewing.hxx>
+#include <Graphic3d_Group.hxx>
+#include <PrsMgr_Presentation.hxx>
 #include <QApplication>
 #include <QTreeWidget>
 #include <QMouseEvent>
@@ -39,6 +50,16 @@ static void run() {
     AIS_ListOfInteractive displayedBefore;v.context_->DisplayedObjects(displayedBefore);
     const auto selectionColor=v.context_->SelectionStyle()->Color();
     const auto hoverColor=v.context_->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->Color();
+    const auto featureLines=[&](const Handle(AIS_Shape)& part,const Quantity_Color& color) {
+        const auto presentation=v.context_->MainPrsMgr()->Presentation(part,AIS_Shaded);
+        if(presentation.IsNull())return false;
+        for(const auto& group:presentation->Groups()) {
+            const auto aspect=group->Aspects();
+            if(!group->IsClosed() && !aspect.IsNull() && aspect->Color().IsEqual(color)
+                && std::abs(aspect->LineWidth()-2.8)<0.001)return true;
+        }
+        return false;
+    };
     const auto a=v.partId(0),b=v.partId(1);int changes=0;
     QObject::connect(&v,&CadViewport::activePartChanged,&v,[&]{++changes;});
     check(v.setActivePart(a) && changes==1,"activation failed");
@@ -52,8 +73,9 @@ static void run() {
     check(displayedBefore.Size()==displayedAfter.Size(),"activation created duplicate visual objects");
     check(v.context_->SelectionStyle()->Color()==selectionColor && v.context_->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->Color()==hoverColor,"activation changed hover/selection appearance");
     const auto green=outlineColor(*v.boxes_[0].presentation->Attributes()->ShadingAspect()->Aspect(),v.boxes_[0].presentation->Attributes());
-    const Quantity_Color expectedGreen(78.0/255,154.0/255,87.0/255,Quantity_TOC_sRGB);
-    check(green.IsEqual(expectedGreen),"active outline is not #4E9A57");
+    const Quantity_Color expectedGreen(167.0/255,212.0/255,0.0,Quantity_TOC_sRGB);
+    check(green.IsEqual(expectedGreen),"active outline is not #A7D400");
+    check(featureLines(v.boxes_[0].presentation,expectedGreen),"active sharp feature edges absent from shaded presentation");
     const auto outlineWidth=[]<class Aspect>(const Aspect& aspect,const auto& drawer) {
         if constexpr(requires { aspect.ToDrawSilhouette(); })return double(aspect.EdgeWidth());
         return double(drawer->FaceBoundaryAspect()->Aspect()->Width());
@@ -71,9 +93,11 @@ static void run() {
         && std::abs(outlineWidth(*drawer->ShadingAspect()->Aspect(),drawer)-2.8)<0.001,"selected silhouette did not override Active Part in cyan");
     check(v.context_->IsSelected(v.boxes_[0].presentation->GlobalSelOwner())
         && !v.context_->MainPrsMgr()->IsHighlighted(v.boxes_[0].presentation,AIS_WireFrame),"whole Part still draws selection wireframe edges");
+    check(featureLines(v.boxes_[0].presentation,selectionColor),"selected feature edges did not take cyan priority");
     check(v.boxes_[0].shape.IsSame(shape) && v.partColor(0)==color,"selected contour changed geometry/material");
     v.selectParts({1});
-    check(outlineColor(*drawer->ShadingAspect()->Aspect(),drawer).IsEqual(expectedGreen),"deselect did not restore green silhouette");
+    check(outlineColor(*drawer->ShadingAspect()->Aspect(),drawer).IsEqual(expectedGreen)
+        && featureLines(v.boxes_[0].presentation,expectedGreen),"deselect did not restore yellow-green silhouette/features");
     v.selectParts({});
     check(!outlined(v.boxes_[1].presentation) && !v.boxes_[1].presentation->Attributes()->FaceBoundaryDraw(),"deselected Part retained cyan contours");
     check(faceStyle->DisplayMode()==faceMode && faceStyle->Color()==faceColor
@@ -142,8 +166,28 @@ static void run() {
     check(v.activePartId().isEmpty() && !v.context_->IsDisplayed(v.boxes_[0].presentation),"removed active reference/presentation stale");
     v.boxes_[0].active=true;emit v.partsChanged();check(v.activePartId().isEmpty(),"restoration silently reactivated part");
     v.setActivePart(b);v.resetDocument();check(v.activePartId().isEmpty() && !v.partIndexForId(b),"reset left active reference");
-    // A cylinder has a topological seam that must never enter part highlighting.
+    // Sharp rims are features; seams and smooth geometric joins are not.
     v.addCylinder();const auto cylinder=v.boxes_[0].presentation;
+    const auto edgeCount=[](const TopoDS_Shape& shape) {
+        TopTools_IndexedMapOfShape edges;TopExp::MapShapes(shape,TopAbs_EDGE,edges);return edges.Extent();
+    };
+    check(edgeCount(PartPresentation::featureEdges(cylinder->Shape()))==2,"cylinder feature filter kept its seam or lost its rims");
+    const auto body=BRepPrimAPI_MakeBox(100,100,20).Shape();
+    const auto boss=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(70,50,20),gp_Dir(0,0,1)),15,20).Shape();
+    const auto hole=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(30,50,-10),gp_Dir(0,0,1)),10,40).Shape();
+    const auto detailed=BRepAlgoAPI_Cut(BRepAlgoAPI_Fuse(body,boss).Shape(),hole).Shape();
+    const auto detailEdges=PartPresentation::featureEdges(detailed);int circles=0;
+    for(TopExp_Explorer it(detailEdges,TopAbs_EDGE);it.More();it.Next())
+        if(BRepAdaptor_Curve(TopoDS::Edge(it.Current())).GetType()==GeomAbs_Circle)++circles;
+    check(circles==4,"hole rims or boss transitions missing from feature highlight");
+    const auto panel=[](double x) {
+        BRepBuilderAPI_MakePolygon wire;wire.Add(gp_Pnt(x,0,0));wire.Add(gp_Pnt(x+10,0,0));
+        wire.Add(gp_Pnt(x+10,10,0));wire.Add(gp_Pnt(x,10,0));wire.Close();
+        return BRepBuilderAPI_MakeFace(wire.Wire()).Shape();
+    };
+    BRepBuilderAPI_Sewing sewing;sewing.Add(panel(0));sewing.Add(panel(10));sewing.Perform();
+    check(edgeCount(sewing.SewedShape())==7 && edgeCount(PartPresentation::featureEdges(sewing.SewedShape()))==6,
+        "geometrically tangent join was highlighted");
     v.setActivePart(v.partId(0));v.selectParts({0});
     auto cylinderDrawer=cylinder->Attributes();
     check(outlined(cylinder) && !cylinderDrawer->FaceBoundaryDraw()

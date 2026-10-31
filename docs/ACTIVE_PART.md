@@ -17,14 +17,22 @@ Store an optional named XCAF metadata child without changing the schema marker.
 Old files have no reference; old readers ignore this child. Validate imported IDs.
 
 Use the existing AIS shading aspect's native OpenGL silhouette option for both
-Active Part (#4E9A57) and Selected Part (existing cyan), at 2.8 pixels. Selected
+Active Part (#A7D400) and Selected Part (existing cyan), at 2.8 pixels. Selected
 Part takes precedence. The inverted-hull pass uses camera matrices and the
 existing triangulation; it does not extract topological edges or duplicate BReps.
 PartPresentation retains AIS_Shape picking and sensitive geometry. Only its global
 selection owner's wireframe-highlight callback is suppressed; local face/edge
-selection and dynamic hover still use OCCT's original callbacks. Face boundaries
-and polygon edges are disabled for whole-part highlighting. Older OCCT builds
-without the native API get a status message and no edge-based substitute.
+selection and dynamic hover still use OCCT's original callbacks. Generic face
+boundaries and polygon edges remain disabled. PartPresentation adds only sharp
+feature edges to the existing shaded presentation using StdPrs_WFShape. It rejects
+cylindrical seams and degenerate edges, then uses BRepLib::ContinuityOfFaces to
+exclude geometrically tangent joins (angular tolerance 1e-4 radians). Hole rims,
+boss rims and sharp transitions remain. Edges share the scene depth buffer and
+part transform, so occluded portions disappear as the camera moves. No BRep is
+copied and the feature-edge container is never used for selection. Non-manifold
+or unclassifiable joins are omitted. Older OCCT builds without the native API
+report that only sharp feature edges can be shown; these do not replace the
+missing silhouette.
 
 A shared callback-based target picker resolves a detected AIS owner to a stable
 part ID and checks visibility/solid eligibility. Commands retain their own temporary
@@ -36,7 +44,7 @@ adds no assembly activation semantics; a future hierarchy must retain part UUIDs
 ## Modeling workflow
 
 Right-click a Part in the Structure Browser or its geometry in the viewport and
-choose **Set Active Part**. The green browser icon and dark-green silhouette
+choose **Set Active Part**. The green browser icon and yellow-green silhouette
 identify the current modeling target. Set another Part active to switch; choose
 **Deactivate Part** on the current Part or **Clear Active Part** to clear it.
 The browser root and empty browser space also offer Clear Active Part.
@@ -132,3 +140,21 @@ Only OpenDesigner and OpenDesignerSelectionContextTests were built for this
 refinement. The relevant Active Part, selection-context and normal/HiDPI extrusion
 viewport session checks passed (4/4). Full-suite and stress tests were not run.
 Manual Fedora KDE visual acceptance is pending.
+
+
+## Yellow-green and feature-edge refinement
+
+Active Part now uses #A7D400 at 2.8 pixels. Selected Part retains cyan at 2.8 pixels
+for both silhouettes and feature edges, with priority over Active Part. Unlike
+the earlier generic boundary highlighting, feature classification uses actual
+face continuity rather than relying solely on stored regularity flags. Existing
+AIS depth testing and polygon offset handle edge visibility against shaded faces.
+The native silhouette limitations above still apply.
+
+Only OpenDesigner and OpenDesignerSelectionContextTests were built. The four
+relevant Active Part, selection and normal/HiDPI extrusion viewport tests passed.
+Regression checks cover feature-line presentation color/width, cylinder rims
+without seams, four hole/boss rims, and omission of a sewn coplanar tangent join.
+No full suite or stress tests were run. The referenced CoCreate screenshot was
+not attached to this request; visual matching and Fedora KDE acceptance remain
+pending manual review.

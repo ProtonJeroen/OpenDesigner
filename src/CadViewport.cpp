@@ -2913,7 +2913,7 @@ void CadViewport::refreshActivePart() {
         activePartId_.clear();emit activePartChanged();
     }
     if(context_.IsNull())return;
-    const Quantity_Color green(78.0/255,154.0/255,87.0/255,Quantity_TOC_sRGB);
+    const Quantity_Color green(167.0/255,212.0/255,0.0,Quantity_TOC_sRGB);
     const Quantity_Color cyan(0.0,0.95,1.0,Quantity_TOC_RGB);
     for(auto& part:boxes_) if(!part.presentation.IsNull()) {
         const bool active=part.active && part.persistentId==activePartId_;
@@ -2926,15 +2926,17 @@ void CadViewport::refreshActivePart() {
         if(!outlined && !drawer->HasOwnShadingAspect() && !drawer->HasOwnFaceBoundaryDraw())continue;
         if(outlined)drawer->SetupOwnShadingAspect();
         auto changed=activeSilhouette(*drawer->ShadingAspect()->Aspect(),outlined,color);
-        // Face boundaries include seams and internal edges. They are never
-        // part of a whole-part silhouette, even when native outlines are absent.
+        // Generic face boundaries include seams/tangent joins. Feature edges
+        // are classified geometrically by PartPresentation instead.
         const bool boundaryChanged=drawer->FaceBoundaryDraw();
         if(boundaryChanged)drawer->SetFaceBoundaryDraw(false);
+        auto* presentation=dynamic_cast<PartPresentation*>(part.presentation.get());
+        const bool featuresChanged=presentation && presentation->setFeatureHighlight(outlined,color);
         if(outlined && !changed.has_value())
-            emit statusMessage(tr("Part silhouettes require OCCT native OpenGL outline support; edge highlighting is disabled."));
+            emit statusMessage(tr("Native part silhouettes are unavailable in this OCCT build; only sharp feature edges are highlighted."));
         // Update only shaded rendering. Redisplay also rebuilds selection
         // presentations and can revive stale highlights during history cleanup.
-        if(part.active && boundaryChanged) {
+        if(part.active && (boundaryChanged || featuresChanged)) {
             part.presentation->SetToUpdate(AIS_Shaded);
             context_->MainPrsMgr()->Update(part.presentation,AIS_Shaded);
         } else if(part.active && changed.value_or(false)) {
