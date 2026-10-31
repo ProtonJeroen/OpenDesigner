@@ -102,6 +102,9 @@ if(OPENDESIGNER_BUILD_TESTS)
     add_test(NAME command-panel-positioning COMMAND OpenDesignerCommandPanelTests)
     add_test(NAME command-panel-positioning-hidpi COMMAND OpenDesignerCommandPanelTests)
     set_tests_properties(command-panel-positioning-hidpi PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=2")
+    # These tests assert native keyboard focus. Other GUI processes on the same
+    # desktop can steal it and delay WM placement; isolate that shared resource.
+    set_tests_properties(command-panel-positioning command-panel-positioning-hidpi PROPERTIES RUN_SERIAL TRUE)
     add_executable(OpenDesignerSketchProjectionTests tests/SketchProjectionTest.cpp src/NativeDocument.cpp)
     target_link_libraries(OpenDesignerSketchProjectionTests PRIVATE OpenDesignerConstruction)
     add_test(NAME sketch-projection-geometry COMMAND OpenDesignerSketchProjectionTests)
@@ -179,12 +182,14 @@ if(OPENDESIGNER_BUILD_TESTS)
     target_link_libraries(OpenDesignerMoveFaceTests PRIVATE ${OPENDESIGNER_LIBRARIES})
     add_test(NAME move-face COMMAND OpenDesignerMoveFaceTests)
     add_executable(OpenDesignerSelectionContextTests
-        tests/SelectionContextTest.cpp tests/ProfileExtrusionSessionTest.cpp tests/SketchDisplayBoundsSessionTest.cpp tests/WorkplaneRenderingTest.cpp tests/NativeDocumentSessionTest.cpp tests/ConstructionSessionTest.cpp tests/SketchSessionTest.cpp tests/SketchDrawingTest.cpp tests/SketchOrthogonalLineTest.cpp tests/SketchOverdrawSessionTest.cpp tests/SketchConstructionSessionTest.cpp tests/SketchReleaseSessionTest.cpp tests/SketchPointSessionTest.cpp tests/SketchEllipseSessionTest.cpp tests/SketchEllipseDrawingTest.cpp tests/CommandPanelSessionTest.cpp tests/SketchProjectionSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
+        tests/SelectionContextTest.cpp tests/ActivePartSessionTest.cpp tests/ProfileExtrusionSessionTest.cpp tests/SketchDisplayBoundsSessionTest.cpp tests/WorkplaneRenderingTest.cpp tests/NativeDocumentSessionTest.cpp tests/ConstructionSessionTest.cpp tests/SketchSessionTest.cpp tests/SketchDrawingTest.cpp tests/SketchOrthogonalLineTest.cpp tests/SketchOverdrawSessionTest.cpp tests/SketchConstructionSessionTest.cpp tests/SketchReleaseSessionTest.cpp tests/SketchPointSessionTest.cpp tests/SketchEllipseSessionTest.cpp tests/SketchEllipseDrawingTest.cpp tests/CommandPanelSessionTest.cpp tests/SketchProjectionSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
         src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
         src/MoveFace.cpp src/FaceOperations.cpp src/FaceTransformGeometry.cpp
         src/FaceTransformGeometry.h src/SelectionContext.cpp src/MoveFaceGeometry.h src/BRepReconstruction.cpp src/MoveFaceGeometry.cpp)
     target_include_directories(OpenDesignerSelectionContextTests PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
     target_link_libraries(OpenDesignerSelectionContextTests PRIVATE ${OPENDESIGNER_LIBRARIES})
+    add_test(NAME active-part-sessions COMMAND OpenDesignerSelectionContextTests --active-part)
+    set_tests_properties(active-part-sessions PROPERTIES TIMEOUT 120)
     add_test(NAME profile-extrusion-sessions COMMAND OpenDesignerSelectionContextTests --extrusion)
     add_test(NAME profile-extrusion-sessions-hidpi COMMAND OpenDesignerSelectionContextTests --extrusion)
     set_tests_properties(profile-extrusion-sessions-hidpi PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=2")

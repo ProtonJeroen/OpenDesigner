@@ -1,5 +1,13 @@
 # Native OpenDesigner documents
 
+## Active Part metadata (v0.4.6)
+
+An optional root child named `OpenDesignerActivePart.v1` stores the stable Part
+UUID as an ASCII attribute. Absence means no Active Part. This additive metadata
+keeps existing schema versions and root markers unchanged; older readers ignore
+it. Readers reject dangling references before replacement. Selection and previews
+remain transient. See [Active Part architecture and undo policy](ACTIVE_PART.md).
+
 ## Current extension: phase 6A.1 ellipse storage
 
 Current in-memory capability is **schema v5**. A current snapshot writes v5 only

@@ -1,4 +1,5 @@
 #include "CommandPanelPositioner.h"
+#include "CommandPanelTestHelpers.h"
 #include <QApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -24,6 +25,7 @@ void settle() {for(int i=0;i<3;++i) {QApplication::processEvents();QGuiApplicati
 QRect bounds(QWidget& viewport) {return {viewport.mapToGlobal(QPoint()),viewport.size()};}
 void inside(QWidget& viewport,QWidget& panel) {check(bounds(viewport).contains(panel.frameGeometry()),"panel frame escaped viewport");}
 void anchored(QWidget& viewport,QWidget& panel) {
+    CommandPanelTest::waitForInitialAnchor(panel,viewport,"standalone panel initial anchor");
     inside(viewport,panel);const auto b=bounds(viewport),p=panel.frameGeometry();
     check(std::abs((b.right()-p.right())-12)<=1 && std::abs((p.top()-b.top())-12)<=1,"initial position is not viewport upper-right +12 logical pixels");
 }

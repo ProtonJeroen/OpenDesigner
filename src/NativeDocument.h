@@ -42,6 +42,7 @@ struct NativePartState {
 struct NativeDocumentSnapshot {
     int schemaVersion = 5; // Capability; saves choose v3/v4/v5 by exact sketch content.
     std::vector<NativePartState> parts;
+    QString activePartId;
     std::vector<Construction::Object> constructions;
     std::array<int,3> constructionNameCounters{};
     std::vector<Sketch::Entity> sketchEntities;

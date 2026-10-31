@@ -169,3 +169,13 @@ These manual checks have not been claimed as passed by automation.
    remain reachable. Native KDE may differ from strict automated Xvfb positions.
 10. Smoke-test existing Line/Circle/Arc drawing and Move/Rotate/Delete Face,
     Boolean and 3D history alongside sketch geometry.
+
+
+## Shared native desktop resources
+
+The standalone `command-panel-positioning` and HiDPI counterpart assert keyboard
+focus while opening and dragging native Tool windows. CTest runs them with
+`RUN_SERIAL` so unrelated GUI test processes cannot steal focus or race the WM's
+initial placement on the same desktop. They retain their geometry/focus assertions
+and use the existing bounded initial-anchor wait (including native diagnostics).
+The remaining suite still runs with `ctest -j 4`.

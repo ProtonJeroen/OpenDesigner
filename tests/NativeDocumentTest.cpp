@@ -76,9 +76,11 @@ int main() {
         object.frame=gp_Ax3(gp_Pnt(i*15,23,-12),gp_Dir(1,2,3));source.constructions.push_back(object);
     }
     source.constructionNameCounters={7,9,12};
+    source.activePartId=box.id;
     if (!NativeDocumentStorage::save(path, source, error)) { std::fprintf(stderr, "save: %s\n", error.toUtf8().constData()); return 2; }
     NativeDocumentSnapshot loaded;
     if (!NativeDocumentStorage::load(path, loaded, error)) { std::fprintf(stderr, "load: %s\n", error.toUtf8().constData()); return 3; }
+    if(loaded.activePartId!=box.id)return 41;
     if (loaded.schemaVersion != NativeDocumentStorage::CurrentSchemaVersion || loaded.parts.size() != 2) return 4;
     if (loaded.parts[0].id != box.id || loaded.parts[0].name != box.name || loaded.parts[0].color != box.color || !loaded.parts[0].visible) return 5;
     if (loaded.parts[1].id != cylinder.id || loaded.parts[1].name != cylinder.name
@@ -133,10 +135,10 @@ int main() {
             if(!Construction::equivalent(expected,early.constructions[i])) return 65;
         }
     }
-    auto legacy=source;legacy.schemaVersion=1;legacy.constructions.clear();
+    auto legacy=source;legacy.activePartId.clear();legacy.schemaVersion=1;legacy.constructions.clear();
     const QString legacyPath=directory.filePath("legacy-v1.odc");NativeDocumentSnapshot legacyLoaded;
     if(!NativeDocumentStorage::save(legacyPath,legacy,error) || !NativeDocumentStorage::load(legacyPath,legacyLoaded,error)
-        || !legacyLoaded.constructions.empty() || legacyLoaded.parts.size()!=2 || legacyLoaded.parts[0].id!=box.id) return 32;
+        || !legacyLoaded.activePartId.isEmpty() || !legacyLoaded.constructions.empty() || legacyLoaded.parts.size()!=2 || legacyLoaded.parts[0].id!=box.id) return 32;
     auto unsupported=source;unsupported.schemaVersion=99;
     if(NativeDocumentStorage::save(directory.filePath("future.odc"),unsupported,error)) return 33;
     auto duplicate=source;duplicate.constructions[0].id=box.id;
@@ -215,6 +217,8 @@ int main() {
     if (!QDir(directory.path()).entryList({".opendesigner-*"},QDir::AllEntries|QDir::Hidden).empty()) return 27;
     NativeDocumentSnapshot empty = source;
     empty.parts.clear();
+    if(NativeDocumentStorage::save(directory.filePath("dangling.odc"),empty,error))return 66;
+    empty.activePartId.clear();
     const QString emptyPath = QDir(directory.path()).filePath(QStringLiteral("empty.odc"));
     if (!NativeDocumentStorage::save(emptyPath, empty, error)) return 13;
     NativeDocumentSnapshot emptyLoaded;
