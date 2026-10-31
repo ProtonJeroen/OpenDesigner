@@ -11,6 +11,7 @@
 #include <AIS_ListOfInteractive.hxx>
 #include <Prs3d_LineAspect.hxx>
 #include <Prs3d_ShadingAspect.hxx>
+#include <Graphic3d_ZLayerId.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <TopExp_Explorer.hxx>
 #include <QTemporaryDir>
@@ -51,7 +52,33 @@ static void run() {
     check(displayedBefore.Size()==displayedAfter.Size(),"activation created duplicate visual objects");
     check(v.context_->SelectionStyle()->Color()==selectionColor && v.context_->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->Color()==hoverColor,"activation changed hover/selection appearance");
     const auto green=outlineColor(*v.boxes_[0].presentation->Attributes()->ShadingAspect()->Aspect(),v.boxes_[0].presentation->Attributes());
-    check(std::abs(green.Green()-0.847)<0.001,"active boundary color wrong");
+    const Quantity_Color expectedGreen(78.0/255,154.0/255,87.0/255,Quantity_TOC_sRGB);
+    check(green.IsEqual(expectedGreen),"active outline is not #4E9A57");
+    const auto outlineWidth=[]<class Aspect>(const Aspect& aspect,const auto& drawer) {
+        if constexpr(requires { aspect.ToDrawSilhouette(); })return double(aspect.EdgeWidth());
+        return double(drawer->FaceBoundaryAspect()->Aspect()->Width());
+    };
+    auto drawer=v.boxes_[0].presentation->Attributes();
+    check(std::abs(outlineWidth(*drawer->ShadingAspect()->Aspect(),drawer)-2.8)<0.001,"active outline width wrong");
+    check(v.context_->SelectionStyle()->ZLayer()==Graphic3d_ZLayerId_Top
+        && v.viewer_->ZLayerSettings(Graphic3d_ZLayerId_Top).ToEnableDepthTest()
+        && !v.viewer_->ZLayerSettings(Graphic3d_ZLayerId_Top).ToClearDepth(),"whole Part selection ignores scene depth");
+    const auto faceStyle=v.context_->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected);
+    const auto faceMode=faceStyle->DisplayMode();const auto faceColor=faceStyle->Color();
+    v.selectParts({0});
+    check(outlineColor(*drawer->ShadingAspect()->Aspect(),drawer).IsEqual(selectionColor)
+        && drawer->FaceBoundaryDraw()
+        && drawer->FaceBoundaryAspect()->Aspect()->Color().IsEqual(selectionColor)
+        && std::abs(drawer->FaceBoundaryAspect()->Aspect()->Width()-2.8)<0.001,"selected contour did not override Active Part in cyan");
+    check(v.boxes_[0].shape.IsSame(shape) && v.partColor(0)==color,"selected contour changed geometry/material");
+    v.selectParts({1});
+    check(outlineColor(*drawer->ShadingAspect()->Aspect(),drawer).IsEqual(expectedGreen),"deselect did not restore green silhouette");
+    v.selectParts({});
+    check(!outlined(v.boxes_[1].presentation) && !v.boxes_[1].presentation->Attributes()->FaceBoundaryDraw(),"deselected Part retained cyan contours");
+    check(faceStyle->DisplayMode()==faceMode && faceStyle->Color()==faceColor
+        && v.context_->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->Color()==hoverColor,"contours changed face/hover styles");
+    AIS_ListOfInteractive contourObjects;v.context_->DisplayedObjects(contourObjects);
+    check(contourObjects.Size()==displayedBefore.Size(),"selected contours created duplicate AIS objects");
     v.selectParts({1});check(v.activePartId()==a,"part selection changed active part");
     for(const auto type:{TopAbs_FACE,TopAbs_EDGE,TopAbs_VERTEX}) {
         TopExp_Explorer it(v.boxes_[1].shape,type);

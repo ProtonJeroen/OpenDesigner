@@ -180,6 +180,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
         }
     };
     connect(this,&CadViewport::partsChanged,this,[this]{refreshActivePart();});
+    connect(this,&CadViewport::partSelectionChanged,this,[this]{refreshActivePart();});
     connect(this,&CadViewport::partsChanged,this,invalidateProjection);
     connect(this,&CadViewport::constructionsChanged,this,invalidateProjection);
     connect(this,&CadViewport::sketchEntitiesChanged,this,invalidateProjection);
@@ -458,6 +459,14 @@ void CadViewport::initializeViewer() {
     if (!selectionStyle.IsNull()) {
         selectionStyle->SetColor(cyan);
         selectionStyle->SetDisplayMode(AIS_WireFrame);
+        // Top inherits scene depth, unlike Topmost: occluded edges stay hidden.
+        selectionStyle->SetZLayer(Graphic3d_ZLayerId_Top);
+        selectionStyle->SetOwnLineAspects();
+        selectionStyle->WireAspect()->SetWidth(2.8);
+        selectionStyle->LineAspect()->SetWidth(2.8);
+        selectionStyle->FreeBoundaryAspect()->SetWidth(2.8);
+        selectionStyle->UnFreeBoundaryAspect()->SetWidth(2.8);
+        selectionStyle->SeenLineAspect()->SetWidth(2.8);
     }
     // OCCT uses a separate local-selection highlight drawer for faces.
     // Configuring only SelectionStyle() changes whole-object selection,
@@ -2882,13 +2891,15 @@ namespace {
 // Compile against older OCCT releases too; their drawer boundary outline is
 // the fallback. Neither path changes the shaded surface or adds geometry.
 template<class Aspect>
-std::optional<bool> activeSilhouette(Aspect& aspect,bool active) {
-    if constexpr(requires { aspect.SetDrawSilhouette(active); }) {
-        if(aspect.ToDrawSilhouette()==active)return false;
-        aspect.SetDrawSilhouette(active);
-        if(active) {
-            aspect.SetEdgeColor(Quantity_Color(0.565,0.847,0.604,Quantity_TOC_RGB));
-            aspect.SetEdgeWidth(1.8);
+std::optional<bool> activeSilhouette(Aspect& aspect,bool enabled,const Quantity_Color& color) {
+    if constexpr(requires { aspect.SetDrawSilhouette(enabled); }) {
+        const bool changed=aspect.ToDrawSilhouette()!=enabled
+            || (enabled && (aspect.EdgeColor()!=color || std::abs(aspect.EdgeWidth()-2.8)>0.001));
+        if(!changed)return false;
+        aspect.SetDrawSilhouette(enabled);
+        if(enabled) {
+            aspect.SetEdgeColor(color);
+            aspect.SetEdgeWidth(2.8);
         }
         return true;
     }
@@ -2900,22 +2911,39 @@ void CadViewport::refreshActivePart() {
         activePartId_.clear();emit activePartChanged();
     }
     if(context_.IsNull())return;
+    const Quantity_Color green(78.0/255,154.0/255,87.0/255,Quantity_TOC_sRGB);
+    const Quantity_Color cyan(0.0,0.95,1.0,Quantity_TOC_RGB);
     for(auto& part:boxes_) if(!part.presentation.IsNull()) {
         const bool active=part.active && part.persistentId==activePartId_;
+        // Only whole-object owners get the extra contour. Local face/edge
+        // selection and hover keep their existing OCCT highlight styles.
+        const bool selected=part.active && context_->IsSelected(part.presentation->GlobalSelOwner());
+        const bool outlined=active || selected;
+        const auto& color=selected?cyan:green;
         auto drawer=part.presentation->Attributes();
-        if(!active && !drawer->HasOwnShadingAspect() && !drawer->HasOwnFaceBoundaryDraw())continue;
-        if(active)drawer->SetupOwnShadingAspect();
-        auto changed=activeSilhouette(*drawer->ShadingAspect()->Aspect(),active);
-        if(!changed) {
-            changed=drawer->FaceBoundaryDraw()!=active;
-            if(*changed) {
-                drawer->SetFaceBoundaryDraw(active);
-                if(active)drawer->SetFaceBoundaryAspect(new Prs3d_LineAspect(Quantity_Color(0.565,0.847,0.604,Quantity_TOC_RGB),Aspect_TOL_SOLID,1.8));
-            }
+        if(!outlined && !drawer->HasOwnShadingAspect() && !drawer->HasOwnFaceBoundaryDraw())continue;
+        if(outlined)drawer->SetupOwnShadingAspect();
+        auto changed=activeSilhouette(*drawer->ShadingAspect()->Aspect(),outlined,color);
+        // Native silhouettes supplement the geometric face boundaries for a
+        // selected Part (e.g. curved surfaces). Both use scene depth and the
+        // existing material; no extra AIS object or shaded highlight is added.
+        const bool boundaries=selected || (!changed.has_value() && active);
+        bool boundaryChanged=drawer->FaceBoundaryDraw()!=boundaries;
+        if(boundaries && (!drawer->HasOwnFaceBoundaryAspect()
+            || drawer->FaceBoundaryAspect()->Aspect()->Color()!=color
+            || std::abs(drawer->FaceBoundaryAspect()->Aspect()->Width()-2.8)>0.001)) {
+            drawer->SetFaceBoundaryAspect(new Prs3d_LineAspect(color,Aspect_TOL_SOLID,2.8));
+            boundaryChanged=true;
         }
-        // Redisplay can restore OCCT selection highlighting. Leave unrelated
-        // presentations alone, especially during history selection cleanup.
-        if(*changed && part.active)context_->Redisplay(part.presentation,Standard_False);
+        if(boundaryChanged)drawer->SetFaceBoundaryDraw(boundaries);
+        // Update only shaded rendering. Redisplay also rebuilds selection
+        // presentations and can revive stale highlights during history cleanup.
+        if(part.active && boundaryChanged) {
+            part.presentation->SetToUpdate(AIS_Shaded);
+            context_->MainPrsMgr()->Update(part.presentation,AIS_Shaded);
+        } else if(part.active && changed.value_or(false)) {
+            part.presentation->SynchronizeAspects();
+        }
     }
     if(!view_.IsNull())view_->Redraw();
 }
