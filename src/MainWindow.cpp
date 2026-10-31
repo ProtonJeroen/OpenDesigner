@@ -152,6 +152,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* extrude=model3D->addAction(tr("Extrude Profile"));extrude->setObjectName("sketch.extrude");extrude->setEnabled(false);
     connect(extrude,&QAction::triggered,viewport_,&CadViewport::startProfileExtrusion);
     connect(viewport_,&CadViewport::activeSketchWorkplaneChanged,extrude,[extrude](const QString& id){extrude->setEnabled(!id.isEmpty());});
+    auto* cut=model3D->addAction(tr("Cut Extrude"));cut->setObjectName("sketch.cutExtrude");cut->setEnabled(false);
+    connect(cut,&QAction::triggered,viewport_,&CadViewport::startCutExtrusion);
+    connect(viewport_,&CadViewport::activeSketchWorkplaneChanged,cut,[cut](const QString& id){cut->setEnabled(!id.isEmpty());});
     model3D->addSeparator();
     auto* boxAction = model3D->addAction(tr("Create &Box"));
     connect(boxAction, &QAction::triggered, viewport_, &CadViewport::addBox);

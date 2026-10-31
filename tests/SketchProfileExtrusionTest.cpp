@@ -40,5 +40,26 @@ int main(){try{
  const auto first=EX::addMaterial(tool,target,gp_Trsf());valid(EX::addMaterial(EX::extrude(faces(box(40,10,10,10),top),top.Direction(),20),first.shape,gp_Trsf()),60000);
  failed(EX::addMaterial(EX::extrude(faces(box(200,200,10,10),top),top.Direction(),20),target,gp_Trsf()));
  failed(EX::addMaterial(EX::extrude(faces(box(10,10,10,10)),gp_Dir(0,0,1),5),target,gp_Trsf()));failed(EX::addMaterial({},target,gp_Trsf()));check(volume(target)==before,"failed fusion changed target");
+ // Cut uses the same certified faces and prism engine, preserving input B-Reps.
+ const auto pocket=faces(box(10,10,20,20));
+ valid(EX::cut(pocket,gp_Ax3(),target,gp_Trsf(),4),48400);
+ valid(EX::cut(pocket,gp_Ax3(),target,gp_Trsf(),1,false,true),46000);
+ valid(EX::cut(faces(box(10,10,20,20),top),top,target,gp_Trsf(),4,true),48400);
+ valid(EX::cut(faces(box(10,10,20,20),top),top,target,gp_Trsf(),1,true,true),46000);
+ failed(EX::cut(pocket,gp_Ax3(),target,gp_Trsf(),4,true));
+ failed(EX::cut(faces(box(200,200,20,20)),gp_Ax3(),target,gp_Trsf(),4));
+ auto annulus=box(10,10,20,20);annulus.push_back(e("hole",Circle{{20,20},5}));
+ valid(EX::cut(faces(annulus),gp_Ax3(),target,gp_Trsf(),4),48400+100*pi);
+ auto regions=annulus;regions.push_back(e("second",Circle{{70,25},5}));
+ valid(EX::cut(faces(regions),gp_Ax3(),target,gp_Trsf(),4),48400);
+ failed(EX::cut({},gp_Ax3(),target,gp_Trsf(),4));failed(EX::cut(pocket,gp_Ax3(),{},gp_Trsf(),4));
+ failed(EX::cut(pocket,gp_Ax3(),target,gp_Trsf(),-1));
+ failed(EX::cut(faces(box()),gp_Ax3(),target,gp_Trsf(),1,false,true));
+ valid(EX::cut(faces(box(10,10,20,20),tilted),tilted,target,tilt,4,true),48400);
+ valid(EX::cut(faces(box(10,10,20,20),tilted),tilted,target,tilt,1,true,true),46000);
+ valid(EX::cut(faces(box(40,-10,10,70)),gp_Ax3(),target,gp_Trsf(),1,false,true),45000,2);
+ gp_Trsf far;far.SetTranslation(gp_Vec(0,0,1000000));
+ valid(EX::cut(pocket,gp_Ax3(),target,far,1,false,true),46000);
+ check(volume(target)==before,"cut changed target");
  std::cout<<"Profile extrusion geometry passed\n";return 0;
 }catch(const std::exception& x){std::cerr<<x.what()<<'\n';return 1;}}

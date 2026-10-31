@@ -1,7 +1,7 @@
 # Extrude Profile — phase 6D.1
 
 Activate a visible, unlocked Workplane with **Edit Sketch**, then choose
-**2D Modeling → Extrude Profile** (also on the 2D toolbar). All Profile entities
+**3D Modeling → Extrude Profile** (also on the 2D toolbar). All Profile entities
 on that Workplane participate, including hidden/locked Profiles. Construction
 entities never close a profile. Sources are independent and are not consumed.
 
@@ -79,3 +79,6 @@ Native Fedora KDE acceptance is **pending and required before merge**:
 5. At normal/200% scaling: check full panel/OK/Cancel, numeric focus, 12-pixel
    viewport margin, manual dragging and resize/docking without covering the model
    or jumping the panel back during parameter edits.
+
+Material removal is available through [Cut Extrude](CUT_EXTRUDE.md), which shares
+the certified Profile Builder, prism generation and in-place target history paths.
