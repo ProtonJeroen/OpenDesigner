@@ -2,6 +2,8 @@
 #include "MainWindow.h"
 #include "PartPresentation.h"
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepTools.hxx>
+#include <sstream>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
@@ -201,6 +203,22 @@ static void run() {
         && outlineColor(*cylinderDrawer->ShadingAspect()->Aspect(),cylinderDrawer).IsEqual(selectionColor)
         && !v.context_->MainPrsMgr()->IsHighlighted(cylinder,AIS_WireFrame),"camera/part rotation restored cylinder wireframe");
     v.selectParts({});v.setActivePart({});check(!outlined(cylinder),"cylinder silhouette remained after deselect/deactivate");
+    // OCCT 7.6 used to attach wireframe Polygon3D caches to the canonical
+    // BRep. Preserve full serialized evidence, including its existing mesh.
+    const auto evidence=BRepPrimAPI_MakeBox(30,40,50).Shape();
+    Handle(PartPresentation) display=new PartPresentation(evidence);
+    v.context_->Display(display,AIS_Shaded,-1,false);
+    const auto serialized=[&] {std::ostringstream out;BRepTools::Write(evidence,out);return out.str();};
+    const auto beforeHighlight=serialized();
+    for(const auto& highlightColor:{expectedGreen,selectionColor}) {
+        display->setFeatureHighlight(true,highlightColor);
+        display->SetToUpdate(AIS_Shaded);v.context_->MainPrsMgr()->Update(display,AIS_Shaded);
+        check(serialized()==beforeHighlight,"feature rendering mutated canonical BRep/mesh evidence");
+    }
+    display->setFeatureHighlight(false,selectionColor);
+    display->SetToUpdate(AIS_Shaded);v.context_->MainPrsMgr()->Update(display,AIS_Shaded);
+    check(serialized()==beforeHighlight,"clearing features mutated canonical BRep/mesh evidence");
+    v.context_->Remove(display,false);
     window.documentDirty_=false;window.close();
 }
 };

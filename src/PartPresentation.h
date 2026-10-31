@@ -3,6 +3,7 @@
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
 #include <BRepLib.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <Prs3d_Drawer.hxx>
@@ -80,7 +81,11 @@ protected:
         drawer->SetFreeBoundaryAspect(lines);drawer->SetUnFreeBoundaryAspect(lines);
         // Scene-depth-tested lines in the same presentation as the shaded
         // faces. No Topmost layer, triangulation edges, or selectable overlay.
-        StdPrs_WFShape::Add(presentation,features,drawer);
+        // OCCT 7.6's wireframe builder writes Polygon3D caches into edges.
+        // Detach only display-edge topology/caches; share the exact curves.
+        // Document and Undo snapshots must not change when highlighting draws.
+        const auto displayEdges=BRepBuilderAPI_Copy(features,false,false).Shape();
+        StdPrs_WFShape::Add(presentation,displayEdges,drawer);
     }
 
     void ComputeSelection(const Handle(SelectMgr_Selection)& selection,Standard_Integer mode) override {
