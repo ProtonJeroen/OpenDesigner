@@ -16,10 +16,15 @@ Invalid references are cleared at the existing partsChanged lifecycle boundary.
 Store an optional named XCAF metadata child without changing the schema marker.
 Old files have no reference; old readers ignore this child. Validate imported IDs.
 
-Use the existing AIS shading aspect's native silhouette option for the persistent
-green outline; no duplicate BRep or selectable overlay. Selection and hover remain
-OCCT highlights. Older OCCT versions without that API use drawer face boundaries
-as a compatibility fallback. Both follow the object's transform and visibility.
+Use the existing AIS shading aspect's native OpenGL silhouette option for both
+Active Part (#4E9A57) and Selected Part (existing cyan), at 2.8 pixels. Selected
+Part takes precedence. The inverted-hull pass uses camera matrices and the
+existing triangulation; it does not extract topological edges or duplicate BReps.
+PartPresentation retains AIS_Shape picking and sensitive geometry. Only its global
+selection owner's wireframe-highlight callback is suppressed; local face/edge
+selection and dynamic hover still use OCCT's original callbacks. Face boundaries
+and polygon edges are disabled for whole-part highlighting. Older OCCT builds
+without the native API get a status message and no edge-based substitute.
 
 A shared callback-based target picker resolves a detected AIS owner to a stable
 part ID and checks visibility/solid eligibility. Commands retain their own temporary
@@ -31,7 +36,7 @@ adds no assembly activation semantics; a future hierarchy must retain part UUIDs
 ## Modeling workflow
 
 Right-click a Part in the Structure Browser or its geometry in the viewport and
-choose **Set Active Part**. The green browser icon and light-green boundary outline
+choose **Set Active Part**. The green browser icon and dark-green silhouette
 identify the current modeling target. Set another Part active to switch; choose
 **Deactivate Part** on the current Part or **Clear Active Part** to clear it.
 The browser root and empty browser space also offer Clear Active Part.
@@ -82,8 +87,10 @@ rejected before document replacement.
 - Verify native and HiDPI command panel positioning, including opening, moving,
   resizing and switching commands on Fedora KDE/Wayland with XWayland.
 
-The older-OCCT boundary fallback can include internal face boundaries and does not
-compute curved surface silhouettes. The current flat browser has no nested assemblies to exercise.
+Native OpenGL outlines require closed triangulation with vertex normals and
+backface-culling, as in shaded solid Parts. Open shells, transparent geometry and
+non-OpenGL rendering are not certified. Tessellation and vertex normals affect
+outline quality; this is a GPU outline, not an exact BRep HLR computation. The current flat browser has no nested assemblies to exercise.
 Interactive desktop acceptance is separate from automated session tests.
 
 ## Automated validation — 2026-10-31
@@ -108,3 +115,20 @@ assertions, positioning tolerances or test coverage were relaxed.
 Native silhouettes were exercised programmatically with OCCT 7.9.3. The older-OCCT
 boundary fallback has not been runtime-tested on an older installation. These
 results do not constitute interactive Fedora KDE acceptance.
+
+
+## Silhouette-only rendering refinement
+
+The former face-boundary compatibility fallback and selected-part wireframe are
+removed from part highlighting. The native method is implemented in OCCT's
+[OpenGl_PrimitiveArray outline pass](https://github.com/Open-Cascade-SAS/OCCT/blob/V7_9_3/src/OpenGl/OpenGl_PrimitiveArray.cxx#L1003).
+It expands back-facing triangles along vertex normals in the outline shader,
+uses the scene depth buffer, and reads the current camera/object transforms on
+each draw. It requires native outline shader support and closed, oriented meshes.
+There is no silent fallback to seam/edge highlighting. Local subshape highlighting
+and hover can still show their own edges by design.
+
+Only OpenDesigner and OpenDesignerSelectionContextTests were built for this
+refinement. The relevant Active Part, selection-context and normal/HiDPI extrusion
+viewport session checks passed (4/4). Full-suite and stress tests were not run.
+Manual Fedora KDE visual acceptance is pending.

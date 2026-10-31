@@ -1,4 +1,5 @@
 #include "CadViewport.h"
+#include "PartPresentation.h"
 #include "CommandPanelPositioner.h"
 #include "ConstructionPanel.h"
 #include "BRepReconstruction.h"
@@ -593,7 +594,7 @@ void CadViewport::addBox() {
     part.max = {x + 100.0, 80.0, 60.0};
     TopoDS_Shape shape = BRepPrimAPI_MakeBox(gp_Pnt(x, 0, 0), 100.0, 80.0, 60.0).Shape();
     part.shape = shape;
-    part.presentation = new AIS_Shape(part.shape);
+    part.presentation = new PartPresentation(part.shape);
     part.presentation->SetColor(Quantity_NOC_LIGHTGRAY);
     context_->Display(part.presentation, Standard_False);
     context_->SetDisplayMode(part.presentation, AIS_Shaded, Standard_False);
@@ -626,7 +627,7 @@ void CadViewport::addCylinder() {
     part.baseMax = part.max;
     part.shape = BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(x, 0, 0),
         gp_Dir(0, 0, 1)), radius, height).Shape();
-    part.presentation = new AIS_Shape(part.shape);
+    part.presentation = new PartPresentation(part.shape);
     part.presentation->SetColor(Quantity_NOC_LIGHTGRAY);
     context_->Display(part.presentation, Standard_False);
     context_->SetDisplayMode(part.presentation, AIS_Shaded, Standard_False);
@@ -654,7 +655,7 @@ void CadViewport::addSphere() {
     part.baseMin = part.min;
     part.baseMax = part.max;
     part.shape = BRepPrimAPI_MakeSphere(gp_Pnt(x,0,0),radius).Shape();
-    part.presentation = new AIS_Shape(part.shape);
+    part.presentation = new PartPresentation(part.shape);
     part.presentation->SetColor(Quantity_NOC_LIGHTGRAY);
     context_->Display(part.presentation,Standard_False);
     context_->SetDisplayMode(part.presentation,AIS_Shaded,Standard_False);
@@ -680,7 +681,7 @@ void CadViewport::addCone() {
     part.baseMax = part.max;
     part.shape = BRepPrimAPI_MakeCone(gp_Ax2(gp_Pnt(x,0,0),gp_Dir(0,0,1)),
         part.cone.bottomRadius,part.cone.topRadius,part.cone.height).Shape();
-    part.presentation = new AIS_Shape(part.shape);
+    part.presentation = new PartPresentation(part.shape);
     part.presentation->SetColor(Quantity_NOC_LIGHTGRAY);
     context_->Display(part.presentation,Standard_False);
     context_->SetDisplayMode(part.presentation,AIS_Shaded,Standard_False);
@@ -744,7 +745,7 @@ void CadViewport::duplicateSelectedParts() {
         // Preserve the source B-Rep instead of reconstructing a box.
         // TopoDS_Shape is reference-counted and can be shared across instances.
         copy.shape = original.shape;
-        copy.presentation = new AIS_Shape(copy.shape);
+        copy.presentation = new PartPresentation(copy.shape);
         copy.presentation->SetColor(Quantity_Color(copy.color.redF(),copy.color.greenF(),copy.color.blueF(),Quantity_TOC_RGB));
         copy.presentation->SetLocalTransformation(copy.orientation);
         context_->Display(copy.presentation, Standard_False);
@@ -1423,7 +1424,7 @@ bool CadViewport::importDocumentSnapshot(const NativeDocumentSnapshot& snapshot,
             bounds.Get(xmin, ymin, zmin, xmax, ymax, zmax);
             part.min = {xmin, ymin, zmin}; part.max = {xmax, ymax, zmax};
             part.baseMin = part.min; part.baseMax = part.max;
-            part.presentation = new AIS_Shape(part.shape);
+            part.presentation = new PartPresentation(part.shape);
             part.presentation->SetColor(Quantity_Color(part.color.redF(), part.color.greenF(),
                 part.color.blueF(), Quantity_TOC_RGB));
             part.presentation->SetLocalTransformation(part.orientation);
@@ -2888,15 +2889,16 @@ bool CadViewport::setActivePart(const QString& id) {
     activePartId_=id;refreshActivePart();emit activePartChanged();return true;
 }
 namespace {
-// Compile against older OCCT releases too; their drawer boundary outline is
-// the fallback. Neither path changes the shaded surface or adds geometry.
+// OpenGL inverted-hull outlines use the existing closed triangulation and
+// camera matrices. Never substitute topological boundaries on older OCCT.
 template<class Aspect>
 std::optional<bool> activeSilhouette(Aspect& aspect,bool enabled,const Quantity_Color& color) {
     if constexpr(requires { aspect.SetDrawSilhouette(enabled); }) {
-        const bool changed=aspect.ToDrawSilhouette()!=enabled
+        const bool changed=aspect.ToDrawSilhouette()!=enabled || aspect.ToDrawEdges()
             || (enabled && (aspect.EdgeColor()!=color || std::abs(aspect.EdgeWidth()-2.8)>0.001));
         if(!changed)return false;
         aspect.SetDrawSilhouette(enabled);
+        aspect.SetDrawEdges(false);
         if(enabled) {
             aspect.SetEdgeColor(color);
             aspect.SetEdgeWidth(2.8);
@@ -2924,18 +2926,12 @@ void CadViewport::refreshActivePart() {
         if(!outlined && !drawer->HasOwnShadingAspect() && !drawer->HasOwnFaceBoundaryDraw())continue;
         if(outlined)drawer->SetupOwnShadingAspect();
         auto changed=activeSilhouette(*drawer->ShadingAspect()->Aspect(),outlined,color);
-        // Native silhouettes supplement the geometric face boundaries for a
-        // selected Part (e.g. curved surfaces). Both use scene depth and the
-        // existing material; no extra AIS object or shaded highlight is added.
-        const bool boundaries=selected || (!changed.has_value() && active);
-        bool boundaryChanged=drawer->FaceBoundaryDraw()!=boundaries;
-        if(boundaries && (!drawer->HasOwnFaceBoundaryAspect()
-            || drawer->FaceBoundaryAspect()->Aspect()->Color()!=color
-            || std::abs(drawer->FaceBoundaryAspect()->Aspect()->Width()-2.8)>0.001)) {
-            drawer->SetFaceBoundaryAspect(new Prs3d_LineAspect(color,Aspect_TOL_SOLID,2.8));
-            boundaryChanged=true;
-        }
-        if(boundaryChanged)drawer->SetFaceBoundaryDraw(boundaries);
+        // Face boundaries include seams and internal edges. They are never
+        // part of a whole-part silhouette, even when native outlines are absent.
+        const bool boundaryChanged=drawer->FaceBoundaryDraw();
+        if(boundaryChanged)drawer->SetFaceBoundaryDraw(false);
+        if(outlined && !changed.has_value())
+            emit statusMessage(tr("Part silhouettes require OCCT native OpenGL outline support; edge highlighting is disabled."));
         // Update only shaded rendering. Redisplay also rebuilds selection
         // presentations and can revive stale highlights during history cleanup.
         if(part.active && boundaryChanged) {

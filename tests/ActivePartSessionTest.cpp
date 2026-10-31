@@ -67,9 +67,10 @@ static void run() {
     const auto faceMode=faceStyle->DisplayMode();const auto faceColor=faceStyle->Color();
     v.selectParts({0});
     check(outlineColor(*drawer->ShadingAspect()->Aspect(),drawer).IsEqual(selectionColor)
-        && drawer->FaceBoundaryDraw()
-        && drawer->FaceBoundaryAspect()->Aspect()->Color().IsEqual(selectionColor)
-        && std::abs(drawer->FaceBoundaryAspect()->Aspect()->Width()-2.8)<0.001,"selected contour did not override Active Part in cyan");
+        && !drawer->FaceBoundaryDraw() && !drawer->ShadingAspect()->Aspect()->ToDrawEdges()
+        && std::abs(outlineWidth(*drawer->ShadingAspect()->Aspect(),drawer)-2.8)<0.001,"selected silhouette did not override Active Part in cyan");
+    check(v.context_->IsSelected(v.boxes_[0].presentation->GlobalSelOwner())
+        && !v.context_->MainPrsMgr()->IsHighlighted(v.boxes_[0].presentation,AIS_WireFrame),"whole Part still draws selection wireframe edges");
     check(v.boxes_[0].shape.IsSame(shape) && v.partColor(0)==color,"selected contour changed geometry/material");
     v.selectParts({1});
     check(outlineColor(*drawer->ShadingAspect()->Aspect(),drawer).IsEqual(expectedGreen),"deselect did not restore green silhouette");
@@ -85,6 +86,7 @@ static void run() {
         auto owner=new StdSelect_BRepOwner(it.Current(),v.boxes_[1].presentation,5,true);
         v.context_->ClearSelected(false);v.context_->AddOrRemoveSelected(owner,false);
         check(v.activePartId()==a,"subshape selection changed active part");
+        check(v.context_->IsHilighted(owner),"local subshape highlight was suppressed with whole-part wireframe");
     }
     v.setActivePart(b);
     check(window.root_->child(0)->icon(0).isNull() && !window.root_->child(1)->icon(0).isNull(),"browser switch stale");
@@ -140,6 +142,21 @@ static void run() {
     check(v.activePartId().isEmpty() && !v.context_->IsDisplayed(v.boxes_[0].presentation),"removed active reference/presentation stale");
     v.boxes_[0].active=true;emit v.partsChanged();check(v.activePartId().isEmpty(),"restoration silently reactivated part");
     v.setActivePart(b);v.resetDocument();check(v.activePartId().isEmpty() && !v.partIndexForId(b),"reset left active reference");
+    // A cylinder has a topological seam that must never enter part highlighting.
+    v.addCylinder();const auto cylinder=v.boxes_[0].presentation;
+    v.setActivePart(v.partId(0));v.selectParts({0});
+    auto cylinderDrawer=cylinder->Attributes();
+    check(outlined(cylinder) && !cylinderDrawer->FaceBoundaryDraw()
+        && !cylinderDrawer->ShadingAspect()->Aspect()->ToDrawEdges()
+        && !v.context_->MainPrsMgr()->IsHighlighted(cylinder,AIS_WireFrame),"cylinder seam/boundaries entered part highlighting");
+    v.view_->SetProj(1,-1,1);
+    gp_Trsf rotation;rotation.SetRotation(gp_Ax1(gp_Pnt(0,0,0),gp_Dir(1,0,0)),0.4);
+    v.boxes_[0].orientation=rotation;v.applyFaceState(0,v.boxes_[0]);v.selectParts({0});
+    v.view_->ZFitAll();v.view_->Redraw();
+    check(outlined(cylinder) && !cylinderDrawer->FaceBoundaryDraw()
+        && outlineColor(*cylinderDrawer->ShadingAspect()->Aspect(),cylinderDrawer).IsEqual(selectionColor)
+        && !v.context_->MainPrsMgr()->IsHighlighted(cylinder,AIS_WireFrame),"camera/part rotation restored cylinder wireframe");
+    v.selectParts({});v.setActivePart({});check(!outlined(cylinder),"cylinder silhouette remained after deselect/deactivate");
     window.documentDirty_=false;window.close();
 }
 };

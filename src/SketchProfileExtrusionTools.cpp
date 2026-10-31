@@ -1,4 +1,5 @@
 #include "CadViewport.h"
+#include "PartPresentation.h"
 #include <QComboBox>
 #include <QCheckBox>
 #include <QListWidget>
@@ -172,7 +173,7 @@ void CadViewport::finishProfileExtrusion(bool confirm) {
         } else {
             auto change=std::make_shared<BooleanChange>();change->resultState.geometryKind=CadPart::GeometryKind::GeneralBRep;
             auto& part=change->resultState;part.shape=session.candidate;part.name=tr("Extrude %1").arg(partCount_+1);part.persistentId=QUuid::createUuid().toString(QUuid::WithoutBraces);
-            part.presentation=new AIS_Shape(part.shape);Bnd_Box bounds;BRepBndLib::AddOptimal(part.shape,bounds,false,false);
+            part.presentation=new PartPresentation(part.shape);Bnd_Box bounds;BRepBndLib::AddOptimal(part.shape,bounds,false,false);
             bounds.Get(part.min[0],part.min[1],part.min[2],part.max[0],part.max[1],part.max[2]);part.baseMin=part.min;part.baseMax=part.max;
             change->beforeSelection=session.selection;commitBooleanChange(change);
         }

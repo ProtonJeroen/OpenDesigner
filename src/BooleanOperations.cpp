@@ -1,4 +1,5 @@
 #include "CadViewport.h"
+#include "PartPresentation.h"
 #include "BooleanGeometry.h"
 #include "BRepReconstruction.h"
 #include <QJsonArray>
@@ -290,7 +291,7 @@ bool CadViewport::calculateBoolean(BooleanOperation operation, const std::vector
         result.max = result.baseMax = {xmax,ymax,zmax};
         result.name = tr("%1 %2").arg(name).arg(partCount_+1);
         result.color = boxes_[operands.front()].color;
-        result.presentation = new AIS_Shape(shape);
+        result.presentation = new PartPresentation(shape);
         result.presentation->SetColor(Quantity_Color(result.color.redF(),result.color.greenF(),
             result.color.blueF(),Quantity_TOC_RGB));
         auto command = std::make_shared<BooleanChange>();
