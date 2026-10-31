@@ -28,6 +28,7 @@ private:
     friend struct CommandPanelSessionTest;
     friend struct SketchProjectionSessionTest;
     friend struct ProfileExtrusionSessionTest;
+    friend struct DeletePartSessionTest;
     friend struct ActivePartSessionTest;
     bool maybeSave();
     bool saveDocument();
@@ -51,4 +52,5 @@ private:
     QAction* saveAsAction_ = nullptr;
 protected:
     void closeEvent(QCloseEvent* event) override;
+    bool eventFilter(QObject* watched,QEvent* event) override;
 };

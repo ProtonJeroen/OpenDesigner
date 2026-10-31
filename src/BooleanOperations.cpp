@@ -195,16 +195,20 @@ bool CadViewport::previewBooleanSession() {
     view_->Redraw(); return true;
 }
 void CadViewport::commitBooleanChange(const std::shared_ptr<BooleanChange>& command) {
-    command->resultIndex=boxes_.size();
-    boxes_.push_back(command->resultState); ++partCount_;
-    announcePartCreated(command->resultState.name);
+    if(command->createsResult) {
+        command->resultIndex=boxes_.size();
+        boxes_.push_back(command->resultState); ++partCount_;
+        announcePartCreated(command->resultState.name);
+    }
     restoreBooleanChange(*command,true);
     PullChange entry{}; entry.booleanChange=command;entry.debugOperation=command->debugOperation;
     undoStack_.push_back(entry); redoStack_.clear();
     updateHistoryActions();
-    int solids=0;
-    for(TopExp_Explorer solid(command->resultState.shape,TopAbs_SOLID);solid.More();solid.Next()) ++solids;
-    emit statusMessage(tr("Boolean confirmed: %1 solid(s) in %2.").arg(solids).arg(command->resultState.name));
+    if(command->createsResult) {
+        int solids=0;
+        for(TopExp_Explorer solid(command->resultState.shape,TopAbs_SOLID);solid.More();solid.Next()) ++solids;
+        emit statusMessage(tr("Boolean confirmed: %1 solid(s) in %2.").arg(solids).arg(command->resultState.name));
+    } else emit statusMessage(tr("Deleted %1 Part(s).").arg(command->sources.size()));
 }
 void CadViewport::finishModelingInteraction() {
     cancelCommandSession();
@@ -333,9 +337,13 @@ void CadViewport::restoreBooleanChange(const BooleanChange& change, bool after) 
         boxes_[index] = state;
         auto& part = boxes_[index];
         part.active = true;
-        part.presentation->SetShape(part.shape);
-        part.presentation->SetLocalTransformation(part.orientation);
-        part.presentation->SetColor(Quantity_Color(part.color.redF(),part.color.greenF(),part.color.blueF(),Quantity_TOC_RGB));
+        // Source-only deletion retains the unchanged presentation. Reapplying
+        // SetColor here would overwrite its material's diffuse/ambient colors.
+        if(change.createsResult) {
+            part.presentation->SetShape(part.shape);
+            part.presentation->SetLocalTransformation(part.orientation);
+            part.presentation->SetColor(Quantity_Color(part.color.redF(),part.color.greenF(),part.color.blueF(),Quantity_TOC_RGB));
+        }
         if (part.visible) {
             context_->Display(part.presentation,Standard_False);
             context_->SetDisplayMode(part.presentation,AIS_Shaded,Standard_False);
@@ -346,11 +354,51 @@ void CadViewport::restoreBooleanChange(const BooleanChange& change, bool after) 
     };
     if (after) {
         for (const auto index : change.sources) remove(index);
-        restore(change.resultIndex,change.resultState);
+        if(change.createsResult)restore(change.resultIndex,change.resultState);
     } else {
-        remove(change.resultIndex);
+        if(change.createsResult)remove(change.resultIndex);
         for (size_t i = 0; i < change.sources.size(); ++i) restore(change.sources[i],change.sourceStates[i]);
     }
     emit partsChanged();
-    selectParts(after ? std::vector<size_t>{change.resultIndex} : change.beforeSelection);
+    selectParts(after ? (change.createsResult?std::vector<size_t>{change.resultIndex}:std::vector<size_t>{}) : change.beforeSelection);
+}
+
+bool CadViewport::canDeleteParts() const {
+    return !context_.IsNull() && !commandSession_ && !targetPicking() && activeSketchWorkplaneId_.isEmpty()
+        && !moveFacePicking_ && !faceAxisPicking_ && !alignFacePickingReference_
+        && !pullMode_ && !movePartMode_ && !directMoveMode_ && !rotateMode_
+        && !draggingFace_ && !draggingRotation_ && !draggingFaceRotation_ && !rotating_ && !panning_;
+}
+std::vector<size_t> CadViewport::partsForDeletion() const {
+    if(!canDeleteParts() || context_->NbSelected()==0)return {};
+    const auto selection=selectionContext();
+    if(selection.kind!=SelectionContext::Kind::Parts)return {};
+    // selectionContext also serves older edge workflows. Whole-part deletion
+    // must accept only real global owners, never an edge/vertex or cached index.
+    for(context_->InitSelected();context_->MoreSelected();context_->NextSelected()) {
+        bool whole=false;
+        for(const auto index:selection.parts)
+            if(context_->SelectedInteractive()==boxes_[index].presentation
+                && context_->SelectedOwner()==boxes_[index].presentation->GlobalSelOwner())whole=true;
+        if(!whole)return {};
+    }
+    return selection.parts;
+}
+bool CadViewport::deleteSelectedParts() {return deleteParts(partsForDeletion());}
+bool CadViewport::deleteParts(const std::vector<size_t>& indices) {
+    if(!canDeleteParts() || indices.empty())return false;
+    auto change=std::make_shared<BooleanChange>();change->createsResult=false;
+    for(const auto index:indices) {
+        if(!isPartActive(index))return false; // Validate the whole request before mutating anything.
+        if(std::find(change->sources.begin(),change->sources.end(),index)==change->sources.end()) {
+            change->sources.push_back(index);change->sourceStates.push_back(boxes_[index]);
+        }
+    }
+    change->beforeSelection=selectedPartIndices_;
+    QJsonArray ids,uuids;
+    for(const auto index:change->sources){ids.append(QString::number(index));uuids.append(boxes_[index].persistentId);}
+    change->debugOperation=QJsonObject{{"name","Delete Part"},{"partIds",ids},{"persistentPartIds",uuids}};
+    clearHistorySelection();
+    commitBooleanChange(change);
+    return true;
 }
