@@ -17,6 +17,16 @@
 - Numerical geometry and session regressions extend existing extrusion tests,
   including HiDPI panel placement. See [Cut Extrude](CUT_EXTRUDE.md).
 
+## v0.4.6 — Active Part and viewport target picking
+
+- Stable document-level Active Part independent of selection, with optional native
+  metadata, green browser indicator and native AIS silhouette (boundary fallback on older OCCT).
+- Browser and geometry context activation/deactivation; shared eligible-target
+  resolution and viewport picking integrated with Cut Extrude.
+- Temporary target changes preserve activation; geometry history keeps valid IDs.
+- See [architecture, workflow and pending desktop acceptance](ACTIVE_PART.md).
+- Older-OCCT boundary fallback and absent nested assembly UI remain limitations.
+
 ## Next milestones
 - CAD document ownership, persistent save/load and robust selection
 - Direct face modeling and workplanes

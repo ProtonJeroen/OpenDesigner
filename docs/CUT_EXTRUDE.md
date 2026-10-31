@@ -2,7 +2,10 @@
 
 Activate a visible, unlocked Workplane with Edit Sketch, then choose **3D Modeling →
 Cut Extrude**. Select one or more certified Profile regions in the panel and choose
-one visible target Part from the list or viewport/Structure Browser. All regions
+an eligible Active Part automatically, or click visible geometry at the Select
+target part prompt. Use Pick target part to change it; the list and Structure
+Browser remain fallbacks. Temporary targets do not change Active Part. See
+[Active Part](ACTIVE_PART.md). All regions
 on the active Workplane are selected initially; holes belong to their enclosing
 region and remain uncut.
 
@@ -15,6 +18,7 @@ and size-based margin. It does not cut material behind the Workplane.
 The blue, nonselectable preview shows the resulting solid while temporarily hiding
 the original presentation. OK commits one operation; Cancel/Escape restores the
 original display and selection without changing geometry, history or the document.
+Escape during target picking first ends picking and keeps the command open.
 The target keeps its identity, name, color/material properties, placement and
 Structure Browser slot. Undo/Redo and native Save/Open use the existing B-Rep paths.
 A cut can leave multiple solids inside the same Part; it never creates another Part.

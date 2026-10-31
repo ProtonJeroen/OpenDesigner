@@ -375,6 +375,8 @@ void validateSnapshot(const NativeDocumentSnapshot& snapshot) {
         for (int row=1;row<=3;++row) for (int column=1;column<=4;++column)
             if (!std::isfinite(part.transform.Value(row,column))) throw std::runtime_error("Invalid Part placement.");
     }
+    if(!snapshot.activePartId.isEmpty() && std::none_of(snapshot.parts.begin(),snapshot.parts.end(),[&](const auto& p){return p.id==snapshot.activePartId;}))
+        throw std::runtime_error("Active Part does not exist.");
     QString error;
     if(!Sketch::validate(snapshot.sketchEntities,snapshot.constructions,ids.values(),error))
         throw std::runtime_error(error.toStdString());
@@ -418,6 +420,11 @@ bool NativeDocumentStorage::save(const QString& path, const NativeDocumentSnapsh
             colors->SetColor(label, Quantity_Color(part.color.redF(), part.color.greenF(), part.color.blueF(), Quantity_TOC_RGB), XCAFDoc_ColorSurf);
             colors->SetVisibility(label, part.visible);
             putMetadata(label, part);
+        }
+        if (!snapshot.activePartId.isEmpty()) {
+            auto label=root.NewChild();
+            TDataStd_Name::Set(label,TCollection_ExtendedString("OpenDesignerActivePart.v1"));
+            TDataStd_AsciiString::Set(label,TCollection_AsciiString(snapshot.activePartId.toUtf8().constData()));
         }
         putCamera(root, snapshot.camera);
         if(snapshot.schemaVersion>=2) putConstructions(root,snapshot.constructions,snapshot.constructionNameCounters);
@@ -508,6 +515,17 @@ bool NativeDocumentStorage::load(const QString& path, NativeDocumentSnapshot& sn
         }
         if(schema>=2) readConstructions(root,loaded.constructions,loaded.constructionNameCounters);
         if(schema>=3) readSketches(root,loaded.sketchEntities,loaded.constructions,schema);
+        bool foundActivePart=false;
+        for(TDF_ChildIterator it(root);it.More();it.Next()) {
+            Handle(TDataStd_Name) name; Handle(TDataStd_AsciiString) value;
+            if(it.Value().FindAttribute(TDataStd_Name::GetID(),name)
+                && name->Get()==TCollection_ExtendedString("OpenDesignerActivePart.v1")) {
+                if(foundActivePart || !it.Value().FindAttribute(TDataStd_AsciiString::GetID(),value))
+                    throw std::runtime_error("Invalid Active Part metadata.");
+                foundActivePart=true;
+                loaded.activePartId=QString::fromUtf8(value->Get().ToCString());
+            }
+        }
         validateSnapshot(loaded);
         app->Close(document);
         snapshot = std::move(loaded); error.clear(); return true;

@@ -9,6 +9,7 @@
 #include <QLineEdit>
 #include <QDialogButtonBox>
 #include <QPushButton>
+#include <QMouseEvent>
 #include <QTreeWidget>
 #include <QTemporaryDir>
 #include <QKeyEvent>
@@ -45,9 +46,9 @@ struct ProfileExtrusionSessionTest {
     check(v.boxes_.size()==1 && v.isPartActive(0) && v.undoStack_.size()==1 && w.documentDirty_,"New Solid not one commit");
     check(v.sketchEntities_==sketch && v.constructions_.size()==1 && std::abs(volume(v.boxes_[0].shape)-100000)<1.e-6,"sources consumed/volume wrong");
     const auto id=v.boxes_[0].persistentId;check(!id.isEmpty() && w.root_->childCount()==1,"Part identity/browser missing");
-    v.undoPull();check(!v.isPartActive(0),"Undo did not remove new Part");const auto redo=v.redoStack_.size();
+    v.setActivePart(id);v.undoPull();check(!v.isPartActive(0) && v.activePartId().isEmpty(),"Undo did not remove new Part/active reference");const auto redo=v.redoStack_.size();
     v.activateSketchWorkplane(wp.id);v.startProfileExtrusion();v.cancelCommandSession();check(v.redoStack_.size()==redo,"Cancel cleared Redo");
-    v.redoPull();check(v.isPartActive(0) && v.boxes_[0].persistentId==id && v.selectedPartIndices_.empty(),"Redo changed identity/selection");
+    v.redoPull();check(v.isPartActive(0) && v.boxes_[0].persistentId==id && v.selectedPartIndices_.empty() && v.activePartId().isEmpty(),"Redo changed identity/selection");
     // Add to a transformed existing Part; source sketch sits at its world top.
     v.boxes_[0].shape=BRepPrimAPI_MakeBox(100,50,10).Shape();v.boxes_[0].orientation.SetTranslation(gp_Vec(30,40,0));
     v.boxes_[0].name="Stable target";v.boxes_[0].color=QColor(120,150,190);v.applyFaceState(0,v.boxes_[0]);
@@ -69,7 +70,20 @@ struct ProfileExtrusionSessionTest {
     v.activateSketchWorkplane(wp.id);w.documentDirty_=false;const auto cutBefore=v.boxes_[0];const auto cutHistory=v.undoStack_.size();
     auto* cutAction=w.findChild<QAction*>("sketch.cutExtrude");check(cutAction && cutAction->isEnabled(),"Cut action missing");cutAction->trigger();
     CommandPanelTest::waitForInitialAnchor(*v.commandPanel_,v,"Cut panel anchor changed");
-    v.chooseExtrusionTarget({0});auto* cutDepth=v.extrusionControls_->findChild<QLineEdit*>("extrusionDistance");cutDepth->setText("5");
+    check(v.targetPicking(),"Cut without Active Part did not request viewport target");
+    key(v.extrusionControls_->findChild<QLineEdit*>("extrusionDistance"),Qt::Key_Escape);
+    check(v.commandSession_ && !v.targetPicking(),"Escape cancelled entire Cut command");
+    v.extrusionControls_->findChild<QPushButton*>("pickTargetPart")->click();
+    check(v.targetPicking(),"Pick button did not resume target picking");
+    v.view_->SetProj(0,0,1);v.fitAll();Standard_Integer pickX,pickY;
+    v.view_->Convert(35,45,10,pickX,pickY);
+    QMouseEvent targetClick(QEvent::MouseButtonPress,QPointF(pickX,pickY),QPointF(pickX,pickY),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+    v.mousePressEvent(&targetClick);
+    QMouseEvent targetRelease(QEvent::MouseButtonRelease,QPointF(pickX,pickY),QPointF(pickX,pickY),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+    v.mouseReleaseEvent(&targetRelease);
+    check(v.dragDimension_->isHidden(),"target click opened transform controls");
+    check(v.commandSession_->extrusion->target==std::optional<size_t>(0) && !v.targetPicking() && v.activePartId().isEmpty(),"Cut viewport target pick failed/activated Part");
+    auto* cutDepth=v.extrusionControls_->findChild<QLineEdit*>("extrusionDistance");cutDepth->setText("5");
     check(v.commandSession_->valid && std::abs(volume(v.commandSession_->candidate)-56000)<1.e-6,"Cut blind preview wrong");
     check(v.boxes_[0].shape.IsSame(cutBefore.shape) && v.undoStack_.size()==cutHistory && !w.documentDirty_,"Cut preview mutated target");
     check(!v.context_->IsDisplayed(v.boxes_[0].presentation),"Cut preview did not hide original display");
@@ -77,15 +91,18 @@ struct ProfileExtrusionSessionTest {
         && v.undoStack_.size()==cutHistory && !w.documentDirty_ && v.context_->IsDisplayed(v.boxes_[0].presentation),"Failed Cut mutated document/display");cutDepth->setText("5");
     auto* profiles=v.extrusionControls_->findChild<QListWidget*>("cutProfiles");profiles->clearSelection();check(!v.commandSession_->valid,"Empty profiles accepted");profiles->selectAll();
     v.cancelCommandSession();check(v.boxes_[0].shape.IsSame(cutBefore.shape) && !v.commandSession_ && v.context_->IsDisplayed(v.boxes_[0].presentation),"Cut cancel mutated target");
-    v.startCutExtrusion();v.chooseExtrusionTarget({0});
+    v.setActivePart(id);v.startCutExtrusion();
+    check(!v.targetPicking() && v.commandSession_->extrusion->target==std::optional<size_t>(0),"Cut did not use Active Part");
     v.extrusionControls_->findChild<QCheckBox*>("cutReverse")->setChecked(true);
     v.extrusionControls_->findChild<QComboBox*>("cutMode")->setCurrentIndex(1);
     check(v.commandSession_->valid && std::abs(volume(v.commandSession_->candidate)-54000)<1.e-6,"Cut through preview wrong");
     v.confirmCommandSession();check(v.boxes_.size()==1 && v.undoStack_.size()==cutHistory+1 && v.boxes_[0].persistentId==id
         && v.boxes_[0].name==cutBefore.name && v.boxes_[0].color==cutBefore.color && w.root_->childCount()==1,"Cut lost identity/material/browser");
-    v.undoPull();check(v.boxes_[0].shape.IsSame(cutBefore.shape),"Cut undo wrong");v.redoPull();check(std::abs(volume(v.boxes_[0].shape)-54000)<1.e-6,"Cut redo wrong");
+    check(v.activePartId()==id,"Cut replaced Active Part identity");
+    v.undoPull();check(v.activePartId()==id && v.boxes_[0].shape.IsSame(cutBefore.shape),"Cut undo wrong");v.redoPull();check(std::abs(volume(v.boxes_[0].shape)-54000)<1.e-6,"Cut redo wrong");
     QTemporaryDir directory;NativeDocumentSnapshot snap,loaded;QString error;check(v.exportDocumentSnapshot(snap),"snapshot failed");
     const auto path=directory.filePath("extrusion.odc");check(NativeDocumentStorage::save(path,snap,error) && NativeDocumentStorage::load(path,loaded,error),"native roundtrip failed");
+    check(loaded.activePartId==id,"Cut roundtrip lost active reference");
     check(loaded.parts.size()==1 && loaded.parts[0].color==cutBefore.color && loaded.parts[0].name==cutBefore.name && std::abs(volume(loaded.parts[0].shape)-54000)<1.e-6,"Cut save lost geometry");
     check(loaded.parts.size()==1 && loaded.parts[0].id==id && loaded.sketchEntities==boss && loaded.constructions.size()==1,"native storage lost source/Part");
     v.activateSketchWorkplane(wp.id);v.startProfileExtrusion();check(v.importDocumentSnapshot(loaded,error) && !v.commandSession_ && v.undoStack_.empty(),"Open did not reset extrusion/history");

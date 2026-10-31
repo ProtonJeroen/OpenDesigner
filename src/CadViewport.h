@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <QWidget>
 #include <QPoint>
 #include <QColor>
@@ -51,6 +52,18 @@ public:
     bool exportDocumentSnapshot(NativeDocumentSnapshot& snapshot) const;
     bool importDocumentSnapshot(const NativeDocumentSnapshot& snapshot, QString& error);
     void resetDocument();
+    QString activePartId() const { return activePartId_; }
+    QString partId(size_t index) const;
+    std::optional<size_t> partIndexForId(const QString& id) const;
+    bool setActivePart(const QString& id);
+    // Shared single-target adapter. Empty eligibility result means eligible.
+    using TargetEligibility = std::function<QString(size_t)>;
+    void beginTargetPicking(TargetEligibility eligible, std::function<void(const QString&)> accepted);
+    void cancelTargetPicking();
+    bool targetPicking() const { return bool(targetAccepted_); }
+    QString solidTargetError(size_t index) const;
+    std::optional<size_t> initialTargetPart(const TargetEligibility& eligible, QString& error) const;
+
     QString activeSketchWorkplane() const { return activeSketchWorkplaneId_; }
     bool activateSketchWorkplane(const QString& id = {}, bool alignView = true);
     void endSketchEditing();
@@ -129,6 +142,7 @@ public:
 signals:
     void partCreated(const QString& name);
     void partsChanged();
+    void activePartChanged();
     void partSelectionChanged(const std::vector<size_t>& indices);
     void statusMessage(const QString& message);
     void geometryOperationFailed(const QString& operation, const QString& reason);
@@ -166,6 +180,7 @@ private:
     friend struct CommandPanelSessionTest;
     friend struct SketchProjectionSessionTest;
     friend struct ProfileExtrusionSessionTest;
+    friend struct ActivePartSessionTest;
     friend struct CadViewportPullTest;
     friend struct NativeDocumentSessionTest;
     friend struct BooleanOperationsTest;
@@ -546,6 +561,12 @@ private:
     void updateMultiFaceHighlight();
     void clearMultiFaceHighlight();
     void refreshPartSelection();
+    QString activePartId_;
+    TargetEligibility targetEligibility_;
+    std::function<void(const QString&)> targetAccepted_;
+    void refreshActivePart();
+    std::optional<size_t> detectedPart(const QPoint& position);
+
     void applyBoxBounds(size_t index, const std::array<double, 3>& min,
                         const std::array<double, 3>& max);
     bool beginFaceDrag(const QPoint& origin);

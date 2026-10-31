@@ -35,13 +35,18 @@ void CadViewport::startProfileExtrusion() {
     auto* source=new QLabel(plane.name,extrusionControls_);source->setTextFormat(Qt::PlainText);form->addRow(tr("Workplane"),source);
     auto* operation=new QComboBox(extrusionControls_);operation->setObjectName("extrusionOperation");operation->addItems({tr("New Solid"),tr("Add Material")});form->addRow(tr("Operation"),operation);
     auto* target=new QComboBox(extrusionControls_);target->setObjectName("extrusionTarget");target->addItem(tr("Choose one target Part"),-1);
-    for(size_t i=0;i<boxes_.size();++i)if(isPartVisible(i))target->addItem(partName(i),qulonglong(i));
+    for(size_t i=0;i<boxes_.size();++i)if(isPartVisible(i)){target->addItem(partName(i),qulonglong(i));target->setItemData(target->count()-1,partId(i),Qt::UserRole+1);}
     form->addRow(tr("Target Part"),target);target->setEnabled(false);
     auto* depth=new QLineEdit(QLocale().toString(20.0,'f',2),extrusionControls_);depth->setObjectName("extrusionDistance");form->addRow(tr("Distance (mm)"),depth);
     auto* status=new QLabel(extrusionControls_);status->setObjectName("extrusionStatus");status->setTextFormat(Qt::PlainText);status->setWordWrap(true);status->setMaximumWidth(370);layout->addWidget(status);
     commandLayout_->insertWidget(0,extrusionControls_);dragDimension_->hide();commandPanel_->setWindowTitle(tr("Extrude Profile"));commandButtons_->show();
-    connect(operation,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,target](int i){target->setEnabled(i==1);refreshProfileExtrusion();});
-    connect(target,qOverload<int>(&QComboBox::currentIndexChanged),this,[this]{refreshProfileExtrusion();});
+    connect(operation,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,target](int i){
+        target->setEnabled(i==1);
+        if(i==1)beginTargetPicking([this](size_t index){return solidTargetError(index);},[this](const QString& id){if(const auto index=partIndexForId(id))chooseExtrusionTarget({*index});});
+        else cancelTargetPicking();
+        refreshProfileExtrusion();
+    });
+    connect(target,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,target]{if(target->currentIndex()>0)cancelTargetPicking();refreshProfileExtrusion();});
     connect(depth,&QLineEdit::textChanged,this,[this]{refreshProfileExtrusion();});
     refreshSketchPicking();refreshProfileExtrusion();showCommandPanel(commandPanel_);depth->setFocus();depth->selectAll();
 }
@@ -64,13 +69,37 @@ void CadViewport::startCutExtrusion() {
     connect(regions,&QListWidget::itemSelectionChanged,this,[this]{refreshProfileExtrusion();});
     connect(mode,qOverload<int>(&QComboBox::currentIndexChanged),this,[this](int i){extrusionControls_->findChild<QLineEdit*>("extrusionDistance")->setEnabled(i==0);refreshProfileExtrusion();});
     connect(reverse,&QCheckBox::toggled,this,[this]{refreshProfileExtrusion();});
-    state.cutting=true;refreshProfileExtrusion();showCommandPanel(commandPanel_);
+    state.cutting=true;
+    auto* target=extrusionControls_->findChild<QComboBox*>("extrusionTarget");
+    auto* pick=new QPushButton(tr("Pick target part"),extrusionControls_);pick->setObjectName("pickTargetPart");layout->insertWidget(4,pick);
+    const auto beginPick=[this,target] {
+        // Restore the original target display and remove its result preview so
+        // a new geometry pick can reach every visible Part, including this one.
+        target->setCurrentIndex(0);
+        refreshProfileExtrusion();
+        beginTargetPicking([this](size_t i){return solidTargetError(i);},[this](const QString& id){
+            if(const auto index=partIndexForId(id))chooseExtrusionTarget({*index});
+        });
+    };
+    connect(pick,&QPushButton::clicked,this,beginPick);
+    target->setItemText(0,tr("Select target part"));
+    QString targetError;
+    const auto active=initialTargetPart([this](size_t i){return solidTargetError(i);},targetError);
+    if(active)chooseExtrusionTarget({*active});
+    else {
+        beginPick();
+        if(!targetError.isEmpty())emit statusMessage(tr("Active Part cannot be used: %1 Select target part.").arg(targetError));
+    }
+    refreshProfileExtrusion();
+    if(!targetError.isEmpty())extrusionControls_->findChild<QLabel*>("extrusionStatus")->setText(tr("Active Part cannot be used: %1 Select target part.").arg(targetError));
+    showCommandPanel(commandPanel_);
 }
 void CadViewport::chooseExtrusionTarget(const std::vector<size_t>& indices) {
     if(!commandSession_ || !commandSession_->extrusion || !extrusionControls_)return;
     auto* mode=extrusionControls_->findChild<QComboBox*>("extrusionOperation");
     if(mode->currentIndex()!=1)return;
     auto* target=extrusionControls_->findChild<QComboBox*>("extrusionTarget");
+    if(indices.size()==1 && solidTargetError(indices.front()).isEmpty())cancelTargetPicking();
     if(indices.size()!=1) {target->setCurrentIndex(0);return;}
     target->setCurrentIndex(target->findData(QVariant::fromValue<qulonglong>(indices.front())));
 }
@@ -95,7 +124,9 @@ void CadViewport::refreshProfileExtrusion() {
         if(state.adding) {
             const auto data=extrusionControls_->findChild<QComboBox*>("extrusionTarget")->currentData();
             const qlonglong index=data.isValid()?data.toLongLong():-1;
-            if(index<0 || size_t(index)>=state.originals.size() || !isPartVisible(size_t(index))) {fail(tr("Select exactly one existing target Part."));return;}
+            if(index<0 || size_t(index)>=state.originals.size() || !isPartVisible(size_t(index))) {fail(tr("Select target part — click visible geometry, or use the target list / Structure Browser."));return;}
+            const auto id=extrusionControls_->findChild<QComboBox*>("extrusionTarget")->currentData(Qt::UserRole+1).toString();
+            if(partIndexForId(id)!=std::optional<size_t>(size_t(index)) || !solidTargetError(size_t(index)).isEmpty()){fail(tr("Target Part is no longer eligible."));return;}
             state.target=size_t(index);const auto& original=state.originals[*state.target];
             if(!boxes_[*state.target].shape.IsSame(original.shape)){fail(tr("Target changed; cancel and restart."));return;}
             if(state.cutting) {
@@ -126,6 +157,7 @@ void CadViewport::refreshProfileExtrusion() {
 void CadViewport::finishProfileExtrusion(bool confirm) {
     if(!commandSession_ || !commandSession_->extrusion)return;
     if(confirm){refreshProfileExtrusion();if(!commandSession_->valid)return;}
+    cancelTargetPicking();
     auto session=std::move(*commandSession_);commandSession_.reset();const auto state=session.extrusion;
     if(state->cutting && state->target && isPartVisible(*state->target))context_->Display(boxes_[*state->target].presentation,Standard_False);
     if(!session.preview.IsNull())context_->Remove(session.preview,Standard_False);

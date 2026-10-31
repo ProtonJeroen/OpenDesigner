@@ -277,6 +277,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         statusBar()->showMessage(name + tr(" created"), 3000);
         if (!documentTransition_) markDocumentDirty();
     });
+    connect(viewport_, &CadViewport::activePartChanged, this, [this] {
+        const QSignalBlocker blocker(structure_);
+        QPixmap green(14,14);green.fill(QColor("#90D89A"));
+        for(int i=0;i<root_->childCount();++i) {
+            auto* item=root_->child(i);
+            const bool active=viewport_->partId(item->data(0,Qt::UserRole).toULongLong())==viewport_->activePartId() && !viewport_->activePartId().isEmpty();
+            item->setIcon(0,active?QIcon(green):QIcon());
+            item->setToolTip(0,active?tr("Active Part — current modeling target"):QString());
+        }
+        if(!documentTransition_)markDocumentDirty();
+    });
     connect(viewport_, &CadViewport::partsChanged, this, [this] {
         if (!documentTransition_) markDocumentDirty();
     });
@@ -409,7 +420,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(structure_, &QWidget::customContextMenuRequested, this,
             [this, root, setVisibility](const QPoint& pos) {
         auto* item = structure_->itemAt(pos);
-        if(!item) return;
+        if(!item || item==root) {
+            QMenu menu(structure_);auto* clear=menu.addAction(tr("Clear Active Part"));clear->setEnabled(!viewport_->activePartId().isEmpty());
+            if(menu.exec(structure_->viewport()->mapToGlobal(pos))==clear)viewport_->setActivePart({});return;
+        }
         if(item->data(0,Qt::UserRole+1).toString()=="sketch") {
             QStringList ids;
             if(item->isSelected()) for(auto* selected:structure_->selectedItems())
@@ -440,6 +454,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         if (targets.isEmpty()) targets.append(item);
         const size_t index = static_cast<size_t>(item->data(0, Qt::UserRole).toULongLong());
         QMenu menu(structure_);
+        const auto id=viewport_->partId(index);
+        auto* activate=menu.addAction(id==viewport_->activePartId()?tr("Deactivate Part"):tr("Set Active Part"));
+        connect(activate,&QAction::triggered,viewport_,[this,id]{viewport_->setActivePart(id==viewport_->activePartId()?QString():id);});
+        auto* clear=menu.addAction(tr("Clear Active Part"));clear->setEnabled(!viewport_->activePartId().isEmpty());
+        connect(clear,&QAction::triggered,viewport_,[this]{viewport_->setActivePart({});});
         auto* select = menu.addAction(tr("Select"));
         auto* rename = menu.addAction(tr("Rename (F2)"));
         auto* duplicate = menu.addAction(tr("Duplicate Selected Parts"));
@@ -584,6 +603,9 @@ void MainWindow::rebuildStructureBrowser() {
         auto* item = new QTreeWidgetItem(root_, QStringList{viewport_->partName(index)});
         item->setData(0, Qt::UserRole, static_cast<qulonglong>(index));
         item->setFlags(item->flags() | Qt::ItemIsEditable);
+        if(viewport_->partId(index)==viewport_->activePartId() && !viewport_->activePartId().isEmpty()) {
+            QPixmap green(14,14);green.fill(QColor("#90D89A"));item->setIcon(0,QIcon(green));item->setToolTip(0,tr("Active Part — current modeling target"));
+        }
         const bool active = viewport_->isPartActive(index);
         item->setHidden(!active);
         const bool visible = viewport_->isPartVisible(index);
@@ -630,5 +652,11 @@ void MainWindow::rebuildSketchControls() {
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
-    if (maybeSave()) {viewport_->endSketchEditing();event->accept();} else event->ignore();
+    if (maybeSave()) {
+        documentTransition_=true;
+        viewport_->endSketchEditing();
+        viewport_->setActivePart({});
+        documentTransition_=false;
+        event->accept();
+    } else event->ignore();
 }

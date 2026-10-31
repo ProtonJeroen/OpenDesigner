@@ -277,6 +277,7 @@ void CadViewport::contextMenuEvent(QContextMenuEvent* event) {
         std::unique_ptr<QMenu> menu(createSelectionMenu(event->pos()));menu->exec(event->globalPos());return;
     }
     if(context_.IsNull() || commandSession_ || moveFacePicking_ || draggingFace_ || draggingRotation_ || draggingFaceRotation_ || rotating_ || panning_) return;
+    const auto clicked=detectedPart(event->pos());
     auto selection=selectionContext();
     if(selection.kind==SelectionContext::Kind::None && event->reason()==QContextMenuEvent::Mouse) {
         for(const auto& part:boxes_) if(part.active && part.visible) {
@@ -294,7 +295,17 @@ void CadViewport::contextMenuEvent(QContextMenuEvent* event) {
     // An existing selection owns the menu everywhere, including empty space.
     // Right-click never replaces or clears it to provide the zoom action.
     std::unique_ptr<QMenu> menu(createSelectionMenu(event->pos()));
-    if(menu) menu->exec(event->globalPos());
+    if(menu) {
+        menu->addSeparator();
+        if(clicked) {
+            const auto id=partId(*clicked);
+            auto* active=menu->addAction(id==activePartId_?tr("Deactivate Part"):tr("Set Active Part"));
+            connect(active,&QAction::triggered,this,[this,id]{setActivePart(id==activePartId_?QString():id);});
+        }
+        auto* clear=menu->addAction(tr("Clear Active Part"));clear->setEnabled(!activePartId_.isEmpty());
+        connect(clear,&QAction::triggered,this,[this]{setActivePart({});});
+        menu->exec(event->globalPos());
+    }
 }
 
 void CadViewport::resetModelingTools() {

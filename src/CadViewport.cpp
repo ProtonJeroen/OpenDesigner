@@ -25,6 +25,8 @@
 #include <OpenGl_GraphicDriver.hxx>
 #include <AIS_Shape.hxx>
 #include <Prs3d_Drawer.hxx>
+#include <Prs3d_LineAspect.hxx>
+#include <TopExp_Explorer.hxx>
 #include <Prs3d_ShadingAspect.hxx>
 #include <Graphic3d_ZLayerId.hxx>
 #include <StdSelect_BRepOwner.hxx>
@@ -177,6 +179,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
             cancelCommandSession();emit statusMessage(tr("Project 3D Geometry cancelled because the model changed."));
         }
     };
+    connect(this,&CadViewport::partsChanged,this,[this]{refreshActivePart();});
     connect(this,&CadViewport::partsChanged,this,invalidateProjection);
     connect(this,&CadViewport::constructionsChanged,this,invalidateProjection);
     connect(this,&CadViewport::sketchEntitiesChanged,this,invalidateProjection);
@@ -298,6 +301,7 @@ void CadViewport::confirmCommandSession() {
     }
 }
 void CadViewport::cancelCommandSession() {
+    cancelTargetPicking();
     if(commandSession_ && commandSession_->extrusion) {finishProfileExtrusion(false);return;}
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Sketch) {finishSketchEdit(false);return;}
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Construction) {
@@ -422,7 +426,7 @@ bool CadViewport::eventFilter(QObject* watched, QEvent* event) {
         if (sessionWidget && (key->key()==Qt::Key_Escape || key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter)) {
             event->accept();
             if (event->type()==QEvent::KeyPress) {
-                if (key->key()==Qt::Key_Escape) cancelCommandSession();
+                if (key->key()==Qt::Key_Escape) {if(targetPicking()) cancelTargetPicking();else cancelCommandSession();}
                 else if(commandSession_->drawing && !commandSession_->drawing->complete && sketchDrawingPanel_) {
                     const bool polar=sketchDrawingPanel_->parameterWidget(widget);
                     useSketchNumeric(polar);
@@ -1156,6 +1160,7 @@ void CadViewport::fitAll() {
 bool CadViewport::exportDocumentSnapshot(NativeDocumentSnapshot& snapshot) const {
     try {
         snapshot = {};
+        snapshot.activePartId = activePartId_;
         snapshot.schemaVersion = NativeDocumentStorage::CurrentSchemaVersion;
         snapshot.constructions = constructions_;
         snapshot.sketchEntities = sketchEntities_;
@@ -1207,6 +1212,8 @@ bool CadViewport::exportDocumentSnapshot(NativeDocumentSnapshot& snapshot) const
 }
 
 void CadViewport::resetDocument() {
+    cancelTargetPicking();
+    setActivePart({});
     endSketchEditing();
     cancelCommandSession();
     finishModelingInteraction();
@@ -1332,6 +1339,7 @@ bool CadViewport::recognizePullPrimitive(CadPart& part) const {
 }
 
 bool CadViewport::importDocumentSnapshot(const NativeDocumentSnapshot& snapshot, QString& error) {
+    if(!snapshot.activePartId.isEmpty() && std::none_of(snapshot.parts.begin(),snapshot.parts.end(),[&](const auto& p){return p.id==snapshot.activePartId;})) {error=tr("Active Part does not exist.");return false;}
     if ((snapshot.schemaVersion<1 || snapshot.schemaVersion>NativeDocumentStorage::CurrentSchemaVersion)) {
         error = tr("Unsupported OpenDesigner document schema.");
         return false;
@@ -1448,6 +1456,7 @@ bool CadViewport::importDocumentSnapshot(const NativeDocumentSnapshot& snapshot,
         constructionLabels_=std::move(importedLabels);constructionNameCounters_=snapshot.constructionNameCounters;
         Construction::advanceNameCounters(constructions_,constructionNameCounters_);
         boxes_=std::move(imported);
+        setActivePart(snapshot.activePartId);
         partCount_=static_cast<int>(boxes_.size());
         // Staged presentations were prepared while the previous document's
         // editing context was still active. Open restores ordinary 3D/2D picks.
@@ -2399,12 +2408,14 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
     panning_ = e->button() == Qt::MiddleButton && (e->modifiers() & Qt::ShiftModifier);
     if (rotating_ && !view_.IsNull()) view_->StartRotation(previous_.x(), previous_.y());
     if (e->button() == Qt::LeftButton && !context_.IsNull()) {
-        if(commandSession_ && commandSession_->extrusion) {
-            context_->MoveTo(e->pos().x(),e->pos().y(),view_,Standard_True);
-            if(context_->HasDetected()) for(size_t i=0;i<boxes_.size();++i)
-                if(boxes_[i].presentation==context_->DetectedInteractive()) {chooseExtrusionTarget({i});break;}
-            return;
+        if(targetPicking()) {
+            const auto index=detectedPart(e->pos());
+            if(!index) {emit statusMessage(tr("Select target part: click visible part geometry."));return;}
+            const auto error=targetEligibility_?targetEligibility_(*index):QString();
+            if(!error.isEmpty()){emit statusMessage(error);return;}
+            const auto id=partId(*index);auto accepted=targetAccepted_;cancelTargetPicking();accepted(id);return;
         }
+        if(commandSession_ && commandSession_->extrusion)return;
         if(sketchProjectionClick(e->pos(),e->modifiers())) return;
         if(sketchConstructionClick(e->pos())) return;
         if(overdrawClick(e->pos())) return;
@@ -2832,7 +2843,7 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
 void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     if(e->button()==Qt::LeftButton) constructionMouseRelease();
     if (e->button() == Qt::MiddleButton) { rotating_ = false; panning_ = false; }
-    if(e->button()==Qt::LeftButton && commandSession_ && (commandSession_->kind==CommandSession::Kind::Boolean
+    if(e->button()==Qt::LeftButton && commandSession_ && (commandSession_->extrusion || commandSession_->kind==CommandSession::Kind::Boolean
         || commandSession_->kind==CommandSession::Kind::Construction || commandSession_->kind==CommandSession::Kind::Sketch)) return;
     if (e->button()==Qt::LeftButton && commandSession_) {
         draggingFace_ = draggingRotation_ = draggingFaceRotation_ = false;
@@ -2852,4 +2863,93 @@ void CadViewport::wheelEvent(QWheelEvent* e) {
     view_->SetScale(view_->Scale() * scale);
     updateConstructionLabels();
     view_->Redraw();
+}
+
+QString CadViewport::partId(size_t index) const {
+    return isPartActive(index)?boxes_[index].persistentId:QString();
+}
+std::optional<size_t> CadViewport::partIndexForId(const QString& id) const {
+    if(!id.isEmpty()) for(size_t i=0;i<boxes_.size();++i)
+        if(boxes_[i].active && boxes_[i].persistentId==id)return i;
+    return {};
+}
+bool CadViewport::setActivePart(const QString& id) {
+    if(!id.isEmpty() && !partIndexForId(id))return false;
+    if(activePartId_==id)return true;
+    activePartId_=id;refreshActivePart();emit activePartChanged();return true;
+}
+namespace {
+// Compile against older OCCT releases too; their drawer boundary outline is
+// the fallback. Neither path changes the shaded surface or adds geometry.
+template<class Aspect>
+std::optional<bool> activeSilhouette(Aspect& aspect,bool active) {
+    if constexpr(requires { aspect.SetDrawSilhouette(active); }) {
+        if(aspect.ToDrawSilhouette()==active)return false;
+        aspect.SetDrawSilhouette(active);
+        if(active) {
+            aspect.SetEdgeColor(Quantity_Color(0.565,0.847,0.604,Quantity_TOC_RGB));
+            aspect.SetEdgeWidth(1.8);
+        }
+        return true;
+    }
+    return {};
+}
+}
+void CadViewport::refreshActivePart() {
+    if(!activePartId_.isEmpty() && !partIndexForId(activePartId_)) {
+        activePartId_.clear();emit activePartChanged();
+    }
+    if(context_.IsNull())return;
+    for(auto& part:boxes_) if(!part.presentation.IsNull()) {
+        const bool active=part.active && part.persistentId==activePartId_;
+        auto drawer=part.presentation->Attributes();
+        if(!active && !drawer->HasOwnShadingAspect() && !drawer->HasOwnFaceBoundaryDraw())continue;
+        if(active)drawer->SetupOwnShadingAspect();
+        auto changed=activeSilhouette(*drawer->ShadingAspect()->Aspect(),active);
+        if(!changed) {
+            changed=drawer->FaceBoundaryDraw()!=active;
+            if(*changed) {
+                drawer->SetFaceBoundaryDraw(active);
+                if(active)drawer->SetFaceBoundaryAspect(new Prs3d_LineAspect(Quantity_Color(0.565,0.847,0.604,Quantity_TOC_RGB),Aspect_TOL_SOLID,1.8));
+            }
+        }
+        // Redisplay can restore OCCT selection highlighting. Leave unrelated
+        // presentations alone, especially during history selection cleanup.
+        if(*changed && part.active)context_->Redisplay(part.presentation,Standard_False);
+    }
+    if(!view_.IsNull())view_->Redraw();
+}
+std::optional<size_t> CadViewport::detectedPart(const QPoint& position) {
+    if(context_.IsNull())return {};
+    context_->MoveTo(position.x(),position.y(),view_,Standard_True);
+    if(context_->HasDetected()) for(size_t i=0;i<boxes_.size();++i)
+        if(isPartVisible(i) && boxes_[i].presentation==context_->DetectedInteractive())return i;
+    return {};
+}
+QString CadViewport::solidTargetError(size_t index) const {
+    if(!isPartVisible(index))return tr("Target Part is hidden or no longer exists.");
+    if(!TopExp_Explorer(boxes_[index].shape,TopAbs_SOLID).More())return tr("Target Part must contain a solid.");
+    return {};
+}
+void CadViewport::beginTargetPicking(TargetEligibility eligible,std::function<void(const QString&)> accepted) {
+    initializeViewer();cancelTargetPicking();targetEligibility_=std::move(eligible);targetAccepted_=std::move(accepted);
+    for(auto& part:boxes_)if(part.active && part.visible){
+        context_->Deactivate(part.presentation);context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
+    }
+    emit statusMessage(tr("Select target part"));
+}
+void CadViewport::cancelTargetPicking() {
+    if(!targetPicking())return;
+    targetAccepted_={};targetEligibility_={};refreshSketchPicking(true);
+    context_->ClearDetected(Standard_False);
+    if(!view_.IsNull())view_->Redraw();
+    emit statusMessage(tr("Target picking ended. Use Pick target part to resume."));
+}
+
+std::optional<size_t> CadViewport::initialTargetPart(const TargetEligibility& eligible,QString& error) const {
+    error.clear();const auto index=partIndexForId(activePartId_);
+    if(!index)return {};
+    if(!isPartVisible(*index))error=tr("Active Part is hidden.");
+    else if(eligible)error=eligible(*index);
+    return error.isEmpty()?index:std::nullopt;
 }
