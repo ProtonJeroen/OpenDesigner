@@ -371,7 +371,11 @@ struct SketchProjectionSessionTest {
               "projection panel scrolling does not match actual viewport capacity");
         const auto at=bounds().topLeft()+QPoint(std::min(25,bounds().width()-frame.width()),
                                                std::min(25,bounds().height()-frame.height()));
-        panel->move(panel->pos()+at-panel->frameGeometry().topLeft());
+        check(bounds().contains(QRect(at,frame.size())),"requested projection panel frame is outside the viewport");
+        // Request frame coordinates explicitly. QWidget::move() converts them
+        // to client coordinates using decoration margins that may still be zero;
+        // late decorations can shift the frame and trigger viewport clamping.
+        panel->windowHandle()->setFramePosition(at);
         waitForPanelPosition(*panel,at,"projection manual placement did not finish configuring");
         pick(v,{{0,top(v)}});
         waitForPanelPosition(*panel,at,"selection/preview reset user panel position");
