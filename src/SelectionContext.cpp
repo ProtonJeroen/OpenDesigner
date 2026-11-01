@@ -201,6 +201,8 @@ void CadViewport::populatePartMenu(QMenu& menu,const SelectionContext& selection
     add(tr("Move Part"),"context.move_part",[this]() {selectionMode_=SelectionMode::Part; emit selectionModeChanged(selectionMode_); setMovePartMode(false);setRotateMode(false);setDirectMoveMode(true);});
     add(tr("Rotate Part"),"context.rotate_part",[this]() {selectionMode_=SelectionMode::Part; emit selectionModeChanged(selectionMode_); setMovePartMode(false);setDirectMoveMode(false);setRotateMode(true);});
     add(tr("Duplicate"),"context.duplicate",[this]() {duplicateSelectedParts();});
+    if(!partsForDeletion().empty())
+        add(tr("Delete Part"),"context.delete_part",[this]() {deleteSelectedParts();});
     auto* boolean=menu.addMenu(tr("Boolean")); boolean->setObjectName(QStringLiteral("context.boolean"));
     bool solids=!selection.parts.empty();
     for(const auto index:selection.parts) if(!TopExp_Explorer(boxes_[index].shape,TopAbs_SOLID).More()) solids=false;

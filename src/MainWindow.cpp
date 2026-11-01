@@ -1,4 +1,6 @@
 #include "MainWindow.h"
+#include <QKeyEvent>
+#include <QApplication>
 #include "CadViewport.h"
 #include "NativeDocument.h"
 #include <QTreeWidget>
@@ -49,6 +51,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     structure_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     structure_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     structure_->setContextMenuPolicy(Qt::CustomContextMenu);
+    structure_->installEventFilter(this);
+    structure_->viewport()->installEventFilter(this);
+    viewport_->installEventFilter(this);
     structure_->setEditTriggers(QAbstractItemView::EditKeyPressed | QAbstractItemView::DoubleClicked);
     structure_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     root_ = new QTreeWidgetItem(structure_, QStringList{tr("Assembly 1")});
@@ -462,6 +467,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         auto* select = menu.addAction(tr("Select"));
         auto* rename = menu.addAction(tr("Rename (F2)"));
         auto* duplicate = menu.addAction(tr("Duplicate Selected Parts"));
+        auto* remove=menu.addAction(targets.size()>1?tr("Delete Selected Parts"):tr("Delete Part"));
+        remove->setObjectName("structure.delete_part");remove->setEnabled(viewport_->canDeleteParts());
         auto* color = menu.addAction(tr("Color..."));
         menu.addSeparator();
         auto* hide = menu.addAction(targets.size() > 1 ? tr("Hide Selected Parts") : tr("Hide"));
@@ -480,6 +487,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             }
             viewport_->selectParts(indices);
             viewport_->duplicateSelectedParts();
+        } else if (chosen == remove) {
+            std::vector<size_t> indices;
+            for(auto* target:targets)indices.push_back(target->data(0,Qt::UserRole).toULongLong());
+            viewport_->deleteParts(indices);
         } else if (chosen == color) {
             const QColor selected = QColorDialog::getColor(viewport_->partColor(index),this,tr("Part Color"));
             if (selected.isValid())
@@ -659,4 +670,24 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         documentTransition_=false;
         event->accept();
     } else event->ignore();
+}
+
+bool MainWindow::eventFilter(QObject* watched,QEvent* event) {
+    if(event->type()==QEvent::KeyPress) {
+        const auto* key=static_cast<QKeyEvent*>(event);
+        if(key->key()==Qt::Key_Delete && key->modifiers()==Qt::NoModifier
+            && QApplication::focusWidget()==watched && viewport_->canDeleteParts()) {
+            if(watched==viewport_) {
+                if(viewport_->deleteSelectedParts()){event->accept();return true;}
+            } else if(watched==structure_ || watched==structure_->viewport()) {
+                std::vector<size_t> parts;
+                for(auto* item:structure_->selectedItems()) {
+                    if(item->parent()!=root_)return QMainWindow::eventFilter(watched,event);
+                    parts.push_back(item->data(0,Qt::UserRole).toULongLong());
+                }
+                if(viewport_->deleteParts(parts)){event->accept();return true;}
+            }
+        }
+    }
+    return QMainWindow::eventFilter(watched,event);
 }

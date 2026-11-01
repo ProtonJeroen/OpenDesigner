@@ -378,6 +378,7 @@ void runCommandPanelSessions();
 void runSketchProjectionSessions();
 void runProfileExtrusionSessions();
 void runActivePartSessions();
+void runDeletePartSessions();
 void runSketchEllipseSessions();
 void runSketchEllipseDrawing();
 int main(int argc,char** argv) {
@@ -387,7 +388,8 @@ int main(int argc,char** argv) {
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc,argv);
     try {
-        if(app.arguments().contains("--active-part")) runActivePartSessions();
+        if(app.arguments().contains("--delete-parts")) runDeletePartSessions();
+        else if(app.arguments().contains("--active-part")) runActivePartSessions();
         else if(app.arguments().contains("--extrusion")) runProfileExtrusionSessions();
         else if(app.arguments().contains("--workplane-rendering")) runWorkplaneRendering();
         else if(app.arguments().contains("--orthogonal-lines")) runSketchOrthogonalLines();

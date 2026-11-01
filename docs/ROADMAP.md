@@ -27,6 +27,15 @@
 - See [architecture, workflow and pending desktop acceptance](ACTIVE_PART.md).
 - Older-OCCT boundary fallback and absent nested assembly UI remain limitations.
 
+## v0.4.7 — Delete Part
+
+- Single/multiple whole-Part deletion from Delete and viewport/browser menus.
+- One atomic history operation preserves stable identities, properties and order
+  on Undo; hidden browser Parts are supported.
+- Local subshape selections, text editing and active tools are protected.
+- Reuses existing AIS cleanup, Active Part lifecycle and native persistence.
+- See [workflow, architecture and pending desktop acceptance](DELETE_PART.md).
+
 ## Next milestones
 - CAD document ownership, persistent save/load and robust selection
 - Direct face modeling and workplanes

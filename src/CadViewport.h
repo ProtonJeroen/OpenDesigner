@@ -121,6 +121,9 @@ public:
     void rotateFace();
     void alignFace();
     void deleteFace();
+    bool canDeleteParts() const;
+    bool deleteParts(const std::vector<size_t>& indices);
+    bool deleteSelectedParts();
     enum class SelectionMode { Face, Part };
     void setSelectionMode(SelectionMode mode);
     SelectionMode selectionMode() const { return selectionMode_; }
@@ -188,6 +191,7 @@ private:
     friend struct SelectionContextTest;
     friend struct DebugModelTest;
     friend struct DeleteFaceTest;
+    friend struct DeletePartSessionTest;
     struct SelectedFace { size_t partIndex; TopoDS_Face face; };
     struct SelectionContext {
         enum class Kind { None, Parts, Faces, Constructions, Sketches };
@@ -204,6 +208,7 @@ private:
     SelectionContext selectionContext() const;
     QMenu* createSelectionMenu(const QPoint& anchor);
     void populatePartMenu(QMenu& menu, const SelectionContext& selection);
+    std::vector<size_t> partsForDeletion() const;
     void populateFaceMenu(QMenu& menu, const SelectionContext& selection, const QPoint& anchor);
     bool supportsResize(const SelectionContext& selection) const;
     void updateSelectedFaceArrow(const QPoint& point);
@@ -242,9 +247,12 @@ private:
     };
     bool recognizePullPrimitive(CadPart& part) const;
     struct BooleanChange {
+        // Source-only transactions implement Delete Part using the same stable
+        // slots, full snapshots and restoration path as consumed Boolean parts.
+        bool createsResult = true;
         std::vector<size_t> sources;
         std::vector<CadPart> sourceStates;
-        size_t resultIndex;
+        size_t resultIndex = 0;
         CadPart resultState;
         std::vector<size_t> beforeSelection;
         QJsonObject debugOperation;
