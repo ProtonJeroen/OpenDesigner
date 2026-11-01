@@ -5,24 +5,13 @@
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBndLib.hxx>
-#include <BRepClass3d_SolidClassifier.hxx>
 #include <Bnd_Box.hxx>
 #include <Precision.hxx>
-#include <TopoDS.hxx>
 #include <Standard_Failure.hxx>
 #include <limits>
 namespace SketchProfileExtrusion {
 namespace {
 Result fail(Code code,const QString& message,std::optional<size_t> region={}) {Result r;r.diagnostics.push_back({code,message,region});return r;}
-bool certified(const TopoDS_Shape& shape,double& volume,size_t& count) {
-    count=0;if(!BooleanGeometry::validSolid(shape,volume))return false;
-    for(TopExp_Explorer it(shape,TopAbs_SOLID);it.More();it.Next()) {
-        double v=0;if(!BooleanGeometry::validSolid(it.Current(),v) || v<=0)return false;
-        BRepClass3d_SolidClassifier classifier(TopoDS::Solid(it.Current()));classifier.PerformInfinitePoint(Precision::Confusion());
-        if(classifier.State()!=TopAbs_OUT)return false;++count;
-    }
-    return count>0;
-}
 }
 Result extrude(const SketchProfileBuilder::Result& faces,const gp_Dir& normal,double distance) {
     if(!faces.success || faces.faces.empty() || !std::isfinite(distance) || !std::isfinite(faces.effectiveVertexTolerance) || faces.effectiveVertexTolerance<Precision::Confusion()
@@ -40,7 +29,7 @@ Result extrude(const SketchProfileBuilder::Result& faces,const gp_Dir& normal,do
             BRepPrimAPI_MakePrism prism(f.shape,gp_Vec(normal)*distance,true,true);
             if(!prism.IsDone())return fail(Code::InvalidSolid,"OCCT could not construct the prism.",i);
             const auto shape=prism.Shape();double volume=0;size_t solids=0;
-            if(shape.ShapeType()!=TopAbs_SOLID || !certified(shape,volume,solids) || solids!=1)return fail(Code::InvalidSolid,"Prism is not an oriented, closed, positive-volume solid.",i);
+            if(shape.ShapeType()!=TopAbs_SOLID || !BooleanGeometry::certifiedSolid(shape,volume,solids) || solids!=1)return fail(Code::InvalidSolid,"Prism is not an oriented, closed, positive-volume solid.",i);
             if(i==0)first=shape;builder.Add(compound,shape);expected+=area.Mass()*std::abs(distance);
             // Refuse placements which cannot resolve the approved geometric tolerance.
             Bnd_Box bounds;BRepBndLib::AddOptimal(shape,bounds,false,false);double a,b,c,d,e,fz;bounds.Get(a,b,c,d,e,fz);
@@ -48,7 +37,7 @@ Result extrude(const SketchProfileBuilder::Result& faces,const gp_Dir& normal,do
                 return fail(Code::NumericalFailure,"Extruded world coordinates cannot resolve the modeling tolerance.",i);
         }
         Result result;result.shape=faces.faces.size()==1?first:TopoDS_Shape(compound);
-        if(!certified(result.shape,result.volume,result.solidCount) || result.solidCount!=faces.faces.size()
+        if(!BooleanGeometry::certifiedSolid(result.shape,result.volume,result.solidCount) || result.solidCount!=faces.faces.size()
             || std::abs(result.volume-expected)>std::max(1.e-7L,std::abs(expected)*1.e-9L))return fail(Code::InvalidSolid,"Prism volume or solid count does not match its source regions.");
         result.success=true;return result;
     } catch(const Standard_Failure& e) {return fail(Code::NumericalFailure,QString::fromUtf8(e.GetMessageString()));}
@@ -59,11 +48,11 @@ Result cut(const SketchProfileBuilder::Result& faces,const gp_Ax3& frame,
            double depth,bool reversed,bool throughAll) {
     try {
         double originalVolume=0;size_t count=0;
-        if(!certified(target,originalVolume,count) || placement.IsNegative()
+        if(!BooleanGeometry::certifiedSolid(target,originalVolume,count) || placement.IsNegative()
            || std::abs(placement.ScaleFactor()-1)>1.e-12)
             return fail(Code::InvalidInput,"Cut requires a valid solid target with rigid positive placement.");
         const auto world=BRepBuilderAPI_Transform(target,placement,true).Shape();
-        if(!certified(world,originalVolume,count))return fail(Code::InvalidSolid,"Transformed target is invalid.");
+        if(!BooleanGeometry::certifiedSolid(world,originalVolume,count))return fail(Code::InvalidSolid,"Transformed target is invalid.");
         const gp_Vec direction=gp_Vec(frame.Direction())*(reversed?-1:1);
         if(throughAll) {
             Bnd_Box bounds;BRepBndLib::AddOptimal(world,bounds,false,false);
@@ -82,7 +71,7 @@ Result cut(const SketchProfileBuilder::Result& faces,const gp_Ax3& frame,
         if(solids==0)return fail(Code::InvalidSolid,"Cut would remove the entire target.");
         shape=BooleanGeometry::normalizeBooleanResult(shape);
         Result result;result.shape=shape;
-        if(!certified(shape,result.volume,result.solidCount))return fail(Code::InvalidSolid,"Cut produced invalid solid geometry.");
+        if(!BooleanGeometry::certifiedSolid(shape,result.volume,result.solidCount))return fail(Code::InvalidSolid,"Cut produced invalid solid geometry.");
         if(result.volume>=originalVolume-std::max(1.e-9,originalVolume*1.e-12))return fail(Code::Unchanged,"Profiles remove no measurable material from the target.");
         result.success=true;return result;
     } catch(const Standard_Failure& e) {return fail(Code::NumericalFailure,QString::fromUtf8(e.GetMessageString()));}
@@ -91,17 +80,17 @@ Result cut(const SketchProfileBuilder::Result& faces,const gp_Ax3& frame,
 Result addMaterial(const Result& tool,const TopoDS_Shape& target,const gp_Trsf& placement) {
     try {
         double toolVolume=0,targetVolume=0;size_t toolCount=0,targetCount=0;
-        if(!tool.success || !certified(tool.shape,toolVolume,toolCount) || !certified(target,targetVolume,targetCount) || targetCount!=1)
+        if(!tool.success || !BooleanGeometry::certifiedSolid(tool.shape,toolVolume,toolCount) || !BooleanGeometry::certifiedSolid(target,targetVolume,targetCount) || targetCount!=1)
             return fail(Code::InvalidInput,"Add Material requires a valid extrusion and one connected target solid.");
         if(placement.IsNegative() || std::abs(placement.ScaleFactor()-1)>1.e-12)return fail(Code::InvalidInput,"Target placement must be a rigid positive instance transform.");
         const auto world=BRepBuilderAPI_Transform(target,placement,true).Shape();
-        if(!certified(world,targetVolume,targetCount))return fail(Code::InvalidSolid,"Transformed target is invalid.");
+        if(!BooleanGeometry::certifiedSolid(world,targetVolume,targetCount))return fail(Code::InvalidSolid,"Transformed target is invalid.");
         auto fused=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(world,tool.shape);
         int count=0;fused=BooleanGeometry::solidResult(fused,count);
         if(count!=1)return fail(Code::Disconnected,"The extrusion must connect to the target as one solid; disconnected additions are refused.");
         fused=BooleanGeometry::normalizeBooleanResult(fused);
         Result result;result.shape=fused;
-        if(!certified(fused,result.volume,result.solidCount) || result.solidCount!=1)return fail(Code::InvalidSolid,"Fused target is not one valid closed solid.");
+        if(!BooleanGeometry::certifiedSolid(fused,result.volume,result.solidCount) || result.solidCount!=1)return fail(Code::InvalidSolid,"Fused target is not one valid closed solid.");
         if(result.volume<=targetVolume+std::max(1.e-9,targetVolume*1.e-12))return fail(Code::Unchanged,"The extrusion adds no measurable volume to the target.");
         result.success=true;return result;
     } catch(const Standard_Failure& e) {return fail(Code::NumericalFailure,QString::fromUtf8(e.GetMessageString()));}

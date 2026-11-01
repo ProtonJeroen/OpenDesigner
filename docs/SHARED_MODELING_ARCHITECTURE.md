@@ -1,9 +1,11 @@
-# Shared modeling architecture — v0.4.8, phases 8A–8B
+# Shared modeling architecture — v0.4.8, phases 8A–8C
 
 Phase 8A established the reuse contract for existing profile, Boolean,
 target-picking and history mechanisms without runtime changes. Phase 8B adds
 the shared operation enum and unified Extrude command orchestration described
 below; geometry algorithms, history and the document schema remain unchanged.
+Phase 8C adds the headless revolution kernel and shares the existing sweep result
+and solid certificate; Extrude geometry behavior remains unchanged.
 The workflow reference is SolidDesigner / Modeling 2008 v16.0; the contracts below
 describe OpenDesigner behavior, without claiming exact original UI parity.
 
@@ -14,7 +16,8 @@ describe OpenDesigner behavior, without claiming exact original UI parity.
 | Profile analysis | `SketchProfileValidation::validate(entities, workplaneId, tolerance)` | Read-only local XY topology; ignores construction and other Workplanes; preserves holes, islands and region membership; refuses unsupported/invalid input. |
 | Certified planar faces | `SketchProfileBuilder::build(profile, frame, policy)` | Rechecks input, builds world-space analytic faces and certifies topology, area and vertex tolerances. Reuse for both sweep types. |
 | Extrusion tool | `SketchProfileExtrusion::extrude(faces, normal, signedDistance)` | Headless prism generation and certification; no Part, session, presentation or history ownership. |
-| Existing extrusion result | `SketchProfileExtrusion::Result` | Success, world-space solid/compound, solid count, volume and diagnostics. Failed results must never be committed. |
+| Shared sweep result | `SketchProfileSweep::Result` (also aliased as `SketchProfileExtrusion::Result` and `SketchProfileRevolution::Result`) | Success, world-space solid/compound, solid count, volume and diagnostics. Failed results must never be committed. |
+| Revolution tool | `SketchProfileRevolution::revolve(faces, worldAxis, signedDegrees)` | Headless OCCT rotational sweep and certification; see [Revolve geometry](REVOLVE_GEOMETRY.md) for supported axes and safe refusals. |
 | Add | `SketchProfileExtrusion::addMaterial(tool, target, placement)` | Local target plus positive rigid placement; one connected target/result; rejects disconnected or unchanged additions. |
 | Cut | `SketchProfileExtrusion::cut(faces, frame, target, placement, depth, reversed, throughAll)` | Extrusion-specific reach/tool generation followed by subtraction; rejects no change and total removal; permits multiple remaining solids in the same Part. |
 | Boolean kernel helpers | `BooleanGeometry::{combine, solidResult, validSolid, normalizeBooleanResult}` | Non-destructive OCCT operations, solid extraction, validation and material-preserving normalization; no command/document ownership. Shared with existing Part Boolean commands. |
