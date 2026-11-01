@@ -1,4 +1,4 @@
-# Extrude — v0.4.8, phase 8B
+# Extrude — v0.4.8
 
 For the v0.4.8 Extrude/Revolve reuse contract and phase boundaries, see
 [Shared modeling architecture](SHARED_MODELING_ARCHITECTURE.md).
@@ -7,6 +7,9 @@ Activate a visible, unlocked Workplane with **Edit Sketch**, then choose
 **3D Modeling → Extrude** (also on the 3D Modeling toolbar). All Profile entities
 on that Workplane participate, including hidden/locked Profiles. Construction
 entities never close a profile. Sources are independent and are not consumed.
+There is one menu/toolbar action and one Command Panel; the former Extrude Profile
+and separate Cut Extrude workflows are consolidated here. Revolve uses the same
+three operation modes and target policy; see [Revolve](REVOLVE.md).
 
 The approved workflow is inspired by SolidDesigner v16's closed-profile
 modeling. The controls and policies below are OpenDesigner implementation choices;
@@ -17,9 +20,9 @@ no undocumented original v16 interaction is claimed.
 - **Add Material**: use the eligible Active Part automatically; otherwise pick
   one visible target directly in the viewport. **Pick target part**, the dropdown
   and Structure Browser allow explicit overrides without changing Active Part.
-  The preview is the actual fused target. No
-  temporary extrusion-tool Part is committed. Target identity, name, color,
-  visibility, browser slot and instance transform are retained. Other Parts are
+  The preview is the actual fused target. No temporary extrusion-tool Part is
+  committed. Target identity, name, color, visibility, browser slot and instance
+  transform are retained. Other Parts are
   untouched. Targets must currently contain one connected solid.
 - **Remove Material**: use the same target policy as Add. Select certified regions,
   **Blind** or **Through All**, and optionally **Reverse direction**. See
@@ -34,9 +37,10 @@ no undocumented original v16 interaction is claimed.
 - Blue preview is nonselectable, temporary and independent of document/history.
   Parameter changes rebuild from the original source snapshot. Invalid values,
   disconnected additions and unchanged fusions clear preview and disable OK.
-- **OK/Enter** confirms one history operation; **Cancel/Escape** discards it and
-  restores selection. Cancelling preserves existing Redo. New/Open, source/model
-  changes or switching commands cancel the session. Save captures confirmed
+- **OK/Enter** confirms one history operation; panel **Cancel** discards it and
+  restores selection. **Escape** first ends target picking if it is active;
+  otherwise it cancels the command. Cancelling preserves existing Redo. New/Open,
+  source/model changes or switching commands cancel the session. Save captures confirmed
   geometry and source Sketches, never the preview.
 
 ## Geometry and ownership
@@ -58,23 +62,30 @@ geometry is copied. Target instance transforms are applied once in world space;
 confirmed geometry is inverse-transformed once into the existing local Part.
 
 New Parts reuse `BooleanChange` creation/restoration; additions reuse `FaceChange`
-at the original Part index; removal uses the same in-place path. Both use the existing Undo/Redo stacks and native
-GeneralBRep storage. UUIDs survive Undo/Redo. No new `.odc` schema or persistent
-feature/history link is introduced. Source Sketch/WP values remain unchanged.
+at the original Part index; removal uses the same in-place path. Both use the
+existing Undo/Redo stacks and native GeneralBRep storage. UUIDs survive Undo/Redo.
+No new `.odc` schema or persistent feature/history link is introduced. Source Sketch/WP values remain unchanged.
 
 Unsupported: Profile Ellipse/EllipticalArc, automatic healing, multi-solid Add
 Material targets, multiple targets, tapered/symmetric/path extrusion and
 new manipulators. Through All is available only for Remove Material. Explicit
-safe refusal is intentional.
+safe refusal is intentional. Remove can leave multiple solids in the target Part,
+but complete target removal and operations with no measurable material change
+are refused.
 
 ## Validation and Fedora KDE acceptance
 
 Automated tests: headless `sketch-profile-extrusion`, plus
 `profile-extrusion-sessions` and `profile-extrusion-sessions-hidpi` using the
-existing viewport/session test executable. Existing profile, native document,
-modeling and selection regressions remain required.
+existing viewport/session test executable. Phase 8E recorded all six targeted
+Extrude/Revolve geometry and normal/HiDPI session checks passing; these results
+remain applicable because phase 8F changes no modeling behavior.
 
-Native Fedora KDE acceptance is **pending and required before merge**:
+User-reported manual Fedora KDE acceptance, recorded 2026-11-01: **Unified
+Extrude 7/7 passed**. Together with Revolve New Solid (13/13) and Revolve
+Add/Remove (15/15), v0.4.8 manual acceptance is **35/35 passed**. The feature is
+ready for publication within the documented limits. The reference checks below
+remain available for future regressions; they are not a new pending gate:
 
 1. Empty document: create XY/XZ/YZ Workplanes and closed profiles (rectangle,
    Circle, mixed Arc contour, hole/island/disjoint regions). Check +20, a changed

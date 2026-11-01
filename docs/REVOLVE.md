@@ -1,4 +1,4 @@
-# Revolve — v0.4.8, phases 8D–8E
+# Revolve — v0.4.8
 
 Activate a visible, unlocked Workplane with **Edit Sketch**, then choose
 **3D Modeling → Revolve**, also available in the 3D Modeling toolbar.
@@ -157,12 +157,45 @@ Phase 8E changed `src/SketchProfileExtrusion.h`, `src/SketchProfileExtrusion.cpp
 `CMakeLists.txt` (link existing reconstruction code into the Revolve geometry test)
 and the three Revolve/architecture documents. `git diff --check` passed.
 No full CTest suite, unrelated tests or stress tests were run. Interactive Fedora
-KDE acceptance remains separate and pending.
+KDE acceptance was pending at phase 8E and is recorded as passed below.
 
-## Manual Fedora KDE acceptance — pending
+## Final integration and manual Fedora KDE acceptance
 
-Manual Fedora KDE acceptance remains pending; automated phase 8E checks do not
-constitute interactive desktop acceptance.
+User-reported results recorded 2026-11-01:
+
+| Manual acceptance group | Result |
+| --- | --- |
+| Unified Extrude | 7/7 passed |
+| Revolve New Solid | 13/13 passed |
+| Revolve Add/Remove | 15/15 passed |
+| Total | **35/35 passed** |
+
+Phase 8F review confirmed the shared three operation modes, one menu/toolbar action
+per command, common Command Panel/target policy, transient result previews and
+existing Active Part, Cancel, history and native storage paths. No separate Cut
+Extrude UI or duplicate sweep/Boolean implementation remains. No modeling changes
+were needed. Release labels now identify v0.4.8 consistently; no geometry or
+previously accepted workflow changed. The six phase 8E targeted tests remain the
+geometry/session baseline. This feature is ready for publication within the
+existing axis, profile and material-operation limits; no publication is performed
+by this phase.
+
+Phase 8F validation: only `OpenDesigner` and `OpenDesignerSelectionContextTests`
+were rebuilt in the existing build directory after the release-label changes.
+The directly affected normal-scale `profile-revolution-sessions` and
+`profile-extrusion-sessions` checks passed **2/2 in 20.62 seconds** with desktop
+access. Unchanged geometry and HiDPI checks were not repeated; no full CTest suite
+or stress tests were run. Checks passed for 62 local Markdown file links, the
+release heading link, runtime/CMake version consistency and `git diff --check`.
+
+Phase 8F modifies `docs/ROADMAP.md`, `docs/EXTRUDE_PROFILE.md`, this document,
+`docs/SHARED_MODELING_ARCHITECTURE.md`, `README.md`, `CMakeLists.txt`, `src/main.cpp`,
+`src/MainWindow.cpp` and the staged artifact label in `.github/workflows/build.yml`.
+Application source changes are version strings only; the modeling implementation
+and tests are unchanged.
+
+The following reference workflow checks remain available for future regressions;
+they do not represent a new pending acceptance gate.
 
 1. Create a closed profile beside a Construction line or Infinite Line. Start
    Revolve from menu and toolbar; pick the axis, change selected regions and check

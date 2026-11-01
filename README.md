@@ -2,7 +2,15 @@
 
 OpenDesigner is an open-source cross-platform 3D direct-modeling application inspired by classic CoCreate SolidDesigner.
 
-**Status:** v0.4.2 phases 1–5 plus 6A.2 interactive ellipse drawing; not a packaged distribution.
+**Status:** v0.4.8 Unified Extrude & Revolve; not a packaged distribution.
+
+Both commands support New Solid, Add Material and Remove Material with shared
+Active Part targeting, live previews, Undo/Redo and native Save/Open. The user
+reported successful Fedora KDE acceptance: Unified Extrude 7/7, Revolve New Solid
+13/13 and Revolve Add/Remove 15/15 (**35/35 total**). See
+[Extrude](docs/EXTRUDE_PROFILE.md), [Revolve](docs/REVOLVE.md) and the
+[v0.4.8 scope and limitations](docs/ROADMAP.md#v048--unified-extrude--revolve).
+
 The supplied Delete Face and Unite seam cases were manually confirmed by the user
 on 2026-10-20. Native Save/Open and the cone/hole Pull fixes were tested and
 confirmed by the user on Fedora KDE on 2026-10-21. Automated regression coverage

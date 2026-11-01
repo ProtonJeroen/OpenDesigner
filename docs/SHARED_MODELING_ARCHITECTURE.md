@@ -134,4 +134,5 @@ HiDPI constrains the viewport, with no horizontal overflow and the existing
 12-pixel anchor. Initial test failures were corrected by reactivating the Sketch
 after a visibility change and respecting the existing scroll wrapper's overflow
 contract. No geometry checks were relaxed. `git diff --check` passed; no full
-CTest suite or stress tests were run. Manual desktop acceptance remains pending.
+CTest suite or stress tests were run. Manual desktop acceptance was pending at phase 8B; phase 8F records the user's
+35/35 Fedora KDE acceptance in [Revolve](REVOLVE.md#final-integration-and-manual-fedora-kde-acceptance).

@@ -7,6 +7,38 @@
 - Box creation and basic navigation
 - Linux CI build
 
+## v0.4.8 — Unified Extrude & Revolve
+
+- [x] Phases 8A–8E: shared certified Profile Builder, sweep results, material
+  application, target resolution, Command Panel sessions, preview and history.
+- [x] One **Extrude** and one **Revolve** action in 3D Modeling, each shared by
+  menu and toolbar. Both offer **New Solid**, **Add Material**, **Remove Material**;
+  the separate Cut Extrude UI is replaced by Extrude → Remove Material.
+- [x] Add/Remove use an eligible Active Part or direct viewport target picking;
+  explicit overrides retain Active Part. New Solid ignores Active Part.
+- [x] Extrude retains signed distance and Remove's Blind/Through All/Reverse.
+  Revolve supports signed 1°–360° sweeps, Reverse and supported linear axes.
+- [x] Actual result previews, safe Cancel/Escape, one-step Undo/Redo, stable Part
+  identity/properties/placement/browser slot and native Save/Open.
+- [x] Phase 8E targeted automated checks: **6/6 passed** (geometry and normal/HiDPI
+  sessions). No full-suite rerun is required for the final publication review.
+- [x] User-reported manual Fedora KDE acceptance, recorded 2026-11-01:
+  **Unified Extrude 7/7**, **Revolve New Solid 13/13**, **Revolve Add/Remove 15/15**;
+  **35/35 total passed**.
+- [x] Phase 8F: integration and documentation review; release labels aligned to
+  v0.4.8. Ready for publication within this documented scope; publication itself
+  remains a separate action.
+
+Limits remain: Segment/Arc/Circle profiles only; one target; Add requires a
+connected target and result; Remove refuses unchanged or empty material results
+but can leave multiple solids in one Part. Revolve requires a coplanar axis and
+same-side profiles, refusing crossing/pinched/self-intersecting sweeps. No healing,
+advanced extrusion options, persistent feature links or Revolve Through All mode.
+
+See [Extrude](EXTRUDE_PROFILE.md), [Revolve](REVOLVE.md),
+[Revolve geometry](REVOLVE_GEOMETRY.md) and
+[shared architecture](SHARED_MODELING_ARCHITECTURE.md).
+
 ## v0.4.5 — Cut Extrude
 
 - In-place Blind and directional Through All subtraction reuse certified Profile
@@ -87,9 +119,10 @@ See [planned cylindrical-face move: holes and bosses](https://github.com/ProtonJ
   Certified prism solids/compounds; shared Boolean normalization; stable target
   identity/local placement. Source Workplanes and Sketches remain independent.
 - [x] Headless extrusion/fusion and normal/200% viewport-session regressions.
-- [ ] Native Fedora KDE acceptance for 6D.1 before merge: see
-  [Extrude Profile and checklist](EXTRUDE_PROFILE.md).
-- [ ] Profile Cut (6D.2), advanced extrusion options and elliptical profiles.
+- [x] The former 6D.1 desktop gate is superseded by v0.4.8 Unified Extrude
+  acceptance (7/7 reported passed); see [Extrude](EXTRUDE_PROFILE.md).
+- [x] Profile Cut (6D.2), now the unified Extrude Remove Material mode.
+- [ ] Advanced extrusion options and elliptical profiles.
 
 See [closure policy and construction checks](CLOSED_PROFILES.md).
 
@@ -103,7 +136,8 @@ See [closure policy and construction checks](CLOSED_PROFILES.md).
 - [x] Source IDs and values remain unchanged; no healing or document/schema changes.
 - [x] Explicit construction-readiness diagnostics: tolerance-connected analysis
   does **not** certify an exact closed OCCT wire.
-- [ ] Ellipse/EllipticalArc profiles and Extrude/Add/Cut GUI.
+- [x] Extrude/Add/Cut GUI, delivered through the unified v0.4.8 Extrude command.
+- [ ] Ellipse/EllipticalArc profiles.
 
 See [closed profile validation](CLOSED_PROFILES.md) for output and limitations.
 
