@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(OpenDesigner VERSION 0.4.2 LANGUAGES CXX)
+project(OpenDesigner VERSION 0.4.8 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -57,7 +57,8 @@ set(OPENDESIGNER_LIBRARIES
 add_library(OpenDesignerConstruction STATIC src/SketchDisplayBounds.cpp src/SketchDisplayBounds.h src/ConstructionGeometry.cpp src/ConstructionGeometry.h src/SketchGeometry.cpp src/SketchGeometry.h src/SketchSnapping.cpp src/SketchSnapping.h src/SketchOverdraw.cpp src/SketchOverdraw.h src/SketchConstruction.cpp src/SketchConstruction.h src/SketchProjection.cpp src/SketchProjection.h)
 target_sources(OpenDesignerConstruction PRIVATE src/SketchProfileValidation.cpp src/SketchProfileValidation.h
     src/SketchProfileBuilder.cpp src/SketchProfileBuilder.h
-    src/SketchProfileExtrusion.cpp src/SketchProfileExtrusion.h src/BooleanGeometry.h)
+    src/SketchProfileExtrusion.cpp src/SketchProfileExtrusion.h src/BooleanGeometry.h
+    src/SketchProfileSweep.h src/SketchProfileRevolution.cpp src/SketchProfileRevolution.h)
 target_include_directories(OpenDesignerConstruction PUBLIC src ${OpenCASCADE_INCLUDE_DIR})
 target_link_libraries(OpenDesignerConstruction PUBLIC ${OPENDESIGNER_LIBRARIES})
 add_library(OpenDesignerDeleteFaceGeometry STATIC src/DeleteFaceGeometry.cpp src/DeleteFaceGeometry.h
@@ -79,6 +80,9 @@ install(TARGETS OpenDesigner RUNTIME DESTINATION bin)
 option(OPENDESIGNER_BUILD_TESTS "Build viewport pull regression tests" OFF)
 if(OPENDESIGNER_BUILD_TESTS)
     enable_testing()
+    add_executable(OpenDesignerProfileRevolutionTests tests/SketchProfileRevolutionTest.cpp src/BRepReconstruction.cpp)
+    target_link_libraries(OpenDesignerProfileRevolutionTests PRIVATE OpenDesignerConstruction)
+    add_test(NAME sketch-profile-revolution COMMAND OpenDesignerProfileRevolutionTests)
     add_executable(OpenDesignerProfileExtrusionTests tests/SketchProfileExtrusionTest.cpp src/BRepReconstruction.cpp)
     target_link_libraries(OpenDesignerProfileExtrusionTests PRIVATE OpenDesignerConstruction)
     add_test(NAME sketch-profile-extrusion COMMAND OpenDesignerProfileExtrusionTests)
@@ -182,7 +186,7 @@ if(OPENDESIGNER_BUILD_TESTS)
     target_link_libraries(OpenDesignerMoveFaceTests PRIVATE ${OPENDESIGNER_LIBRARIES})
     add_test(NAME move-face COMMAND OpenDesignerMoveFaceTests)
     add_executable(OpenDesignerSelectionContextTests
-        tests/SelectionContextTest.cpp tests/DeletePartSessionTest.cpp tests/ActivePartSessionTest.cpp tests/ProfileExtrusionSessionTest.cpp tests/SketchDisplayBoundsSessionTest.cpp tests/WorkplaneRenderingTest.cpp tests/NativeDocumentSessionTest.cpp tests/ConstructionSessionTest.cpp tests/SketchSessionTest.cpp tests/SketchDrawingTest.cpp tests/SketchOrthogonalLineTest.cpp tests/SketchOverdrawSessionTest.cpp tests/SketchConstructionSessionTest.cpp tests/SketchReleaseSessionTest.cpp tests/SketchPointSessionTest.cpp tests/SketchEllipseSessionTest.cpp tests/SketchEllipseDrawingTest.cpp tests/CommandPanelSessionTest.cpp tests/SketchProjectionSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
+        tests/SelectionContextTest.cpp tests/DeletePartSessionTest.cpp tests/ActivePartSessionTest.cpp tests/ProfileExtrusionSessionTest.cpp tests/ProfileRevolutionSessionTest.cpp tests/SketchDisplayBoundsSessionTest.cpp tests/WorkplaneRenderingTest.cpp tests/NativeDocumentSessionTest.cpp tests/ConstructionSessionTest.cpp tests/SketchSessionTest.cpp tests/SketchDrawingTest.cpp tests/SketchOrthogonalLineTest.cpp tests/SketchOverdrawSessionTest.cpp tests/SketchConstructionSessionTest.cpp tests/SketchReleaseSessionTest.cpp tests/SketchPointSessionTest.cpp tests/SketchEllipseSessionTest.cpp tests/SketchEllipseDrawingTest.cpp tests/CommandPanelSessionTest.cpp tests/SketchProjectionSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
         src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
         src/MoveFace.cpp src/FaceOperations.cpp src/FaceTransformGeometry.cpp
         src/FaceTransformGeometry.h src/SelectionContext.cpp src/MoveFaceGeometry.h src/BRepReconstruction.cpp src/MoveFaceGeometry.cpp)
@@ -192,6 +196,10 @@ if(OPENDESIGNER_BUILD_TESTS)
     set_tests_properties(delete-part-sessions PROPERTIES TIMEOUT 120)
     add_test(NAME active-part-sessions COMMAND OpenDesignerSelectionContextTests --active-part)
     set_tests_properties(active-part-sessions PROPERTIES TIMEOUT 120)
+    add_test(NAME profile-revolution-sessions COMMAND OpenDesignerSelectionContextTests --revolution)
+    add_test(NAME profile-revolution-sessions-hidpi COMMAND OpenDesignerSelectionContextTests --revolution)
+    set_tests_properties(profile-revolution-sessions profile-revolution-sessions-hidpi PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+    set_tests_properties(profile-revolution-sessions-hidpi PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=2")
     add_test(NAME profile-extrusion-sessions COMMAND OpenDesignerSelectionContextTests --extrusion)
     add_test(NAME profile-extrusion-sessions-hidpi COMMAND OpenDesignerSelectionContextTests --extrusion)
     set_tests_properties(profile-extrusion-sessions-hidpi PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=2")
@@ -277,7 +285,7 @@ endif()
 # Keep document snapshot capture linked wherever the viewport is exercised.
 foreach(viewport_target OpenDesigner OpenDesignerPullTests OpenDesignerBooleanTests OpenDesignerMoveFaceTests OpenDesignerSelectionContextTests OpenDesignerDebugModelTests OpenDesignerDeleteFaceTests)
     if(TARGET ${viewport_target})
-        target_sources(${viewport_target} PRIVATE src/DebugExport.cpp src/DeleteFace.cpp src/ModelingErrors.cpp src/NativeDocument.cpp src/ConstructionTools.cpp src/ConstructionPanel.cpp src/SketchTools.cpp src/SketchDrawing.cpp src/SketchEllipseDrawing.cpp src/SketchDrawingPanel.cpp src/SketchOverdrawTools.cpp src/SketchOverdrawPanel.cpp src/SketchConstructionTools.cpp src/SketchConstructionPanel.cpp src/SketchProjectionTools.cpp src/SketchProjectionPanel.cpp src/SketchProfileExtrusionTools.cpp)
+        target_sources(${viewport_target} PRIVATE src/DebugExport.cpp src/DeleteFace.cpp src/ModelingErrors.cpp src/NativeDocument.cpp src/ConstructionTools.cpp src/ConstructionPanel.cpp src/SketchTools.cpp src/SketchDrawing.cpp src/SketchEllipseDrawing.cpp src/SketchDrawingPanel.cpp src/SketchOverdrawTools.cpp src/SketchOverdrawPanel.cpp src/SketchConstructionTools.cpp src/SketchConstructionPanel.cpp src/SketchProjectionTools.cpp src/SketchProjectionPanel.cpp src/SketchProfileExtrusionTools.cpp src/SketchProfileRevolutionTools.cpp)
         target_link_libraries(${viewport_target} PRIVATE OpenDesignerDeleteFaceGeometry OpenDesignerDebug OpenDesignerConstruction OpenDesignerCommandPanels)
     endif()
 endforeach()

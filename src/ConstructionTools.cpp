@@ -156,6 +156,11 @@ bool CadViewport::commitConstructions(const std::vector<Object>& objects) {
     restoreConstructions(objects);undoStack_.push_back(change);redoStack_.clear();updateHistoryActions();return true;
 }
 void CadViewport::selectConstructions(const QStringList& ids) {
+    if(commandSession_ && commandSession_->kind==CommandSession::Kind::Revolve) {
+        if(commandSession_->sweep->axisPicking && ids.size()==1)chooseRevolutionAxisId(ids.front());
+        else emit statusMessage(tr("Use Pick rotation axis to choose a construction axis."));
+        return;
+    }
     if(!activeSketchWorkplaneId_.isEmpty() && ids.size()==1) {
         const auto* owner=constructionObject(ids.front());
         if(owner && owner->kind==Kind::Workplane && owner->id!=activeSketchWorkplaneId_) activateSketchWorkplane(owner->id);

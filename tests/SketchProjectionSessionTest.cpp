@@ -61,6 +61,27 @@ namespace {
 void check(bool ok,const char* message) {if(!ok) throw std::runtime_error(message);}
 void settle() {for(int i=0;i<3;++i) {QApplication::processEvents();QGuiApplication::sync();QEventLoop loop;QTimer::singleShot(10,&loop,&QEventLoop::quit);loop.exec();}}
 
+// A QWidget move can precede the WM's frame-decoration/configure reply. Wait
+// for both frame representations before using the placement as a test baseline.
+void waitForPanelPosition(QWidget& panel,const QPoint& expected,const char* failureMessage) {
+    QElapsedTimer timer;timer.start();
+    for(;;) {
+        QApplication::processEvents();QGuiApplication::sync();
+        auto* native=panel.windowHandle();
+        const auto margins=native?native->frameMargins():QMargins();
+        const auto frame=panel.frameGeometry();
+        const auto nativeFrame=native?native->geometry().marginsAdded(margins):QRect();
+        if(native && native->isExposed() && frame.topLeft()==expected && nativeFrame==frame)return;
+        if(timer.elapsed()>=2000) {
+            QString diagnostic;QDebug(&diagnostic)<<failureMessage<<"expected"<<expected<<"frame"<<frame
+                <<"native frame"<<nativeFrame<<"margins"<<margins<<"platform"<<QGuiApplication::platformName()
+                <<"dpr"<<panel.devicePixelRatioF()<<"elapsed ms"<<timer.elapsed();
+            std::cerr<<diagnostic.toStdString()<<'\n';throw std::runtime_error(failureMessage);
+        }
+        QEventLoop loop;QTimer::singleShot(10,&loop,&QEventLoop::quit);loop.exec();
+    }
+}
+
 void key(QWidget& widget,int code) {QKeyEvent event(QEvent::KeyPress,code,Qt::NoModifier);QApplication::sendEvent(&widget,&event);settle();}
 // Compare exact curves/surfaces/locations/topology without AIS mesh caches.
 // XCAF assembly insertion during Save can clear TShape::Free; that first
@@ -350,8 +371,14 @@ struct SketchProjectionSessionTest {
               "projection panel scrolling does not match actual viewport capacity");
         const auto at=bounds().topLeft()+QPoint(std::min(25,bounds().width()-frame.width()),
                                                std::min(25,bounds().height()-frame.height()));
-        panel->move(panel->pos()+at-panel->frameGeometry().topLeft());settle();
-        pick(v,{{0,top(v)}});settle();check(panel->frameGeometry().topLeft()==at,"selection/preview reset user panel position");
+        check(bounds().contains(QRect(at,frame.size())),"requested projection panel frame is outside the viewport");
+        // Request frame coordinates explicitly. QWidget::move() converts them
+        // to client coordinates using decoration margins that may still be zero;
+        // late decorations can shift the frame and trigger viewport clamping.
+        panel->windowHandle()->setFramePosition(at);
+        waitForPanelPosition(*panel,at,"projection manual placement did not finish configuring");
+        pick(v,{{0,top(v)}});
+        waitForPanelPosition(*panel,at,"selection/preview reset user panel position");
         QWheelEvent wheel(QPointF(100,120),QPointF(v.mapToGlobal(QPoint(100,120))),QPoint(),QPoint(0,120),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);
         QApplication::sendEvent(&v,&wheel);check(v.commandSession_ && !w.documentDirty_,"viewport navigation closed or committed projection");
         auto* dock=w.findChild<QDockWidget*>();dock->hide();settle();check(bounds().contains(panel->frameGeometry()),"docking left projection panel outside viewport");dock->show();

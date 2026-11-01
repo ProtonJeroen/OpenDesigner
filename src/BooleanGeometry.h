@@ -3,6 +3,9 @@
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
+#include <Precision.hxx>
+#include <TopoDS.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepGProp.hxx>
 #include <BRep_Builder.hxx>
@@ -25,6 +28,16 @@ inline bool validSolid(const TopoDS_Shape& shape, double& volume) {
     BRepGProp::VolumeProperties(shape,properties);
     volume = properties.Mass();
     return std::isfinite(volume) && volume > 1.0e-12;
+}
+// Shared sweep certificate: closed positive solids with outward orientation.
+inline bool certifiedSolid(const TopoDS_Shape& shape,double& volume,size_t& count) {
+    count=0;if(!validSolid(shape,volume))return false;
+    for(TopExp_Explorer it(shape,TopAbs_SOLID);it.More();it.Next()) {
+        double v=0;if(!validSolid(it.Current(),v) || v<=0)return false;
+        BRepClass3d_SolidClassifier classifier(TopoDS::Solid(it.Current()));classifier.PerformInfinitePoint(Precision::Confusion());
+        if(classifier.State()!=TopAbs_OUT)return false;++count;
+    }
+    return count>0;
 }
 template<class Algorithm>
 inline TopoDS_Shape combine(const TopoDS_Shape& a, const TopoDS_Shape& b) {

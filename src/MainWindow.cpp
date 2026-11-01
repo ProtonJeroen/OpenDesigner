@@ -29,7 +29,7 @@
 #include <algorithm>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.4.2");
+    setWindowTitle("OpenDesigner 0.4.8");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     connect(viewport_,&CadViewport::geometryOperationFailed,this,[this](const QString& operation,const QString& reason) {
@@ -154,12 +154,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
     }
     auto* model3D=model->addMenu(tr("3D Modeling"));model3D->setObjectName("modeling3DMenu");
-    auto* extrude=model3D->addAction(tr("Extrude Profile"));extrude->setObjectName("sketch.extrude");extrude->setEnabled(false);
+    auto* extrude=model3D->addAction(tr("Extrude"));extrude->setObjectName("sketch.extrude");extrude->setEnabled(false);
     connect(extrude,&QAction::triggered,viewport_,&CadViewport::startProfileExtrusion);
     connect(viewport_,&CadViewport::activeSketchWorkplaneChanged,extrude,[extrude](const QString& id){extrude->setEnabled(!id.isEmpty());});
-    auto* cut=model3D->addAction(tr("Cut Extrude"));cut->setObjectName("sketch.cutExtrude");cut->setEnabled(false);
-    connect(cut,&QAction::triggered,viewport_,&CadViewport::startCutExtrusion);
-    connect(viewport_,&CadViewport::activeSketchWorkplaneChanged,cut,[cut](const QString& id){cut->setEnabled(!id.isEmpty());});
+    auto* revolve=model3D->addAction(tr("Revolve"));revolve->setObjectName("sketch.revolve");revolve->setEnabled(false);
+    connect(revolve,&QAction::triggered,viewport_,&CadViewport::startProfileRevolution);
+    connect(viewport_,&CadViewport::activeSketchWorkplaneChanged,revolve,[revolve](const QString& id){revolve->setEnabled(!id.isEmpty());});
     model3D->addSeparator();
     auto* boxAction = model3D->addAction(tr("Create &Box"));
     connect(boxAction, &QAction::triggered, viewport_, &CadViewport::addBox);
@@ -238,6 +238,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         interactiveMove->setChecked(faceNormal);directMove->setChecked(move);interactiveRotate->setChecked(rotate);
     });
     toolbar->addAction(extrude);
+    toolbar->addAction(revolve);
     toolbar->addAction(boxAction);
     toolbar->addAction(duplicateAction);
     toolbar->addAction(pullAction);
@@ -520,7 +521,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 void MainWindow::updateWindowTitle() {
     const QString name = documentPath_.isEmpty()
         ? tr("Untitled") : QFileInfo(documentPath_).fileName();
-    setWindowTitle(tr("OpenDesigner 0.4.2 — %1%2").arg(name, documentDirty_ ? QStringLiteral(" *") : QString()));
+    setWindowTitle(tr("OpenDesigner 0.4.8 — %1%2").arg(name, documentDirty_ ? QStringLiteral(" *") : QString()));
 }
 
 void MainWindow::markDocumentDirty() {

@@ -215,6 +215,11 @@ void CadViewport::finishSketchEdit(bool confirm) {
     refreshSketchPicking(activeSketchWorkplaneId_.isEmpty());view_->Redraw();
 }
 void CadViewport::selectSketchEntities(const QStringList& ids) {
+    if(commandSession_ && commandSession_->kind==CommandSession::Kind::Revolve) {
+        if(commandSession_->sweep->axisPicking && ids.size()==1)chooseRevolutionAxisId(ids.front());
+        else emit statusMessage(tr("Use Pick rotation axis, or select Profile regions in the Revolve panel."));
+        return;
+    }
     if(commandSession_ && commandSession_->projection) {
         emit statusMessage(tr("Project 3D Geometry accepts 3D subshapes in the viewport; 2D objects are not projection sources."));return;
     }

@@ -36,7 +36,7 @@ missing silhouette.
 
 A shared callback-based target picker resolves a detected AIS owner to a stable
 part ID and checks visibility/solid eligibility. Commands retain their own temporary
-target. Cut Extrude consumes this adapter; Extrude Add semantics stay unchanged.
+target. Extrude Add Material and Remove Material consume this adapter.
 
 The current model/browser is flat, with no nested assembly state. This change
 adds no assembly activation semantics; a future hierarchy must retain part UUIDs.
@@ -54,7 +54,7 @@ Parts and multiple selections keep their existing feedback. Activation leaves
 shape, placement and material unchanged. A hidden Active Part retains its identity
 but displays no outline, and cannot be used as a visible command target.
 
-Cut Extrude uses an eligible Active Part initially and shows its name in Target
+Extrude Add Material and Remove Material use an eligible Active Part initially and shows its name in Target
 Part. Without one, click visible geometry at the **Select target part** prompt.
 A face click resolves to its owning Part using OCCT's nearest detected owner.
 Use **Pick target part** to change the temporary target, or use the target list or
@@ -63,7 +63,7 @@ An ineligible Active Part is explained in the status bar; choose a target explic
 Empty space keeps picking pending and shows a prompt. Escape ends picking while
 keeping the command open; press Pick target part to resume. Once picking has ended,
 Escape cancels the command. Panel Cancel always cancels the whole command.
-Extrude Profile still defaults to a new solid and does not merge with Active Part.
+Extrude still defaults to a new solid and does not merge with Active Part.
 
 Activation/deactivation marks the document modified but does not consume a geometry
 Undo step or clear Redo. Undo/Redo preserves activation through transforms and

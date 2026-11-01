@@ -9,6 +9,7 @@
 #include <optional>
 class QLineEdit;
 class QVBoxLayout;
+class QFormLayout;
 class CommandPanelPositioner;
 class QDialogButtonBox;
 class QShortcut;
@@ -43,6 +44,7 @@ class ConstructionPanel;
 #include "SketchProjectionPanel.h"
 #include "SketchProjection.h"
 #include "SketchProfileExtrusion.h"
+#include "ModelingOperation.h"
 
 class CadViewport final : public QWidget {
     Q_OBJECT
@@ -73,7 +75,7 @@ public:
     void startSketchConstruction(Sketch::ConstructionTool tool);
     void startSketchProjection();
     void startProfileExtrusion();
-    void startCutExtrusion();
+    void startProfileRevolution();
     void startSketchAxes(bool localX,bool localY);
     void populateSketchAxesMenu(QMenu& menu);
     void setSketchSnapPixels(int pixels);
@@ -183,6 +185,7 @@ private:
     friend struct CommandPanelSessionTest;
     friend struct SketchProjectionSessionTest;
     friend struct ProfileExtrusionSessionTest;
+    friend struct ProfileRevolutionSessionTest;
     friend struct ActivePartSessionTest;
     friend struct CadViewportPullTest;
     friend struct NativeDocumentSessionTest;
@@ -258,21 +261,36 @@ private:
         QJsonObject debugOperation;
     };
     struct FaceChange { CadPart before, after; };
-    struct ProfileExtrusionState {
+    struct ProfileSweepState {
         Construction::Object workplane;
         std::vector<Sketch::Entity> sketches;
         std::vector<CadPart> originals;
         SketchProfileBuilder::Result faces;
         QString sourceError;
-        QStringList sketchSelection;
-        bool adding=false;
-        bool cutting=false;
+        QStringList sketchSelection, constructionSelection;
+        std::optional<gp_Ax1> axis;
+        bool axisPicking=false;
+        QString axisPartId;
+        TopoDS_Shape axisRoot;
+        gp_Trsf axisPlacement;
+        std::optional<Construction::Object> axisConstruction;
+        ModelingOperation operation=ModelingOperation::NewSolid;
         std::optional<size_t> target;
         std::shared_ptr<CadPart> after;
     };
-    QWidget* extrusionControls_=nullptr;
-    void refreshProfileExtrusion();
-    void finishProfileExtrusion(bool confirm);
+    QWidget* sweepControls_=nullptr;
+    void startProfileSweep(bool revolving);
+    void createRevolutionControls(QFormLayout* form);
+    void configureRevolutionPicking();
+    void beginRevolutionAxisPick();
+    bool chooseRevolutionAxis(const Handle(SelectMgr_EntityOwner)& owner);
+    void chooseRevolutionAxisId(const QString& id);
+    bool validateRevolutionAxis() const;
+    void setExtrusionOperation(ModelingOperation operation);
+    QString extrusionTargetError(size_t index) const;
+    void pickExtrusionTarget();
+    void refreshProfileSweep();
+    void finishProfileSweep(bool confirm);
     void chooseExtrusionTarget(const std::vector<size_t>& indices);
     struct SketchDrawingState {
         Sketch::DrawTool tool = Sketch::DrawTool::Segment;
@@ -353,7 +371,7 @@ private:
     // Transaction state only: confirmed changes use the existing modeling history.
     struct CommandSession {
         enum class State { Selection, Parameters, Preview, Confirmed, Cancelled };
-        enum class Kind { Move, Rotate, MoveFace, RotateFace, AlignFace, Boolean, Pull, DeleteFace, Construction, Sketch, Extrude };
+        enum class Kind { Move, Rotate, MoveFace, RotateFace, AlignFace, Boolean, Pull, DeleteFace, Construction, Sketch, Extrude, Revolve };
         std::shared_ptr<ConstructionSessionState> construction;
         std::shared_ptr<SketchChange> sketch;
         std::vector<Sketch::Entity> sketchDisplayCandidates; // Transient view overlay, never saved/committed.
@@ -361,7 +379,7 @@ private:
         std::shared_ptr<SketchOverdrawState> overdraw;
         std::shared_ptr<SketchConstructionState> lineConstruction;
         std::shared_ptr<SketchProjectionState> projection;
-        std::shared_ptr<ProfileExtrusionState> extrusion;
+        std::shared_ptr<ProfileSweepState> sweep;
         State state = State::Selection;
         Kind kind = Kind::Move;
         std::vector<PullChange> changes;

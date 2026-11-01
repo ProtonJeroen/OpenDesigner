@@ -377,6 +377,7 @@ void runSketchPointSessions();
 void runCommandPanelSessions();
 void runSketchProjectionSessions();
 void runProfileExtrusionSessions();
+void runProfileRevolutionSessions();
 void runActivePartSessions();
 void runDeletePartSessions();
 void runSketchEllipseSessions();
@@ -390,6 +391,7 @@ int main(int argc,char** argv) {
     try {
         if(app.arguments().contains("--delete-parts")) runDeletePartSessions();
         else if(app.arguments().contains("--active-part")) runActivePartSessions();
+        else if(app.arguments().contains("--revolution")) runProfileRevolutionSessions();
         else if(app.arguments().contains("--extrusion")) runProfileExtrusionSessions();
         else if(app.arguments().contains("--workplane-rendering")) runWorkplaneRendering();
         else if(app.arguments().contains("--orthogonal-lines")) runSketchOrthogonalLines();

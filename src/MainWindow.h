@@ -28,6 +28,7 @@ private:
     friend struct CommandPanelSessionTest;
     friend struct SketchProjectionSessionTest;
     friend struct ProfileExtrusionSessionTest;
+    friend struct ProfileRevolutionSessionTest;
     friend struct DeletePartSessionTest;
     friend struct ActivePartSessionTest;
     bool maybeSave();
