@@ -76,6 +76,97 @@ See [Extrude](EXTRUDE_PROFILE.md), [Revolve](REVOLVE.md),
 - STEP, IGES, STL
 - GLB/glTF and FBX import/export
 
+## Planned — Sweep, Loft, and Materials & Colors
+
+These are **future milestones, not yet implemented**. Proposed numbering and order
+are provisional and should be agreed before implementation. The shared
+`ModelingOperation` contract from v0.4.8 (New Solid, Add Material, Remove
+Material), existing certified Profile Builder, OCCT Boolean utilities,
+Command Panels, target picking and history should be reused rather than
+duplicated.
+
+### Sweep — profile along a path (proposed v0.5.0)
+
+- [ ] **3D Modeling > Sweep**: sweep one certified, closed 2D profile along a
+  selectable continuous path; start with lines, circular arcs and connected
+  segment/arc paths, including transformed Sketch/workplane references.
+- [ ] Support **New Solid**, **Add Material** and **Remove Material** with the same
+  operation selection and eligible Active Part / explicit viewport target override
+  semantics as Extrude and Revolve.
+- [ ] Define deterministic section orientation along the path, path direction,
+  closed-path handling, corner transitions and self-intersection refusal before
+  implementation. Reject invalid/non-manifold or ambiguous results atomically.
+- [ ] Live result preview; exact inputs where applicable; OK/Cancel/Escape,
+  one-step Undo/Redo, stable target Part identity/properties and native Save/Open.
+- [ ] Focused kernel, session, Boolean, history and persistence tests; native
+  Fedora KDE acceptance before publication.
+- [ ] Future extensions: controlled twist, variable scale and guide rails,
+  separately scoped rather than promised in the initial milestone.
+
+### Loft — solid through multiple sections (proposed v0.5.1)
+
+- [ ] **3D Modeling > Loft**: create a valid solid between at least two ordered,
+  certified closed Sketch profiles on different Workplanes; support more than
+  two sections when geometrically valid.
+- [ ] Support **New Solid**, **Add Material** and **Remove Material**, reusing
+  existing target selection, Boolean result validation and history.
+- [ ] Define section ordering, orientation, matching/correspondence of vertices
+  and edges, periodic seams and transitions between different profile shapes.
+  Support circular-to-rectangular and other mixed-section examples only where
+  OCCT can produce a certified valid solid; do not silently repair ambiguity.
+- [ ] Live result preview, stable target identity, safe Cancel/Escape,
+  Undo/Redo and native Save/Open.
+- [ ] Focused geometry, session, Boolean and persistence regressions; native
+  Fedora KDE acceptance before publication.
+- [ ] Future extensions: guide rails, tangent/continuity constraints and
+  advanced surface lofts.
+
+### Materials & Colors — Part and Face appearance (proposed v0.5.2)
+
+- [ ] **Part-level appearance**: edit an individual Part's default color and
+  visual finish through the Structure Browser, viewport context menu and/or a
+  properties panel. Existing Part color and native persistence are the starting
+  point; preserve backward compatibility.
+- [ ] **Part-level engineering material**: choose a built-in material (e.g.
+  steel, stainless steel, aluminum, plastics) or define a custom material with
+  density and appearance attributes. Compute volume and mass from the certified
+  solid and material density, with explicit units.
+- [ ] **Per-Face appearance overrides**: select one or multiple Faces and assign
+  a color and/or surface finish independent of the Part's engineering material.
+  Unassigned Faces inherit the Part appearance. Provide **Reset to Part
+  Appearance**; an appearance override must not silently change mass/density.
+- [ ] Support color, transparency, metallic/roughness and other feasible OCCT
+  viewport properties consistently, while distinguishing engineering material
+  from display appearance.
+- [ ] Ensure Undo/Redo, duplication, transforms, visibility, Structure Browser
+  updates and native Save/Open preserve both Part-level and Face-level values.
+- [ ] Define a **topology-change policy** for Extrude, Revolve, Boolean and
+  Move/Rotate/Align/Delete Face: keep a Face override only where mapping to the
+  resulting Face is reliably established; new or ambiguous Faces inherit the
+  Part appearance instead of misassigning a stored color. Test split/merged/
+  deleted Faces, Undo/Redo and Save/Open.
+- [ ] Implement incrementally: **(A)** Part colors/material library and mass,
+  **(B)** Face overrides/inheritance/reset, **(C)** topology-safe transfer.
+  Focused tests and manual Fedora KDE acceptance at each stage.
+
+### Related future milestones (provisional ordering)
+
+- [ ] **Move Cylindrical Face** (proposed v0.4.9): relocate complete holes and
+  attached bosses as described in Issue #51 below.
+- [ ] **Assemblies and Structure Browser** (proposed v0.5.3):
+  hierarchical single-file Parts/subassemblies with optional externally stored
+  components and explicit assembly-level transforms.
+- [ ] **Geometric Align** (proposed v0.5.4): align Parts and assemblies using
+  Face-to-Face, Axis-to-Axis, Vertex-to-Vertex and Point-to-Point references,
+  including points derived from Sketch/Workplane geometry.
+- [ ] **CAD exchange** (proposed v0.5.5): STEP/IGES/STL, followed by GLB/glTF
+  and FBX import/export, with documented geometry/material/assembly fidelity.
+- [ ] **Standard Parts library** and wider technical material presets; evaluate
+  library integration with Assemblies and Materials & Colors.
+- [ ] **Platform-independent Touch Mode** in Settings for desktop and future
+  iPadOS/Android tablet targets; keep conventional desktop controls available.
+- [ ] **3D copilot/local AI** as a later, separately scoped milestone.
+
 ## Planned after Workplanes & Sketches — Move cylindrical faces (holes & bosses, Issue #51)
 
 - [ ] **Move Cylindrical Face:** extend direct face editing beyond existing
