@@ -21,6 +21,7 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QTimer>
+#include <QLocale>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepAdaptor_Curve.hxx>
@@ -33,6 +34,9 @@
 #include <TColStd_ListOfInteger.hxx>
 #include <numbers>
 #include <stdexcept>
+#include <source_location>
+#include <sstream>
+#include <iomanip>
 
 namespace {
 void check(bool value,const char* message){if(!value)throw std::runtime_error(message);}
@@ -47,9 +51,25 @@ struct ProfileRevolutionSessionTest {
     QMouseEvent press(QEvent::MouseButtonPress,QPointF(x,y),QPointF(x,y),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);v.mousePressEvent(&press);
     QMouseEvent release(QEvent::MouseButtonRelease,QPointF(x,y),QPointF(x,y),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);v.mouseReleaseEvent(&release);
  }
- static void preview(CadViewport& v,double expected) {
-    check(v.commandSession_ && v.commandSession_->valid && !v.commandSession_->preview.IsNull()
-        && std::abs(volume(v.commandSession_->candidate)-expected)<expected*1.e-9,"Revolve preview volume/state incorrect");
+ static void preview(CadViewport& v,double expected,const std::source_location location=std::source_location::current()) {
+    const bool candidate=v.commandSession_ && !v.commandSession_->candidate.IsNull();
+    const double actual=candidate?volume(v.commandSession_->candidate):0;
+    if(!v.commandSession_ || !v.commandSession_->valid || v.commandSession_->preview.IsNull()
+       || !candidate || !(std::abs(actual-expected)<expected*1.e-9)) {
+        std::ostringstream message;message<<std::setprecision(17)<<"Revolve preview volume/state incorrect at "<<location.file_name()<<":"<<location.line()
+            <<"; expected="<<expected<<" actual=";
+        if(candidate)message<<actual;else message<<"<no candidate>";
+        message<<" candidate="<<candidate<<" locale="<<QLocale().name().toStdString();
+        if(v.commandSession_)message<<" valid="<<v.commandSession_->valid<<" previewNull="<<v.commandSession_->preview.IsNull()
+            <<" mode="<<int(v.commandSession_->sweep->operation)<<" state="<<int(v.commandSession_->state);
+        if(v.sweepControls_) {
+            const auto text=v.sweepControls_->findChild<QLineEdit*>("revolutionAngle")->text();bool ok=false;const double angle=QLocale().toDouble(text,&ok);
+            message<<" angleText="<<text.toStdString()<<" parsed="<<ok<<" angle="<<angle
+                <<" reverse="<<v.sweepControls_->findChild<QCheckBox*>("revolutionReverse")->isChecked()
+                <<" status="<<v.sweepControls_->findChild<QLabel*>("extrusionStatus")->text().toStdString();
+        }
+        throw std::runtime_error(message.str());
+    }
     TColStd_ListOfInteger modes;v.context_->ActivatedModes(v.commandSession_->preview,modes);check(modes.IsEmpty(),"Revolve preview is selectable");
  }
  static void operation(CadViewport& v,ModelingOperation mode) {
@@ -180,7 +200,9 @@ struct ProfileRevolutionSessionTest {
     angle->setText("90");preview(v,9000*pi);check(centre(v.commandSession_->candidate).Z()<0,"positive angle direction wrong");
     reverse->setChecked(true);preview(v,9000*pi);check(centre(v.commandSession_->candidate).Z()>0,"reverse direction ignored");
     angle->setText("-90");check(centre(v.commandSession_->candidate).Z()<0,"signed angle/reverse composition wrong");
-    reverse->setChecked(false);angle->setText("45.5");preview(v,36000*pi*45.5/360);
+    // Enter the same 45.5-degree value using the panel's numeric locale (e.g.
+    // Dutch "45,5"); a hard-coded decimal point is invalid under nl_NL.
+    reverse->setChecked(false);angle->setText(QLocale().toString(45.5,'f',1));preview(v,36000*pi*45.5/360);
     angle->setText("0");v.confirmCommandSession();check(v.commandSession_ && !v.commandSession_->valid && v.commandSession_->preview.IsNull()
         && !v.commandButtons_->button(QDialogButtonBox::Ok)->isEnabled(),"invalid angle left stale preview/committed");
     angle->setText("360");regions->clearSelection();check(!v.commandSession_->valid && v.commandSession_->preview.IsNull(),"empty profile batch accepted");regions->item(0)->setSelected(true);
