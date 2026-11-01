@@ -1,4 +1,4 @@
-# Shared modeling architecture — v0.4.8, phases 8A–8D
+# Shared modeling architecture — v0.4.8, phases 8A–8E
 
 Phase 8A established the reuse contract for existing profile, Boolean,
 target-picking and history mechanisms without runtime changes. Phase 8B adds
@@ -7,8 +7,9 @@ below; geometry algorithms, history and the document schema remain unchanged.
 Phase 8C adds the headless revolution kernel and shares the existing sweep result
 and solid certificate; Extrude geometry behavior remains unchanged.
 Phase 8D adds [Revolve New Solid](REVOLVE.md) through the shared profile-sweep
-command lifecycle. Add/Remove for Revolve remain deferred until after manual
-acceptance; no Boolean extraction or duplicate New-Part transaction is introduced.
+command lifecycle. Phase 8E adds the same operation/target controls as Extrude and
+reuses its in-place transaction. Revolve's certified tool uses existing Add and
+extracted Cut material application; the sweep geometry kernels remain unchanged.
 The workflow reference is SolidDesigner / Modeling 2008 v16.0; the contracts below
 describe OpenDesigner behavior, without claiming exact original UI parity.
 
@@ -23,6 +24,7 @@ describe OpenDesigner behavior, without claiming exact original UI parity.
 | Revolution tool | `SketchProfileRevolution::revolve(faces, worldAxis, signedDegrees)` | Headless OCCT rotational sweep and certification; see [Revolve geometry](REVOLVE_GEOMETRY.md) for supported axes and safe refusals. |
 | Add | `SketchProfileExtrusion::addMaterial(tool, target, placement)` | Local target plus positive rigid placement; one connected target/result; rejects disconnected or unchanged additions. |
 | Cut | `SketchProfileExtrusion::cut(faces, frame, target, placement, depth, reversed, throughAll)` | Extrusion-specific reach/tool generation followed by subtraction; rejects no change and total removal; permits multiple remaining solids in the same Part. |
+| Remove | `SketchProfileExtrusion::removeMaterial(tool, target, placement)` | Shared certified-tool subtraction extracted from Cut Extrude; no change and complete removal are refused, multiple surviving solids allowed. |
 | Boolean kernel helpers | `BooleanGeometry::{combine, solidResult, validSolid, normalizeBooleanResult}` | Non-destructive OCCT operations, solid extraction, validation and material-preserving normalization; no command/document ownership. Shared with existing Part Boolean commands. |
 | Target resolution | `CadViewport::{partIndexForId, solidTargetError, initialTargetPart, beginTargetPicking, cancelTargetPicking}` | Stable UUID resolution, preliminary eligibility and callback-based temporary picking. Kernel certification remains authoritative. |
 | Preview lifecycle | `CommandSession`, `ProfileSweepState`, `refreshProfileSweep`, `finishProfileSweep` | Snapshot sources/original Parts, rebuild preview, revalidate on confirmation, discard on cancellation. |
@@ -92,7 +94,9 @@ These are recommended dependency boundaries, not additional phase requirements.
   and New-Part history path with Extrude. Axis selection uses existing AIS owners
   and `Construction::resolve`, without changing ordinary operand selection. The
   kernel remains headless and unchanged. See [Revolve](REVOLVE.md).
-- **8E: focused integration acceptance.** Cover each mode's preview/invalid
+- **8E: Revolve Add/Remove and focused acceptance (implemented).** Share Extrude's
+  operation/target controls and in-place transaction; delegate certified tools to
+  the existing material functions. Cover each mode's preview/invalid
   preview/Cancel/confirm, transformed targets, source preservation, UUID/property
   retention, one-step Undo/Redo and native roundtrip. Retain separate headless
   geometry tests and desktop session tests, including HiDPI when controls change.

@@ -22,6 +22,7 @@
 #include <QEventLoop>
 #include <QTimer>
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <StdSelect_BRepOwner.hxx>
@@ -50,6 +51,96 @@ struct ProfileRevolutionSessionTest {
     check(v.commandSession_ && v.commandSession_->valid && !v.commandSession_->preview.IsNull()
         && std::abs(volume(v.commandSession_->candidate)-expected)<expected*1.e-9,"Revolve preview volume/state incorrect");
     TColStd_ListOfInteger modes;v.context_->ActivatedModes(v.commandSession_->preview,modes);check(modes.IsEmpty(),"Revolve preview is selectable");
+ }
+ static void operation(CadViewport& v,ModelingOperation mode) {
+    auto* combo=v.sweepControls_->findChild<QComboBox*>("extrusionOperation");combo->setCurrentIndex(combo->findData(int(mode)));
+ }
+ static void materialModes() {
+    constexpr double pi=std::numbers::pi;
+    MainWindow window;window.resize(1400,1000);window.show();QApplication::processEvents();auto& v=*window.viewport_;v.initializeViewer();
+    gp_Trsf placement;placement.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.4);placement.SetTranslationPart(gp_Vec(100,50,20));
+    NativeDocumentSnapshot document;NativePartState first;first.id="revolve-target-1";first.name="Stable target";first.color=QColor(110,160,190);
+    first.shape=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(),gp_Dir(0,1,0)),30,10).Shape();first.transform=placement;
+    NativePartState second=first;second.id="revolve-target-2";second.name="Override target";
+    second.shape=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0,20,0),gp_Dir(0,1,0)),35,5).Shape();document.parts={first,second};
+    QString error;check(v.importDocumentSnapshot(document,error),"Revolve Boolean fixture import failed");
+    Construction::Object wp;wp.id="revolve-wp";wp.name="Moved Workplane";wp.kind=Construction::Kind::Workplane;wp.frame=gp_Ax3().Transformed(placement);
+    v.restoreConstructions({wp});std::vector<Sketch::Entity> sketch;
+    const Sketch::Point points[]{{20,0},{40,0},{40,30},{20,30}};
+    for(int i=0;i<4;++i)sketch.push_back(entity(QString("material-profile-%1").arg(i),Sketch::Segment{points[i],points[(i+1)%4]},Sketch::Role::Profile));
+    sketch.push_back(entity("material-axis",Sketch::InfiniteLine{{0,0},{0,1}}));v.restoreSketchEntities(sketch);
+    v.activateSketchWorkplane(wp.id,false);v.setActivePart(first.id);v.selectSketchEntities({sketch.front().id});
+    const auto original=v.boxes_[0],other=v.boxes_[1];const auto history=v.undoStack_.size();window.documentDirty_=false;
+    const auto start=[&] {
+        v.startProfileRevolution();auto* combo=v.sweepControls_->findChild<QComboBox*>("revolutionAxis");combo->setCurrentIndex(combo->findData("material-axis"));
+    };
+    start();operation(v,ModelingOperation::AddMaterial);preview(v,40000*pi);
+    CommandPanelTest::waitForInitialAnchor(*v.commandPanel_,v,"Revolve material panel anchor");
+    check(!v.targetPicking() && v.commandSession_->sweep->target==std::optional<size_t>(0) && v.activePartId()==first.id,"Add did not resolve eligible Active Part");
+    check(v.boxes_[0].shape.IsSame(original.shape) && v.undoStack_.size()==history && !window.documentDirty_,"Add preview changed target/history");
+    NativeDocumentSnapshot pending;check(v.exportDocumentSnapshot(pending) && pending.parts.size()==2
+        && std::abs(volume(pending.parts[0].shape)-9000*pi)<1.e-5,"Boolean preview leaked into persistence");
+    v.boxes_[0].orientation.SetTranslation(gp_Vec(999,0,0));v.refreshProfileSweep();
+    check(!v.commandSession_->valid && v.commandSession_->preview.IsNull(),"stale target placement retained Boolean preview");
+    v.boxes_[0].orientation=original.orientation;v.refreshProfileSweep();preview(v,40000*pi);
+    auto* angle=v.sweepControls_->findChild<QLineEdit*>("revolutionAngle");angle->setText("90");preview(v,16750*pi);
+    v.sweepControls_->findChild<QCheckBox*>("revolutionReverse")->setChecked(true);preview(v,16750*pi);
+    angle->setText("bad");check(!v.commandSession_->valid && v.commandSession_->preview.IsNull(),"invalid Boolean angle retained preview");
+    angle->setText("360");operation(v,ModelingOperation::RemoveMaterial);preview(v,4000*pi);
+    check(!v.context_->IsDisplayed(v.boxes_[0].presentation),"Remove did not preview the cut target");
+    v.sweepControls_->findChild<QPushButton*>("pickRevolutionAxis")->click();
+    check(v.commandSession_->sweep->axisPicking && !v.targetPicking() && v.commandSession_->preview.IsNull()
+        && v.context_->IsDisplayed(v.boxes_[0].presentation),"axis repick did not restore original target/clear Boolean preview");
+    auto* axisCombo=v.sweepControls_->findChild<QComboBox*>("revolutionAxis");axisCombo->setCurrentIndex(axisCombo->findData("material-axis"));preview(v,4000*pi);
+    operation(v,ModelingOperation::NewSolid);preview(v,36000*pi);
+    check(!v.commandSession_->sweep->target && !v.targetPicking() && v.context_->IsDisplayed(v.boxes_[0].presentation),"New Solid retained material target/hidden original");
+    operation(v,ModelingOperation::RemoveMaterial);preview(v,4000*pi);
+    v.sweepControls_->findChild<QPushButton*>("pickTargetPart")->click();check(v.targetPicking() && !v.commandSession_->sweep->axisPicking,"target picker conflicted with axis picker");
+    const auto normal=wp.frame.Direction();v.view_->SetProj(normal.X(),normal.Y(),normal.Z());v.fitAll();click(v,gp_Pnt(0,22,35).Transformed(placement));
+    check(v.commandSession_->sweep->target==std::optional<size_t>(1) && !v.targetPicking() && v.activePartId()==first.id,"viewport target override failed or changed Active Part");preview(v,2000*pi);
+    v.cancelCommandSession();check(v.boxes_[0].shape.IsSame(original.shape) && v.boxes_[1].shape.IsSame(other.shape)
+        && v.context_->IsDisplayed(v.boxes_[0].presentation) && v.context_->IsDisplayed(v.boxes_[1].presentation)
+        && !window.documentDirty_ && v.undoStack_.size()==history && v.context_->IsSelected(v.sketchPresentations_.at(sketch.front().id)),"Boolean Cancel changed geometry/history/selection/display");
+    // Existing in-place transaction preserves identity, material, placement and slot.
+    Handle(StdSelect_BRepOwner) oldTargetFace=new StdSelect_BRepOwner(TopExp_Explorer(original.shape,TopAbs_FACE).Current(),v.boxes_[0].presentation,5,Standard_True);
+    Handle(StdSelect_BRepOwner) otherFace=new StdSelect_BRepOwner(TopExp_Explorer(other.shape,TopAbs_FACE).Current(),v.boxes_[1].presentation,5,Standard_True);
+    v.context_->AddOrRemoveSelected(oldTargetFace,Standard_False);v.context_->AddOrRemoveSelected(otherFace,Standard_False);
+    start();operation(v,ModelingOperation::AddMaterial);v.confirmCommandSession();
+    check(!v.commandSession_ && v.boxes_.size()==2 && v.undoStack_.size()==history+1 && v.boxes_[0].persistentId==first.id
+        && v.boxes_[0].name==first.name && v.boxes_[0].color==original.color && v.boxes_[0].visible==original.visible
+        && window.root_->childCount()==2 && v.activePartId()==first.id && v.boxes_[1].shape.IsSame(other.shape),"Add lost target identity/material/browser/activation");
+    for(int row=1;row<=3;++row)for(int col=1;col<=4;++col)check(v.boxes_[0].orientation.Value(row,col)==original.orientation.Value(row,col),"Add changed target placement");
+    check(std::abs(volume(v.boxes_[0].shape)-40000*pi)<1.e-5 && v.context_->IsSelected(v.sketchPresentations_.at(sketch.front().id)),"Add committed a tool or lost source selection");
+    check(!v.context_->IsSelected(oldTargetFace) && v.context_->IsSelected(otherFace),"confirmation reused stale target topology or lost other Part selection");
+    const auto added=v.boxes_[0];v.undoPull();check(v.boxes_[0].shape.IsSame(original.shape) && v.activePartId()==first.id,"Add Undo failed");
+    v.activateSketchWorkplane(wp.id,false);v.startProfileRevolution();v.cancelCommandSession();check(v.redoStack_.size()==1,"material Cancel cleared Redo");v.redoPull();
+    check(v.boxes_[0].shape.IsSame(added.shape) && v.boxes_[0].persistentId==first.id,"Add Redo lost target state");
+    v.activateSketchWorkplane(wp.id,false);start();operation(v,ModelingOperation::AddMaterial);
+    check(!v.commandSession_->valid && v.commandSession_->preview.IsNull(),"unchanged Add accepted");
+    operation(v,ModelingOperation::RemoveMaterial);v.chooseExtrusionTarget({1});preview(v,2000*pi);v.confirmCommandSession();
+    check(v.boxes_.size()==2 && v.undoStack_.size()==history+2 && v.boxes_[1].persistentId==second.id && v.boxes_[1].name==second.name
+        && v.boxes_[1].color==other.color && v.boxes_[0].shape.IsSame(added.shape) && v.activePartId()==first.id,"Remove lost target identity/overrode another Part");
+    const auto removed=v.boxes_[1];v.undoPull();check(v.boxes_[1].shape.IsSame(other.shape),"Remove Undo failed");v.redoPull();check(v.boxes_[1].shape.IsSame(removed.shape),"Remove Redo failed");
+    NativeDocumentSnapshot saved,loaded;QTemporaryDir directory;check(v.exportDocumentSnapshot(saved)
+        && NativeDocumentStorage::save(directory.filePath("material.odc"),saved,error)
+        && NativeDocumentStorage::load(directory.filePath("material.odc"),loaded,error),"Revolve Boolean native roundtrip failed");
+    check(loaded.parts.size()==2 && loaded.parts[0].id==first.id && loaded.parts[1].id==second.id && loaded.activePartId==first.id
+        && loaded.parts[0].color==first.color && loaded.sketchEntities==sketch
+        && std::abs(volume(loaded.parts[0].shape)-40000*pi)<1.e-5 && std::abs(volume(loaded.parts[1].shape)-2000*pi)<1.e-5,"native Boolean result/properties not restored");
+    for(int row=1;row<=3;++row)for(int col=1;col<=4;++col)check(std::abs(loaded.parts[1].transform.Value(row,col)-other.orientation.Value(row,col))<1.e-12,"Remove/native roundtrip changed placement");
+    // Absent or hidden Active Part requests viewport picking, never ordinary selection.
+    v.setActivePart({});v.activateSketchWorkplane(wp.id,false);window.documentDirty_=false;v.startProfileRevolution();operation(v,ModelingOperation::RemoveMaterial);
+    check(v.targetPicking() && !v.commandSession_->sweep->axisPicking && !v.commandSession_->valid,"missing Active Part did not request target picking");
+    key(v.sweepControls_->findChild<QLineEdit*>("revolutionAngle"),Qt::Key_Escape);
+    check(v.commandSession_ && !v.targetPicking() && v.boxes_[0].shape.IsSame(added.shape),"Escape during target picking modified/cancelled the operation");
+    v.sweepControls_->findChild<QPushButton*>("pickTargetPart")->click();click(v,gp_Pnt(0,5,30).Transformed(placement));
+    check(v.commandSession_->sweep->axisPicking && !v.targetPicking(),"target-first workflow did not resume axis picking");
+    v.selectSketchEntities({"material-axis"});preview(v,4000*pi);
+    key(v.sweepControls_->findChild<QLineEdit*>("revolutionAngle"),Qt::Key_Escape);check(!v.commandSession_ && v.boxes_[0].shape.IsSame(added.shape) && !window.documentDirty_,"Escape changed material geometry");
+    v.setActivePart(first.id);v.setPartVisible(0,false);v.activateSketchWorkplane(wp.id,false);start();operation(v,ModelingOperation::AddMaterial);
+    check(v.targetPicking() && !v.commandSession_->valid && v.sweepControls_->findChild<QLabel*>("extrusionStatus")->text().contains("hidden"),"hidden Active Part was accepted");
+    operation(v,ModelingOperation::NewSolid);preview(v,36000*pi);check(!v.targetPicking() && !v.isPartVisible(0),"mode switch redisplayed hidden target");v.cancelCommandSession();
+    window.documentDirty_=false;window.close();
  }
  static void run() {
     constexpr double pi=std::numbers::pi;
@@ -161,4 +252,4 @@ struct ProfileRevolutionSessionTest {
     window.documentDirty_=false;window.close();
  }
 };
-void runProfileRevolutionSessions(){ProfileRevolutionSessionTest::run();}
+void runProfileRevolutionSessions(){ProfileRevolutionSessionTest::run();ProfileRevolutionSessionTest::materialModes();}

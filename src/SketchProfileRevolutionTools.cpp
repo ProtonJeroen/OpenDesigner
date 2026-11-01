@@ -13,7 +13,6 @@
 #include <TopExp_Explorer.hxx>
 
 void CadViewport::createRevolutionControls(QFormLayout* form) {
-    form->addRow(tr("Operation"),new QLabel(tr("New Solid"),sweepControls_));
     auto* axis=new QComboBox(sweepControls_);axis->setObjectName("revolutionAxis");
     axis->addItem(tr("Select rotation axis"),QString());
     int lineNumber=0;
@@ -32,10 +31,11 @@ void CadViewport::createRevolutionControls(QFormLayout* form) {
     connect(reverse,&QCheckBox::toggled,this,[this]{refreshProfileSweep();});
 }
 void CadViewport::configureRevolutionPicking() {
-    const bool picking=commandSession_->sweep->axisPicking;
+    const bool targeting=targetPicking();
+    const bool picking=commandSession_->sweep->axisPicking && !targeting;
     for(const auto& part:boxes_)if(part.active && part.visible) {
         context_->Deactivate(part.presentation);
-        if(picking)context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_EDGE),Standard_False);
+        if(picking || targeting)context_->Activate(part.presentation,AIS_Shape::SelectionMode(targeting?TopAbs_FACE:TopAbs_EDGE),Standard_False);
     }
     for(const auto& [id,p]:sketchPresentations_) {
         context_->Deactivate(p);
@@ -48,14 +48,16 @@ void CadViewport::configureRevolutionPicking() {
     ProfileSweepSelection::restore(context_,commandSession_->owners,commandSession_->sweep->sketchSelection,sketchPresentations_);
 }
 void CadViewport::beginRevolutionAxisPick() {
+    cancelTargetPicking();
     auto& state=*commandSession_->sweep;
     state.axis.reset();state.axisPartId.clear();state.axisConstruction.reset();state.axisPicking=true;
     auto* combo=sweepControls_->findChild<QComboBox*>("revolutionAxis");
     {const QSignalBlocker blocker(combo);combo->setCurrentIndex(0);}
-    context_->ClearDetected(Standard_False);configureRevolutionPicking();refreshProfileSweep();
+    context_->ClearDetected(Standard_False);refreshProfileSweep();configureRevolutionPicking();
     emit statusMessage(tr("Select a sketch line, construction axis or straight Part edge for the rotation axis."));
 }
 void CadViewport::chooseRevolutionAxisId(const QString& id) {
+    cancelTargetPicking();
     auto& state=*commandSession_->sweep;
     state.axis.reset();state.axisPartId.clear();state.axisConstruction.reset();
     QString error;Construction::Reference reference;

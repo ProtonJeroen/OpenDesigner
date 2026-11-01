@@ -66,13 +66,26 @@ Result cut(const SketchProfileBuilder::Result& faces,const gp_Ax3& frame,
         if(!std::isfinite(depth) || depth<=0)return fail(Code::InvalidInput,"Enter a positive cutting depth in millimeters.");
         auto tool=extrude(faces,frame.Direction(),reversed?-depth:depth);
         if(!tool.success)return tool;
+        return removeMaterial(tool,target,placement);
+    } catch(const Standard_Failure& e) {return fail(Code::NumericalFailure,QString::fromUtf8(e.GetMessageString()));}
+      catch(const std::exception& e) {return fail(Code::NumericalFailure,QString::fromUtf8(e.what()));}
+}
+Result removeMaterial(const Result& tool,const TopoDS_Shape& target,const gp_Trsf& placement) {
+    try {
+        double toolVolume=0,originalVolume=0;size_t toolCount=0,count=0;
+        if(!tool.success || !BooleanGeometry::certifiedSolid(tool.shape,toolVolume,toolCount)
+           || !BooleanGeometry::certifiedSolid(target,originalVolume,count) || placement.IsNegative()
+           || std::abs(placement.ScaleFactor()-1)>1.e-12)
+            return fail(Code::InvalidInput,"Remove Material requires a valid swept tool and solid target with rigid positive placement.");
+        const auto world=BRepBuilderAPI_Transform(target,placement,true).Shape();
+        if(!BooleanGeometry::certifiedSolid(world,originalVolume,count))return fail(Code::InvalidSolid,"Transformed target is invalid.");
         auto shape=BooleanGeometry::combine<BRepAlgoAPI_Cut>(world,tool.shape);
         int solids=0;shape=BooleanGeometry::solidResult(shape,solids);
         if(solids==0)return fail(Code::InvalidSolid,"Cut would remove the entire target.");
         shape=BooleanGeometry::normalizeBooleanResult(shape);
         Result result;result.shape=shape;
         if(!BooleanGeometry::certifiedSolid(shape,result.volume,result.solidCount))return fail(Code::InvalidSolid,"Cut produced invalid solid geometry.");
-        if(result.volume>=originalVolume-std::max(1.e-9,originalVolume*1.e-12))return fail(Code::Unchanged,"Profiles remove no measurable material from the target.");
+        if(result.volume>=originalVolume-std::max(1.e-9,originalVolume*1.e-12))return fail(Code::Unchanged,"Swept profiles remove no measurable material from the target.");
         result.success=true;return result;
     } catch(const Standard_Failure& e) {return fail(Code::NumericalFailure,QString::fromUtf8(e.GetMessageString()));}
       catch(const std::exception& e) {return fail(Code::NumericalFailure,QString::fromUtf8(e.what()));}
@@ -81,17 +94,17 @@ Result addMaterial(const Result& tool,const TopoDS_Shape& target,const gp_Trsf& 
     try {
         double toolVolume=0,targetVolume=0;size_t toolCount=0,targetCount=0;
         if(!tool.success || !BooleanGeometry::certifiedSolid(tool.shape,toolVolume,toolCount) || !BooleanGeometry::certifiedSolid(target,targetVolume,targetCount) || targetCount!=1)
-            return fail(Code::InvalidInput,"Add Material requires a valid extrusion and one connected target solid.");
+            return fail(Code::InvalidInput,"Add Material requires a valid swept tool and one connected target solid.");
         if(placement.IsNegative() || std::abs(placement.ScaleFactor()-1)>1.e-12)return fail(Code::InvalidInput,"Target placement must be a rigid positive instance transform.");
         const auto world=BRepBuilderAPI_Transform(target,placement,true).Shape();
         if(!BooleanGeometry::certifiedSolid(world,targetVolume,targetCount))return fail(Code::InvalidSolid,"Transformed target is invalid.");
         auto fused=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(world,tool.shape);
         int count=0;fused=BooleanGeometry::solidResult(fused,count);
-        if(count!=1)return fail(Code::Disconnected,"The extrusion must connect to the target as one solid; disconnected additions are refused.");
+        if(count!=1)return fail(Code::Disconnected,"The swept tool must connect to the target as one solid; disconnected additions are refused.");
         fused=BooleanGeometry::normalizeBooleanResult(fused);
         Result result;result.shape=fused;
         if(!BooleanGeometry::certifiedSolid(fused,result.volume,result.solidCount) || result.solidCount!=1)return fail(Code::InvalidSolid,"Fused target is not one valid closed solid.");
-        if(result.volume<=targetVolume+std::max(1.e-9,targetVolume*1.e-12))return fail(Code::Unchanged,"The extrusion adds no measurable volume to the target.");
+        if(result.volume<=targetVolume+std::max(1.e-9,targetVolume*1.e-12))return fail(Code::Unchanged,"The swept tool adds no measurable volume to the target.");
         result.success=true;return result;
     } catch(const Standard_Failure& e) {return fail(Code::NumericalFailure,QString::fromUtf8(e.GetMessageString()));}
       catch(const std::exception& e) {return fail(Code::NumericalFailure,QString::fromUtf8(e.what()));}

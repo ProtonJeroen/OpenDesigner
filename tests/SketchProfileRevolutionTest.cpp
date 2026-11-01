@@ -1,7 +1,9 @@
 #include "SketchProfileRevolution.h"
+#include "SketchProfileExtrusion.h"
 #include "BooleanGeometry.h"
 #include <BRepTools.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopExp.hxx>
 #include <sstream>
@@ -102,5 +104,27 @@ int main() {try {
     failed(RV::revolve(invalid,axis,90),RV::Code::UnsupportedAxis);
     failed(RV::revolve(profile,gp_Ax1(gp_Pnt(0,1.e12,0),gp_Dir(0,1,0)),90),RV::Code::NumericalFailure);
     check(input==saved && serialized(profile.faces.front().shape)==original,"successful or failed sweep modified source geometry");
+    // Apply the existing material operations directly to certified Revolve tools.
+    namespace EX=SketchProfileExtrusion;
+    const auto target=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(),gp_Dir(0,1,0)),3,3).Shape();
+    const auto savedTarget=serialized(target);
+    valid(EX::addMaterial(full,target,gp_Trsf()),48*pi);
+    valid(EX::removeMaterial(full,target,gp_Trsf()),12*pi);
+    valid(EX::addMaterial(positive,target,gp_Trsf()),129*pi/4);
+    valid(EX::removeMaterial(negative,target,gp_Trsf()),93*pi/4);
+    const auto movedFull=RV::revolve(faces(input,gp_Ax3().Transformed(placement)),axis.Transformed(placement),360);
+    valid(EX::addMaterial(movedFull,target,placement),48*pi);
+    valid(EX::removeMaterial(movedFull,target,placement),12*pi);
+    const auto away=RV::revolve(faces(rectangle(10)),axis,360);
+    failed(EX::addMaterial(away,target,gp_Trsf()),RV::Code::Disconnected);
+    failed(EX::removeMaterial(away,target,gp_Trsf()),RV::Code::Unchanged);
+    const auto contained=RV::revolve(faces(rectangle(1,0,1,1)),axis,360);
+    failed(EX::addMaterial(contained,target,gp_Trsf()),RV::Code::Unchanged);
+    failed(EX::removeMaterial(RV::revolve(faces(rectangle(0,0,4,3)),axis,360),target,gp_Trsf()),RV::Code::InvalidSolid);
+    valid(EX::removeMaterial(RV::revolve(faces(rectangle(0,1,4,1)),axis,360),target,gp_Trsf()),18*pi,2);
+    failed(EX::removeMaterial({},target,gp_Trsf()),RV::Code::InvalidInput);
+    failed(EX::removeMaterial(full,{},gp_Trsf()),RV::Code::InvalidInput);
+    gp_Trsf scaled;scaled.SetScale(gp_Pnt(),2);failed(EX::removeMaterial(full,target,scaled),RV::Code::InvalidInput);
+    check(serialized(target)==savedTarget && serialized(profile.faces.front().shape)==original,"material application modified its sources");
     std::cout<<"Profile revolution geometry passed\n";return 0;
 } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}}

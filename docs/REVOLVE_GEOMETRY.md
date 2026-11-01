@@ -59,12 +59,13 @@ it requires no widgets or event loop. Zero-length axes cannot be represented by
 
 ## Later integration boundary
 
-Phase 8D uses this certified world-space tool for New Solid. Future Add/Remove
-integration must wait for manual phase 8D acceptance. Keep Add/Remove target selection, placement inversion,
-Part identity/properties, preview and Undo/Redo in the command layer. Extract the
-existing material application as planned in
-[Shared modeling architecture](SHARED_MODELING_ARCHITECTURE.md); do not copy it
-into this sweep kernel. Phase 8C introduces no Revolve UI or document feature.
+Phase 8D uses this certified world-space tool for New Solid. Phase 8E passes the
+same tool result to existing `SketchProfileExtrusion::addMaterial` or the subtraction
+stage extracted from Cut Extrude as `SketchProfileExtrusion::removeMaterial`.
+Target selection, placement inversion, Part identity/properties, preview and
+Undo/Redo remain in the command layer. See [Revolve](REVOLVE.md) and
+[Shared modeling architecture](SHARED_MODELING_ARCHITECTURE.md). The sweep kernel
+has no command or Boolean-mode dependency.
 
 ## Validation — 2026-11-01
 

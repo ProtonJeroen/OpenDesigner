@@ -11,5 +11,8 @@ Result extrude(const SketchProfileBuilder::Result& faces,const gp_Dir& workplane
 Result cut(const SketchProfileBuilder::Result& faces,const gp_Ax3& frame,
            const TopoDS_Shape& target,const gp_Trsf& placement,
            double depth,bool reversed=false,bool throughAll=false);
+// Material application accepts either certified sweep tool; target is local and
+// placement is applied once. The returned Boolean result is world-space.
 Result addMaterial(const Result& tool,const TopoDS_Shape& target,const gp_Trsf& placement);
+Result removeMaterial(const Result& tool,const TopoDS_Shape& target,const gp_Trsf& placement);
 }

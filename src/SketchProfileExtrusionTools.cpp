@@ -20,6 +20,7 @@
 #include <Graphic3d_ZLayerId.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
+#include <algorithm>
 
 void CadViewport::startProfileExtrusion() {startProfileSweep(false);}
 void CadViewport::startProfileRevolution() {startProfileSweep(true);}
@@ -46,20 +47,20 @@ void CadViewport::startProfileSweep(bool revolving) {
     }
     sweepControls_=new QWidget(commandPanel_);auto* layout=new QVBoxLayout(sweepControls_);auto* form=new QFormLayout;layout->addLayout(form);
     auto* source=new QLabel(plane.name,sweepControls_);source->setTextFormat(Qt::PlainText);form->addRow(tr("Workplane"),source);
+    auto* operation=new QComboBox(sweepControls_);operation->setObjectName("extrusionOperation");
+    operation->addItem(tr("New Solid"),int(ModelingOperation::NewSolid));
+    operation->addItem(tr("Add Material"),int(ModelingOperation::AddMaterial));
+    operation->addItem(tr("Remove Material"),int(ModelingOperation::RemoveMaterial));form->addRow(tr("Operation"),operation);
+    auto* target=new QComboBox(sweepControls_);target->setObjectName("extrusionTarget");target->addItem(tr("Select target part"),-1);
+    for(size_t i=0;i<boxes_.size();++i)if(isPartVisible(i)){target->addItem(partName(i),qulonglong(i));target->setItemData(target->count()-1,partId(i),Qt::UserRole+1);}
+    form->addRow(tr("Target Part"),target);target->setEnabled(false);
+    connect(operation,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,operation]{
+        setExtrusionOperation(static_cast<ModelingOperation>(operation->currentData().toInt()));
+    });
+    connect(target,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,target]{if(target->currentIndex()>0)cancelTargetPicking();refreshProfileSweep();});
     if(revolving)createRevolutionControls(form);
     else {
-        auto* operation=new QComboBox(sweepControls_);operation->setObjectName("extrusionOperation");
-        operation->addItem(tr("New Solid"),int(ModelingOperation::NewSolid));
-        operation->addItem(tr("Add Material"),int(ModelingOperation::AddMaterial));
-        operation->addItem(tr("Remove Material"),int(ModelingOperation::RemoveMaterial));form->addRow(tr("Operation"),operation);
-        auto* target=new QComboBox(sweepControls_);target->setObjectName("extrusionTarget");target->addItem(tr("Select target part"),-1);
-        for(size_t i=0;i<boxes_.size();++i)if(isPartVisible(i)){target->addItem(partName(i),qulonglong(i));target->setItemData(target->count()-1,partId(i),Qt::UserRole+1);}
-        form->addRow(tr("Target Part"),target);target->setEnabled(false);
         auto* depth=new QLineEdit(QLocale().toString(20.0,'f',2),sweepControls_);depth->setObjectName("extrusionDistance");form->addRow(tr("Distance (mm)"),depth);
-        connect(operation,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,operation]{
-            setExtrusionOperation(static_cast<ModelingOperation>(operation->currentData().toInt()));
-        });
-        connect(target,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,target]{if(target->currentIndex()>0)cancelTargetPicking();refreshProfileSweep();});
         connect(depth,&QLineEdit::textChanged,this,[this]{refreshProfileSweep();});
     }
     auto* regionsLabel=new QLabel(tr("Profiles (select one or more regions)"),sweepControls_);regionsLabel->setObjectName("cutProfilesLabel");layout->addWidget(regionsLabel);
@@ -70,13 +71,13 @@ void CadViewport::startProfileSweep(bool revolving) {
     if(!revolving) {
         auto* mode=new QComboBox(sweepControls_);mode->setObjectName("cutMode");mode->addItems({tr("Blind"),tr("Through All")});layout->addWidget(mode);
         auto* reverse=new QCheckBox(tr("Reverse direction"),sweepControls_);reverse->setObjectName("cutReverse");layout->addWidget(reverse);
-        auto* pick=new QPushButton(tr("Pick target part"),sweepControls_);pick->setObjectName("pickTargetPart");layout->addWidget(pick);
         connect(mode,qOverload<int>(&QComboBox::currentIndexChanged),this,[this](int i){
             sweepControls_->findChild<QLineEdit*>("extrusionDistance")->setEnabled(commandSession_->sweep->operation!=ModelingOperation::RemoveMaterial || i==0);refreshProfileSweep();
         });
         connect(reverse,&QCheckBox::toggled,this,[this]{refreshProfileSweep();});
-        connect(pick,&QPushButton::clicked,this,&CadViewport::pickExtrusionTarget);
     }
+    auto* pick=new QPushButton(tr("Pick target part"),sweepControls_);pick->setObjectName("pickTargetPart");pick->setVisible(false);layout->addWidget(pick);
+    connect(pick,&QPushButton::clicked,this,&CadViewport::pickExtrusionTarget);
     auto* status=new QLabel(sweepControls_);status->setObjectName("extrusionStatus");status->setTextFormat(Qt::PlainText);status->setWordWrap(true);status->setMaximumWidth(370);layout->addWidget(status);
     commandLayout_->insertWidget(0,sweepControls_);dragDimension_->hide();commandPanel_->setWindowTitle(revolving?tr("Revolve"):tr("Extrude"));commandButtons_->show();
     connect(regions,&QListWidget::itemSelectionChanged,this,[this]{refreshProfileSweep();});
@@ -93,9 +94,11 @@ QString CadViewport::extrusionTargetError(size_t index) const {
     return {};
 }
 void CadViewport::pickExtrusionTarget() {
+    if(commandSession_->kind==CommandSession::Kind::Revolve)commandSession_->sweep->axisPicking=false;
     auto* target=sweepControls_->findChild<QComboBox*>("extrusionTarget");
     target->setCurrentIndex(0);
     refreshProfileSweep();
+    if(commandSession_->kind==CommandSession::Kind::Revolve)refreshSketchPicking();
     beginTargetPicking([this](size_t i){return extrusionTargetError(i);},[this](const QString& id){
         if(const auto index=partIndexForId(id))chooseExtrusionTarget({*index});
     });
@@ -108,13 +111,17 @@ void CadViewport::setExtrusionOperation(ModelingOperation operation) {
     state.target.reset();state.operation=operation;
     const bool removing=operation==ModelingOperation::RemoveMaterial;
     const bool targeted=operation!=ModelingOperation::NewSolid;
-    for(const auto* name:{"cutProfilesLabel","cutProfiles","cutMode","cutReverse"})
-        sweepControls_->findChild<QWidget*>(name)->setVisible(removing);
     sweepControls_->findChild<QPushButton*>("pickTargetPart")->setVisible(targeted);
-    auto* depth=sweepControls_->findChild<QLineEdit*>("extrusionDistance");
-    depth->setEnabled(!removing || sweepControls_->findChild<QComboBox*>("cutMode")->currentIndex()==0);
-    auto* form=qobject_cast<QFormLayout*>(sweepControls_->layout()->itemAt(0)->layout());
-    qobject_cast<QLabel*>(form->labelForField(depth))->setText(removing?tr("Depth (mm)"):tr("Distance (mm)"));
+    if(commandSession_->kind==CommandSession::Kind::Revolve) {
+        state.axisPicking=!state.axis.has_value();refreshSketchPicking();
+    } else {
+        for(const auto* name:{"cutProfilesLabel","cutProfiles","cutMode","cutReverse"})
+            sweepControls_->findChild<QWidget*>(name)->setVisible(removing);
+        auto* depth=sweepControls_->findChild<QLineEdit*>("extrusionDistance");
+        depth->setEnabled(!removing || sweepControls_->findChild<QComboBox*>("cutMode")->currentIndex()==0);
+        auto* form=qobject_cast<QFormLayout*>(sweepControls_->layout()->itemAt(0)->layout());
+        qobject_cast<QLabel*>(form->labelForField(depth))->setText(removing?tr("Depth (mm)"):tr("Distance (mm)"));
+    }
     auto* target=sweepControls_->findChild<QComboBox*>("extrusionTarget");
     {const QSignalBlocker blocker(target);target->setCurrentIndex(0);target->setEnabled(targeted);}
     QString error;
@@ -134,6 +141,9 @@ void CadViewport::chooseExtrusionTarget(const std::vector<size_t>& indices) {
     if(indices.size()==1 && extrusionTargetError(indices.front()).isEmpty())cancelTargetPicking();
     if(indices.size()!=1) {target->setCurrentIndex(0);return;}
     target->setCurrentIndex(target->findData(QVariant::fromValue<qulonglong>(indices.front())));
+    if(commandSession_->kind==CommandSession::Kind::Revolve && !commandSession_->sweep->axis) {
+        commandSession_->sweep->axisPicking=true;refreshSketchPicking();
+    }
 }
 void CadViewport::refreshProfileSweep() {
     if(!commandSession_ || !commandSession_->sweep || !sweepControls_)return;
@@ -176,7 +186,10 @@ void CadViewport::refreshProfileSweep() {
             if(partIndexForId(id)!=std::optional<size_t>(size_t(index)) || !extrusionTargetError(size_t(index)).isEmpty()){fail(tr("Target Part is no longer eligible."));return;}
             state.target=size_t(index);const auto& original=state.originals[*state.target];
             if(!boxes_[*state.target].shape.IsSame(original.shape)){fail(tr("Target changed; cancel and restart."));return;}
-            if(state.operation==ModelingOperation::RemoveMaterial) {
+            for(int row=1;row<=3;++row)for(int column=1;column<=4;++column)
+                if(boxes_[*state.target].orientation.Value(row,column)!=original.orientation.Value(row,column)){fail(tr("Target placement changed; cancel and restart."));return;}
+            if(state.operation==ModelingOperation::RemoveMaterial && revolving)result=SketchProfileExtrusion::removeMaterial(result,original.shape,original.orientation);
+            else if(state.operation==ModelingOperation::RemoveMaterial) {
                 result=SketchProfileExtrusion::cut(profiles,state.workplane.frame,original.shape,original.orientation,depth,
                     sweepControls_->findChild<QCheckBox*>("cutReverse")->isChecked(),
                     sweepControls_->findChild<QComboBox*>("cutMode")->currentIndex()==1);
@@ -235,6 +248,13 @@ void CadViewport::finishProfileSweep(bool confirm) {
         if(plane && plane->visible && plane->selectable)activeSketchWorkplaneId_=plane->id;
         selectedPartIndices_=session.selection;selectedSketchIds_=state->sketchSelection;
         selectedConstructionIds_=state->constructionSelection;
+        if(confirm && state->target) {
+            const auto presentation=boxes_[*state->target].presentation;
+            // Target topology changed: discard stale local face/edge owners.
+            // A prior whole-Part selection follows its existing presentation.
+            std::erase_if(session.owners,[&](const auto& owner){return !owner.IsNull() && owner->Selectable()==presentation;});
+            if(std::find(session.selection.begin(),session.selection.end(),*state->target)!=session.selection.end())session.owners.push_back(presentation->GlobalSelOwner());
+        }
         refreshSketchPicking(true);
         ProfileSweepSelection::restore(context_,session.owners,state->sketchSelection,sketchPresentations_);
         emit partSelectionChanged(selectedPartIndices_);emit sketchSelectionChanged(selectedSketchIds_);
