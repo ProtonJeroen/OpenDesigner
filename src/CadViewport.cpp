@@ -175,7 +175,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     connect(cancelDimension_, &QShortcut::activated, this, &CadViewport::cancelCommandSession);
     commandPanelPositioner_->manage(commandPanel_,true);
     const auto invalidateProjection=[this] {
-        if(commandSession_ && commandSession_->extrusion) {cancelCommandSession();emit statusMessage(tr("Extrude Profile cancelled because the model changed."));return;}
+        if(commandSession_ && commandSession_->sweep) {cancelCommandSession();emit statusMessage(tr("Profile sweep cancelled because the model changed."));return;}
         if(commandSession_ && commandSession_->projection) {
             cancelCommandSession();emit statusMessage(tr("Project 3D Geometry cancelled because the model changed."));
         }
@@ -281,7 +281,7 @@ bool CadViewport::updateCommandParameter(bool reportError) {
     return previewCommand(value);
 }
 void CadViewport::confirmCommandSession() {
-    if(commandSession_ && commandSession_->extrusion) {finishProfileExtrusion(true);return;}
+    if(commandSession_ && commandSession_->sweep) {finishProfileSweep(true);return;}
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Sketch) {finishSketchEdit(true);return;}
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Construction) {
         if(constructionPanel_) constructionPanel_->finishEditing();
@@ -304,7 +304,7 @@ void CadViewport::confirmCommandSession() {
 }
 void CadViewport::cancelCommandSession() {
     cancelTargetPicking();
-    if(commandSession_ && commandSession_->extrusion) {finishProfileExtrusion(false);return;}
+    if(commandSession_ && commandSession_->sweep) {finishProfileSweep(false);return;}
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Sketch) {finishSketchEdit(false);return;}
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Construction) {
         closeConstructionSession(false);return;
@@ -1919,7 +1919,7 @@ void CadViewport::fitSelection(const std::vector<size_t>& indices) {
     view_->Redraw();
 }
 void CadViewport::selectParts(const std::vector<size_t>& indices) {
-    if(commandSession_ && commandSession_->extrusion) {chooseExtrusionTarget(indices);return;}
+    if(commandSession_ && commandSession_->sweep) {chooseExtrusionTarget(indices);return;}
     if(commandSession_ && commandSession_->projection) {
         emit statusMessage(tr("Project 3D Geometry requires vertices, edges or faces picked in the viewport, not whole Parts."));return;
     }
@@ -2425,7 +2425,13 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             if(!error.isEmpty()){emit statusMessage(error);return;}
             const auto id=partId(*index);auto accepted=targetAccepted_;cancelTargetPicking();accepted(id);return;
         }
-        if(commandSession_ && commandSession_->extrusion)return;
+        if(commandSession_ && commandSession_->sweep) {
+            if(commandSession_->kind==CommandSession::Kind::Revolve && commandSession_->sweep->axisPicking) {
+                context_->MoveTo(e->pos().x(),e->pos().y(),view_,Standard_True);
+                chooseRevolutionAxis(context_->HasDetected()?context_->DetectedOwner():Handle(SelectMgr_EntityOwner)());
+            }
+            return;
+        }
         if(sketchProjectionClick(e->pos(),e->modifiers())) return;
         if(sketchConstructionClick(e->pos())) return;
         if(overdrawClick(e->pos())) return;
@@ -2853,7 +2859,7 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
 void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
     if(e->button()==Qt::LeftButton) constructionMouseRelease();
     if (e->button() == Qt::MiddleButton) { rotating_ = false; panning_ = false; }
-    if(e->button()==Qt::LeftButton && commandSession_ && (commandSession_->extrusion || commandSession_->kind==CommandSession::Kind::Boolean
+    if(e->button()==Qt::LeftButton && commandSession_ && (commandSession_->sweep || commandSession_->kind==CommandSession::Kind::Boolean
         || commandSession_->kind==CommandSession::Kind::Construction || commandSession_->kind==CommandSession::Kind::Sketch)) return;
     if (e->button()==Qt::LeftButton && commandSession_) {
         draggingFace_ = draggingRotation_ = draggingFaceRotation_ = false;

@@ -53,7 +53,8 @@ void CadViewport::validateActiveSketchContext() {
 }
 void CadViewport::refreshSketchPicking(bool restore3D) {
     if(context_.IsNull() || (activeSketchWorkplaneId_.isEmpty() && !restore3D)) return;
-    if(commandSession_ && commandSession_->extrusion) {
+    if(commandSession_ && commandSession_->sweep) {
+        if(commandSession_->kind==CommandSession::Kind::Revolve) {configureRevolutionPicking();return;}
         for(const auto& p:boxes_) if(p.active && p.visible) {context_->Deactivate(p.presentation);context_->Activate(p.presentation,targetPicking()?AIS_Shape::SelectionMode(TopAbs_FACE):0,Standard_False);}
         for(const auto& [id,p]:sketchPresentations_) context_->Deactivate(p);
         for(const auto& [id,p]:constructionPresentations_) context_->Deactivate(p);

@@ -59,8 +59,8 @@ it requires no widgets or event loop. Zero-length axes cannot be represented by
 
 ## Later integration boundary
 
-Phase 8D can use this certified world-space tool for New Solid or existing shared
-material application. Keep Add/Remove target selection, placement inversion,
+Phase 8D uses this certified world-space tool for New Solid. Future Add/Remove
+integration must wait for manual phase 8D acceptance. Keep Add/Remove target selection, placement inversion,
 Part identity/properties, preview and Undo/Redo in the command layer. Extract the
 existing material application as planned in
 [Shared modeling architecture](SHARED_MODELING_ARCHITECTURE.md); do not copy it

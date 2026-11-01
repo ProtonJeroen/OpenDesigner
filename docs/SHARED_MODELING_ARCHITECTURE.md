@@ -1,4 +1,4 @@
-# Shared modeling architecture — v0.4.8, phases 8A–8C
+# Shared modeling architecture — v0.4.8, phases 8A–8D
 
 Phase 8A established the reuse contract for existing profile, Boolean,
 target-picking and history mechanisms without runtime changes. Phase 8B adds
@@ -6,6 +6,9 @@ the shared operation enum and unified Extrude command orchestration described
 below; geometry algorithms, history and the document schema remain unchanged.
 Phase 8C adds the headless revolution kernel and shares the existing sweep result
 and solid certificate; Extrude geometry behavior remains unchanged.
+Phase 8D adds [Revolve New Solid](REVOLVE.md) through the shared profile-sweep
+command lifecycle. Add/Remove for Revolve remain deferred until after manual
+acceptance; no Boolean extraction or duplicate New-Part transaction is introduced.
 The workflow reference is SolidDesigner / Modeling 2008 v16.0; the contracts below
 describe OpenDesigner behavior, without claiming exact original UI parity.
 
@@ -22,12 +25,14 @@ describe OpenDesigner behavior, without claiming exact original UI parity.
 | Cut | `SketchProfileExtrusion::cut(faces, frame, target, placement, depth, reversed, throughAll)` | Extrusion-specific reach/tool generation followed by subtraction; rejects no change and total removal; permits multiple remaining solids in the same Part. |
 | Boolean kernel helpers | `BooleanGeometry::{combine, solidResult, validSolid, normalizeBooleanResult}` | Non-destructive OCCT operations, solid extraction, validation and material-preserving normalization; no command/document ownership. Shared with existing Part Boolean commands. |
 | Target resolution | `CadViewport::{partIndexForId, solidTargetError, initialTargetPart, beginTargetPicking, cancelTargetPicking}` | Stable UUID resolution, preliminary eligibility and callback-based temporary picking. Kernel certification remains authoritative. |
-| Preview lifecycle | `CommandSession`, `ProfileExtrusionState`, `refreshProfileExtrusion`, `finishProfileExtrusion` | Snapshot sources/original Parts, rebuild preview, revalidate on confirmation, discard on cancellation. |
+| Preview lifecycle | `CommandSession`, `ProfileSweepState`, `refreshProfileSweep`, `finishProfileSweep` | Snapshot sources/original Parts, rebuild preview, revalidate on confirmation, discard on cancellation. |
 | New Part transaction | `BooleanChange`, `commitBooleanChange`, `restoreBooleanChange` | Create one GeneralBRep Part, preserve its UUID on Redo and reuse stable history slots. No committed tool Part. |
 | In-place transaction | `FaceChange`, `applyFaceState`, `restorePullChange` | Store complete before/after Part snapshots at the original index; preserve target identity, properties and placement. |
 | Undo/Redo and storage | `PullChange`, `undoPull`, `redoPull`, native GeneralBRep persistence | One confirmed operation, existing restoration paths and schema; previews never enter persistence. |
 
-`SketchProfileExtrusionTools.cpp` owns the current controls and command orchestration.
+`SketchProfileExtrusionTools.cpp` owns shared sweep controls, previews and commits.
+`SketchProfileRevolutionTools.cpp` supplies the Revolve axis/angle controls and
+selection adapter, reusing `Construction::resolve` for linear references.
 `SketchProfileExtrusion.cpp`, `SketchProfileBuilder.cpp` and `BooleanGeometry.h`
 own geometry. `BooleanOperations.cpp::calculateBoolean` also owns Part selection,
 consumption and history policy: do not invoke it with a temporary sweep Part.
@@ -42,7 +47,7 @@ Reuse its kernel helpers instead.
 | Remove Material | Exactly one eligible Part | Subtract certified sweep tool from target | Replace target in place |
 
 Phase 8B implements a widget-free `ModelingOperation` enum (`NewSolid`,
-`AddMaterial`, `RemoveMaterial`) and stores it in `ProfileExtrusionState` instead
+`AddMaterial`, `RemoveMaterial`) and stores it in `ProfileSweepState` instead
 of the former `adding`/`cutting` flags. Operation combo item data maps explicitly
 to the enum. One `sketch.extrude` QAction serves the menu and toolbar; the separate
 Cut entry point/action is removed. Geometry APIs remain unchanged.
@@ -82,15 +87,11 @@ These are recommended dependency boundaries, not additional phase requirements.
   diagnostics. Axis/angle validation and revolution-specific topology checks
   belong here, with numerical tests. Do not assume prism volume certification
   or directional Through All has a Revolve equivalent.
-- **8D: shared material application and Revolve command integration.** When
-  Revolve needs material application, extract the existing Add and Remove code
-  into a headless helper accepting mode, certified world tool, local target and
-  placement. Keep extrusion reach calculation in `cut`, delegating only its
-  subtraction/result checks. Share certification/result types only as required;
-  retain existing extrusion API wrappers and diagnostic behavior. Do not copy
-  Fuse/Cut, normalization, no-change or connectedness checks into Revolve.
-  Reuse target resolution and Part transaction paths; extract a small command
-  helper only if integration actually needs it.
+- **8D: Revolve New Solid command integration (implemented).** Share certified
+  source snapshots, profile-region filtering, the Command Panel/preview lifecycle
+  and New-Part history path with Extrude. Axis selection uses existing AIS owners
+  and `Construction::resolve`, without changing ordinary operand selection. The
+  kernel remains headless and unchanged. See [Revolve](REVOLVE.md).
 - **8E: focused integration acceptance.** Cover each mode's preview/invalid
   preview/Cancel/confirm, transformed targets, source preservation, UUID/property
   retention, one-step Undo/Redo and native roundtrip. Retain separate headless
