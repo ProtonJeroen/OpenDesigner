@@ -11,6 +11,14 @@
 #include <QPushButton>
 #include <QMouseEvent>
 #include <QTreeWidget>
+#include <QToolBar>
+#include <QMenu>
+#include <QLabel>
+#include <QElapsedTimer>
+#include <QEventLoop>
+#include <QTimer>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QTemporaryDir>
 #include <QKeyEvent>
 #include <BRepPrimAPI_MakeBox.hxx>
@@ -25,6 +33,12 @@ double volume(const TopoDS_Shape& s){GProp_GProps p;BRepGProp::VolumeProperties(
 void key(QWidget* w,int k){QKeyEvent e(QEvent::KeyPress,k,Qt::NoModifier);QApplication::sendEvent(w,&e);QApplication::processEvents();}
 }
 struct ProfileExtrusionSessionTest {
+ static void operation(CadViewport& v,ModelingOperation mode) {
+    check(v.commandSession_ && v.extrusionControls_,"operation switch requires an open Extrude session");
+    auto* combo=v.extrusionControls_->findChild<QComboBox*>("extrusionOperation");
+    combo->setCurrentIndex(combo->findData(int(mode)));
+ }
+
  static void activeTargetPrecedence() {
     MainWindow window;window.resize(1400,1000);window.show();QApplication::processEvents();
     auto& v=*window.viewport_;v.initializeViewer();
@@ -48,7 +62,7 @@ struct ProfileExtrusionSessionTest {
     v.setSelectionMode(CadViewport::SelectionMode::Part);
     check(v.selectedPartIndices_==std::vector<size_t>{1} && v.context_->IsSelected(v.boxes_[1].presentation),"Part 2 ordinary selection fixture failed");
     int pickRequests=0;QObject::connect(&v,&CadViewport::statusMessage,&window,[&](const QString& message){if(message=="Select target part")++pickRequests;});
-    auto* cut=window.findChild<QAction*>("sketch.cutExtrude");check(cut && cut->isEnabled(),"Cut action unavailable with sketch source");cut->trigger();
+    auto* cut=window.findChild<QAction*>("sketch.extrude");check(cut && cut->isEnabled(),"Extrude action unavailable with sketch source");cut->trigger();operation(v,ModelingOperation::RemoveMaterial);
     CommandPanelTest::waitForInitialAnchor(*v.commandPanel_,v,"two-Part Cut panel anchor");
     auto* target=v.extrusionControls_->findChild<QComboBox*>("extrusionTarget");
     check(target->isEnabled() && target->currentText()==first.name && target->currentData(Qt::UserRole+1).toString()==first.id,"panel did not resolve Active Part ahead of ordinary selection");
@@ -64,16 +78,37 @@ struct ProfileExtrusionSessionTest {
     QMouseEvent release(QEvent::MouseButtonRelease,QPointF(x,y),QPointF(x,y),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);v.mouseReleaseEvent(&release);
     check(v.commandSession_->extrusion->target==std::optional<size_t>(1) && target->currentData(Qt::UserRole+1).toString()==second.id
         && v.activePartId()==first.id && !v.targetPicking() && std::abs(volume(v.commandSession_->candidate)-398000)<1.e-6,"viewport override did not preserve Active Part/use Part 2");
+    operation(v,ModelingOperation::AddMaterial);
+    check(v.commandSession_->extrusion->target==std::optional<size_t>(0) && !v.targetPicking()
+        && v.activePartId()==first.id && v.context_->IsDisplayed(v.boxes_[1].presentation)
+        && v.commandSession_->preview.IsNull(),"Remove to Add did not restore override/reset to Active Part/clear failed preview");
+    target->setCurrentIndex(target->findData(QVariant::fromValue<qulonglong>(1)));
+    check(v.commandSession_->extrusion->target==std::optional<size_t>(1) && v.activePartId()==first.id
+        && !v.targetPicking(),"Add explicit dropdown override changed activation or ignored target");
+    operation(v,ModelingOperation::RemoveMaterial);
+    check(v.commandSession_->valid && std::abs(volume(v.commandSession_->candidate)-198000)<1.e-6,"Add to Remove retained stale target/result");
     v.cancelCommandSession();check(v.boxes_[0].shape.IsSame(first.shape) && v.boxes_[1].shape.IsSame(second.shape),"override Cancel changed geometry");
     // Cancel restores ordinary Part 2 selection; restart must again prefer Part 1.
     check(v.selectedPartIndices_==std::vector<size_t>{1},"Cancel lost original Part 2 selection");
-    cut->trigger();target=v.extrusionControls_->findChild<QComboBox*>("extrusionTarget");
+    cut->trigger();operation(v,ModelingOperation::RemoveMaterial);target=v.extrusionControls_->findChild<QComboBox*>("extrusionTarget");
     check(v.commandSession_->extrusion->target==std::optional<size_t>(0) && target->currentText()==first.name,"restart lost Active Part precedence");
     const auto previewVolume=volume(v.commandSession_->candidate);const auto history=v.undoStack_.size();
     v.commandButtons_->button(QDialogButtonBox::Ok)->click();
     check(!v.commandSession_ && v.undoStack_.size()==history+1 && v.undoStack_.back().partIndex==0
         && std::abs(volume(v.boxes_[0].shape)-previewVolume)<1.e-6 && std::abs(previewVolume-198000)<1.e-6
         && v.boxes_[1].shape.IsSame(second.shape) && v.activePartId()==first.id,"commit did not cut only the previewed Active Part");
+    // A hidden Active Part cannot be silently used by either material mode.
+    v.setPartVisible(0,false);v.activateSketchWorkplane(wp.id,false);
+    cut->trigger();operation(v,ModelingOperation::AddMaterial);
+    check(v.targetPicking() && !v.commandSession_->valid && !v.commandSession_->extrusion->target
+        && v.extrusionControls_->findChild<QLabel*>("extrusionStatus")->text().contains("hidden"),"Add did not reject hidden Active Part and request picking");
+    operation(v,ModelingOperation::NewSolid);
+    check(!v.targetPicking() && v.commandSession_->valid,"New Solid did not stop pending target picking");
+    operation(v,ModelingOperation::RemoveMaterial);
+    check(v.targetPicking() && !v.commandSession_->valid && !v.commandSession_->extrusion->target
+        && v.activePartId()==first.id,"Remove did not reject hidden Active Part/preserve activation");
+    v.cancelCommandSession();
+    check(!v.isPartVisible(0) && v.boxes_[1].shape.IsSame(second.shape),"Cancel restored a hidden target or modified another Part");
     window.documentDirty_=false;window.close();
  }
  static void run(){
@@ -84,6 +119,11 @@ struct ProfileExtrusionSessionTest {
     for(size_t i=0;i<4;++i){Sketch::Entity e;e.id="profile-"+QString::number(i);e.workplaneId=wp.id;e.geometry=Sketch::Segment{p[i],p[(i+1)%4]};sketch.push_back(e);}
     v.restoreSketchEntities(sketch);v.activateSketchWorkplane(wp.id);v.selectSketchEntities({sketch.front().id});w.documentDirty_=false;
     auto* action=w.findChild<QAction*>("sketch.extrude");check(action && action->isEnabled(),"Extrude menu/toolbar action unavailable");action->trigger();QApplication::processEvents();
+    check(action->text()=="Extrude" && !w.findChild<QAction*>("sketch.cutExtrude"),"separate extrusion UI actions remain");
+    check(w.findChild<QMenu*>("modeling3DMenu")->actions().count(action)==1
+        && w.findChild<QToolBar*>("modeling3DToolbar")->actions().count(action)==1,"Extrude action not shared by menu and toolbar");
+    auto* operations=v.extrusionControls_->findChild<QComboBox*>("extrusionOperation");
+    check(operations->count()==3 && operations->isEnabled() && v.commandPanel_->windowTitle()=="Extrude","unified operation selector missing");
     check(v.commandSession_ && v.commandSession_->valid && !v.commandSession_->preview.IsNull(),"New Solid preview missing");
     check(v.boxes_.empty() && v.undoStack_.empty() && !w.documentDirty_,"preview changed document/history");
     TColStd_ListOfInteger modes;v.context_->ActivatedModes(v.commandSession_->preview,modes);check(modes.IsEmpty(),"preview is selectable");
@@ -108,18 +148,60 @@ struct ProfileExtrusionSessionTest {
     for(size_t i=0;i<4;++i)boss[i].geometry=Sketch::Segment{q[i],q[(i+1)%4]};v.restoreSketchEntities(boss);
     v.activateSketchWorkplane(wp.id);const auto before=v.boxes_[0];const auto history=v.undoStack_.size();w.documentDirty_=false;
     v.startProfileExtrusion();auto* mode=v.extrusionControls_->findChild<QComboBox*>("extrusionOperation");mode->setCurrentIndex(1);
-    check(!v.commandSession_->valid,"Add accepted no target");v.selectParts({0});check(v.commandSession_->valid,"Browser target selection failed");
+    check(!v.commandSession_->valid && v.targetPicking(),"Add without Active Part did not request a target");v.selectParts({0});check(v.commandSession_->valid,"Browser target selection failed");
     check(std::abs(volume(v.commandSession_->candidate)-58000)<1.e-6 && std::abs(volume(v.boxes_[0].shape)-50000)<1.e-6,"preview is tool/modified original");
     check(!w.documentDirty_ && v.undoStack_.size()==history,"Add preview dirtied/history changed");
     v.cancelCommandSession();check(v.boxes_[0].shape.IsSame(before.shape) && v.undoStack_.size()==history,"Add Cancel changed target");
-    v.startProfileExtrusion();v.extrusionControls_->findChild<QComboBox*>("extrusionOperation")->setCurrentIndex(1);v.chooseExtrusionTarget({0});v.confirmCommandSession();
+    v.setActivePart(id);w.documentDirty_=false;v.startProfileExtrusion();operation(v,ModelingOperation::AddMaterial);
+    check(!v.targetPicking() && v.commandSession_->extrusion->target==std::optional<size_t>(0)
+        && v.commandSession_->valid,"Add did not initialize from eligible Active Part");
+    auto* switchDepth=v.extrusionControls_->findChild<QLineEdit*>("extrusionDistance");
+    operation(v,ModelingOperation::RemoveMaterial);
+    auto* cutMode=v.extrusionControls_->findChild<QComboBox*>("cutMode");
+    auto* reverse=v.extrusionControls_->findChild<QCheckBox*>("cutReverse");
+    // HiDPI can constrain the viewport below the form's natural height. Check
+    // full control reachability through the existing scroll wrapper as well as
+    // native placement, after asynchronous nested layout changes settle.
+    auto* scroll=v.commandPanel_->findChild<QScrollArea*>("commandPanelScrollArea");
+    QElapsedTimer layoutTimer;layoutTimer.start();
+    for(;;) {
+        QApplication::processEvents();
+        const auto reachable=[&](QWidget* widget) {
+            scroll->ensureWidgetVisible(widget,0,0);
+            return QRect(scroll->viewport()->mapToGlobal(QPoint()),scroll->viewport()->size())
+                .contains(QRect(widget->mapToGlobal(QPoint()),widget->size()));
+        };
+        if(!cutMode->isHidden() && !reverse->isHidden() && scroll->horizontalScrollBar()->maximum()==0
+            && reachable(reverse) && reachable(v.commandButtons_))break;
+        check(layoutTimer.elapsed()<2000,"Remove controls/buttons inaccessible after mode switch");
+        QEventLoop loop;QTimer::singleShot(10,&loop,&QEventLoop::quit);loop.exec();
+    }
+    scroll->verticalScrollBar()->setValue(0);
+    CommandPanelTest::waitForInitialAnchor(*v.commandPanel_,v,"mode switch lost panel anchor");
+    reverse->setChecked(true);cutMode->setCurrentIndex(1);switchDepth->setText("bad");
+    check(v.commandSession_->valid && !switchDepth->isEnabled()
+        && std::abs(volume(v.commandSession_->candidate)-46000)<1.e-6
+        && !v.context_->IsDisplayed(v.boxes_[0].presentation),"Remove Through All switch preview incorrect");
+    operation(v,ModelingOperation::NewSolid);
+    check(switchDepth->isEnabled() && cutMode->isHidden() && reverse->isHidden()
+        && !v.targetPicking() && !v.commandSession_->extrusion->target && v.commandSession_->preview.IsNull()
+        && !v.commandSession_->valid && v.context_->IsDisplayed(v.boxes_[0].presentation),"New Solid switch retained Remove state/hidden target/stale preview");
+    switchDepth->setText("-5");check(v.commandSession_->valid && std::abs(volume(v.commandSession_->candidate)-2000)<1.e-6,"New Solid lost signed direction after Remove");
+    operation(v,ModelingOperation::AddMaterial);
+    check(!v.commandSession_->valid && v.commandSession_->preview.IsNull(),"unchanged Add retained New Solid preview");
+    check(!v.commandButtons_->button(QDialogButtonBox::Ok)->isEnabled(),"failed mode switch left OK enabled");
+    switchDepth->setText("20");
+    check(v.commandSession_->valid && std::abs(volume(v.commandSession_->candidate)-58000)<1.e-6
+        && !w.documentDirty_ && v.undoStack_.size()==history && v.boxes_[0].shape.IsSame(before.shape),"mode switches mutated geometry/history or lost Add preview");
+    v.confirmCommandSession();
     check(v.boxes_.size()==1 && v.undoStack_.size()==history+1 && v.boxes_[0].persistentId==id && v.boxes_[0].name==before.name
         && v.boxes_[0].color==before.color && v.boxes_[0].orientation.TranslationPart().IsEqual(before.orientation.TranslationPart(),1.e-12),"Add identity/properties/placement changed");
     check(std::abs(volume(v.boxes_[0].shape)-58000)<1.e-6 && BRepCheck_Analyzer(v.boxes_[0].shape).IsValid(),"Add local B-Rep invalid");
     v.undoPull();check(v.boxes_[0].shape.IsSame(before.shape) && v.selectedPartIndices_.empty(),"Add Undo did not restore exact target");v.redoPull();check(std::abs(volume(v.boxes_[0].shape)-58000)<1.e-6,"Add Redo wrong");
     // In-place Cut lifecycle, preview cancellation, history and persistence.
+    v.setActivePart({});
     v.activateSketchWorkplane(wp.id);w.documentDirty_=false;const auto cutBefore=v.boxes_[0];const auto cutHistory=v.undoStack_.size();
-    auto* cutAction=w.findChild<QAction*>("sketch.cutExtrude");check(cutAction && cutAction->isEnabled(),"Cut action missing");cutAction->trigger();
+    action->trigger();operation(v,ModelingOperation::RemoveMaterial);
     CommandPanelTest::waitForInitialAnchor(*v.commandPanel_,v,"Cut panel anchor changed");
     check(v.targetPicking(),"Cut without Active Part did not request viewport target");
     key(v.extrusionControls_->findChild<QLineEdit*>("extrusionDistance"),Qt::Key_Escape);
@@ -142,7 +224,7 @@ struct ProfileExtrusionSessionTest {
         && v.undoStack_.size()==cutHistory && !w.documentDirty_ && v.context_->IsDisplayed(v.boxes_[0].presentation),"Failed Cut mutated document/display");cutDepth->setText("5");
     auto* profiles=v.extrusionControls_->findChild<QListWidget*>("cutProfiles");profiles->clearSelection();check(!v.commandSession_->valid,"Empty profiles accepted");profiles->selectAll();
     v.cancelCommandSession();check(v.boxes_[0].shape.IsSame(cutBefore.shape) && !v.commandSession_ && v.context_->IsDisplayed(v.boxes_[0].presentation),"Cut cancel mutated target");
-    v.setActivePart(id);v.startCutExtrusion();
+    v.setActivePart(id);v.startProfileExtrusion();operation(v,ModelingOperation::RemoveMaterial);
     check(!v.targetPicking() && v.commandSession_->extrusion->target==std::optional<size_t>(0),"Cut did not use Active Part");
     v.extrusionControls_->findChild<QCheckBox*>("cutReverse")->setChecked(true);
     v.extrusionControls_->findChild<QComboBox*>("cutMode")->setCurrentIndex(1);

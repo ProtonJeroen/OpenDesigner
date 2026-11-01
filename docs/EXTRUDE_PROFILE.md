@@ -1,10 +1,10 @@
-# Extrude Profile — phase 6D.1
+# Extrude — v0.4.8, phase 8B
 
 For the v0.4.8 Extrude/Revolve reuse contract and phase boundaries, see
 [Shared modeling architecture](SHARED_MODELING_ARCHITECTURE.md).
 
 Activate a visible, unlocked Workplane with **Edit Sketch**, then choose
-**3D Modeling → Extrude Profile** (also on the 2D toolbar). All Profile entities
+**3D Modeling → Extrude** (also on the 3D Modeling toolbar). All Profile entities
 on that Workplane participate, including hidden/locked Profiles. Construction
 entities never close a profile. Sources are independent and are not consumed.
 
@@ -14,11 +14,21 @@ no undocumented original v16 interaction is claimed.
 
 - **New Solid** (default): create one GeneralBRep Part. Disconnected material
   regions and islands remain separate solids in a compound within that Part.
-- **Add Material**: choose exactly one visible target using the Part dropdown,
-  viewport or Structure Browser. The preview is the actual fused target. No
+- **Add Material**: use the eligible Active Part automatically; otherwise pick
+  one visible target directly in the viewport. **Pick target part**, the dropdown
+  and Structure Browser allow explicit overrides without changing Active Part.
+  The preview is the actual fused target. No
   temporary extrusion-tool Part is committed. Target identity, name, color,
   visibility, browser slot and instance transform are retained. Other Parts are
   untouched. Targets must currently contain one connected solid.
+- **Remove Material**: use the same target policy as Add. Select certified regions,
+  **Blind** or **Through All**, and optionally **Reverse direction**. See
+  [material removal details](CUT_EXTRUDE.md).
+- Changing Operation resets the temporary target to an eligible Active Part or
+  starts picking. New Solid clears the target and stops picking. Remove-only
+  controls keep their values while hidden; they do not affect New Solid or Add.
+  Signed distance remains available for New Solid/Add; Remove requires positive
+  Blind depth and ignores the distance field in Through All.
 - Signed **Distance (mm)** defaults to +20. Positive follows the Workplane normal;
   negative goes the other way. Numeric input uses the desktop locale.
 - Blue preview is nonselectable, temporary and independent of document/history.
@@ -48,13 +58,14 @@ geometry is copied. Target instance transforms are applied once in world space;
 confirmed geometry is inverse-transformed once into the existing local Part.
 
 New Parts reuse `BooleanChange` creation/restoration; additions reuse `FaceChange`
-at the original Part index. Both use the existing Undo/Redo stacks and native
+at the original Part index; removal uses the same in-place path. Both use the existing Undo/Redo stacks and native
 GeneralBRep storage. UUIDs survive Undo/Redo. No new `.odc` schema or persistent
 feature/history link is introduced. Source Sketch/WP values remain unchanged.
 
 Unsupported: Profile Ellipse/EllipticalArc, automatic healing, multi-solid Add
-Material targets, multiple targets, tapered/symmetric/path/Through All extrusion,
-new manipulators and profile Cut (6D.2). Explicit safe refusal is intentional.
+Material targets, multiple targets, tapered/symmetric/path extrusion and
+new manipulators. Through All is available only for Remove Material. Explicit
+safe refusal is intentional.
 
 ## Validation and Fedora KDE acceptance
 
@@ -83,5 +94,5 @@ Native Fedora KDE acceptance is **pending and required before merge**:
    viewport margin, manual dragging and resize/docking without covering the model
    or jumping the panel back during parameter edits.
 
-Material removal is available through [Cut Extrude](CUT_EXTRUDE.md), which shares
+Material removal is available through Extrude → Remove Material, which shares
 the certified Profile Builder, prism generation and in-place target history paths.

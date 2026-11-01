@@ -1,7 +1,8 @@
-# Cut Extrude (v0.4.5)
+# Extrude: Remove Material (v0.4.8)
 
 Activate a visible, unlocked Workplane with Edit Sketch, then choose **3D Modeling →
-Cut Extrude**. Select one or more certified Profile regions in the panel and choose
+Extrude**, then set **Operation → Remove Material**. The separate Cut Extrude
+action has been removed. Select one or more certified Profile regions and choose
 an eligible Active Part automatically, or click visible geometry at the Select
 target part prompt. Use Pick target part to change it; the list and Structure
 Browser remain fallbacks. Temporary targets do not change Active Part. See

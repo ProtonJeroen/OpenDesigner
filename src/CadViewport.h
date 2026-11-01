@@ -43,6 +43,7 @@ class ConstructionPanel;
 #include "SketchProjectionPanel.h"
 #include "SketchProjection.h"
 #include "SketchProfileExtrusion.h"
+#include "ModelingOperation.h"
 
 class CadViewport final : public QWidget {
     Q_OBJECT
@@ -73,7 +74,6 @@ public:
     void startSketchConstruction(Sketch::ConstructionTool tool);
     void startSketchProjection();
     void startProfileExtrusion();
-    void startCutExtrusion();
     void startSketchAxes(bool localX,bool localY);
     void populateSketchAxesMenu(QMenu& menu);
     void setSketchSnapPixels(int pixels);
@@ -265,12 +265,14 @@ private:
         SketchProfileBuilder::Result faces;
         QString sourceError;
         QStringList sketchSelection;
-        bool adding=false;
-        bool cutting=false;
+        ModelingOperation operation=ModelingOperation::NewSolid;
         std::optional<size_t> target;
         std::shared_ptr<CadPart> after;
     };
     QWidget* extrusionControls_=nullptr;
+    void setExtrusionOperation(ModelingOperation operation);
+    QString extrusionTargetError(size_t index) const;
+    void pickExtrusionTarget();
     void refreshProfileExtrusion();
     void finishProfileExtrusion(bool confirm);
     void chooseExtrusionTarget(const std::vector<size_t>& indices);

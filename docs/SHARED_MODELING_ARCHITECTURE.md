@@ -1,8 +1,9 @@
-# Shared modeling architecture — v0.4.8, phase 8A
+# Shared modeling architecture — v0.4.8, phases 8A–8B
 
-Phase 8A is an architecture audit and interface contract. The current code already
-shares the required profile, Boolean, target-picking and history mechanisms.
-No runtime abstraction, geometry, UI or document schema change is necessary yet.
+Phase 8A established the reuse contract for existing profile, Boolean,
+target-picking and history mechanisms without runtime changes. Phase 8B adds
+the shared operation enum and unified Extrude command orchestration described
+below; geometry algorithms, history and the document schema remain unchanged.
 The workflow reference is SolidDesigner / Modeling 2008 v16.0; the contracts below
 describe OpenDesigner behavior, without claiming exact original UI parity.
 
@@ -37,27 +38,26 @@ Reuse its kernel helpers instead.
 | Add Material | Exactly one eligible Part | Fuse target and certified sweep tool | Replace target in place |
 | Remove Material | Exactly one eligible Part | Subtract certified sweep tool from target | Replace target in place |
 
-Today `ProfileExtrusionState::adding` means a target-modifying operation, including
-Cut; `cutting` selects Cut-specific controls and geometry. Valid refreshed pairs
-`(adding, cutting)` are `(false, false)`, `(true, false)` and `(true, true)`.
-These are internal legacy flags, not a reusable public mode API. The operation
-combo's index 1 means Add in Extrude and Cut in the separate Cut command.
-Do not infer a future shared mode from that widget index.
+Phase 8B implements a widget-free `ModelingOperation` enum (`NewSolid`,
+`AddMaterial`, `RemoveMaterial`) and stores it in `ProfileExtrusionState` instead
+of the former `adding`/`cutting` flags. Operation combo item data maps explicitly
+to the enum. One `sketch.extrude` QAction serves the menu and toolbar; the separate
+Cut entry point/action is removed. Geometry APIs remain unchanged.
 
-When a second command needs a common mode value, introduce only a small
-`ModelingOperation` enum (`NewSolid`, `AddMaterial`, `RemoveMaterial`) in a
-widget-free header. Map UI choices explicitly in the command layer and use
-`mode != NewSolid` for target requirements. Replace the legacy flags atomically
-with their consumers; do not retain competing sources of truth. A command base
-class, generic feature graph or new history stack is unnecessary.
+`setExtrusionOperation` restores any hidden Remove target before changing mode,
+clears temporary target state, updates relevant controls, then rebuilds preview.
+Entering Add or Remove resolves an eligible Active Part with `initialTargetPart`,
+otherwise starts the shared picker. Add additionally rejects multi-solid targets
+at selection time, consistent with the existing geometry policy. Each mode change
+resolves Active Part afresh; explicit target overrides last within the current
+mode. New Solid ignores Active Part and ends pending picking. No ordinary
+selection fallback is used. Temporary picks never change Active Part.
 
-Preserve the existing targeting distinction: Extrude starts in New Solid and
-Add requires explicit target choice. Cut initializes from an eligible Active Part
-using `initialTargetPart`, otherwise requests a pick. Ordinary selection is not
-an Active Part fallback. Dropdown, browser and geometry picks remain temporary
-and never activate a Part. Refresh verifies the selected UUID still resolves to
-the captured slot, target visibility/eligibility and unchanged original shape;
-source Workplane and Sketch snapshots are also checked before committing.
+Remove-only region, Blind/Through All and Reverse controls retain values while
+hidden; their values have no effect on New Solid/Add. The existing signed distance
+serves New Solid/Add; Remove uses positive Blind depth or computed Through All
+reach. Failed previews remove candidates and disable confirmation. Refresh checks
+source snapshots, target UUID/slot, visibility, eligibility and original shape.
 
 All sweep results and Boolean tools are world-space. Apply target placement once
 for Boolean evaluation, then inverse-transform the result once for local target
@@ -71,8 +71,8 @@ These are recommended dependency boundaries, not additional phase requirements.
 
 - **8B: unified Extrude orchestration.** Keep prism and Cut depth/reverse/Through
   All algorithms unchanged. If unifying controls, add the enum above and map all
-  three modes explicitly; retain existing entry points and their initialization
-  policies. Route through the existing profile, picker, preview and commit paths.
+  three modes explicitly; expose one Extrude entry point. Add and Remove both
+  resolve Active Part or request a direct pick (implemented in phase 8B). Route through the existing profile, picker, preview and commit paths.
   Establish mode-switch behavior with the existing extrusion session tests.
 - **8C: headless Revolve tool generation.** Accept certified builder faces plus
   explicit axis/angle parameters; return certified world-space solids and
@@ -112,3 +112,18 @@ Validation on 2026-11-01: building only `OpenDesignerProfileExtrusionTests` and
 The three tests above passed (3/3, 20.62 seconds) against the completed build.
 GUI tests initially aborted at sandboxed startup and passed with desktop access.
 `git diff --check` passed. No full CTest suite was run.
+
+Phase 8B validation on 2026-11-01: incremental builds of `OpenDesigner`,
+`OpenDesignerProfileExtrusionTests` and `OpenDesignerSelectionContextTests` in
+the existing Release build succeeded. `sketch-profile-extrusion` passed (3.04 s);
+normal and HiDPI `profile-extrusion-sessions` passed (2/2, 22.24 s) with desktop
+access. Session coverage now includes the single menu/toolbar action, three-mode
+switching, Active Part precedence for Add/Remove, explicit overrides, hidden and
+absent targets, stale-preview removal, signed distance after Through All, Cancel,
+identity/placement/material, Undo/Redo and native roundtrip. The panel check waits
+for native layout and verifies full control reachability through scrolling when
+HiDPI constrains the viewport, with no horizontal overflow and the existing
+12-pixel anchor. Initial test failures were corrected by reactivating the Sketch
+after a visibility change and respecting the existing scroll wrapper's overflow
+contract. No geometry checks were relaxed. `git diff --check` passed; no full
+CTest suite or stress tests were run. Manual desktop acceptance remains pending.
