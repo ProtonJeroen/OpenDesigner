@@ -1,5 +1,8 @@
 # Extrude Profile — phase 6D.1
 
+For the v0.4.8 Extrude/Revolve reuse contract and phase boundaries, see
+[Shared modeling architecture](SHARED_MODELING_ARCHITECTURE.md).
+
 Activate a visible, unlocked Workplane with **Edit Sketch**, then choose
 **3D Modeling → Extrude Profile** (also on the 2D toolbar). All Profile entities
 on that Workplane participate, including hidden/locked Profiles. Construction
