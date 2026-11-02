@@ -114,6 +114,125 @@ void refused(const TopoDS_Shape& source,const TopoDS_Face& face,const gp_Vec& de
     require(result.status==status,"Wrong refusal category: "+result.message);
     require(!result.message.empty(),"Missing refusal diagnostic");require(serialized(source)==before,"Refusal mutated source");
 }
+TopoDS_Shape bossFixture() {
+    return BooleanGeometry::combine<BRepAlgoAPI_Fuse>(block(),
+        BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(30,40,30),gp_Dir(0,0,1)),10,20).Shape());
+}
+void bossOccupancy(const TopoDS_Shape& shape,double cx,double cy,BossBoundaryMode policy,
+                   const gp_Trsf& transform=gp_Trsf()) {
+    for(int i=-3;i<=25;++i) for(int j=-3;j<=21;++j) for(double z:{-1.,7.,29.,31.,43.,49.,51.}) {
+        const double x=i*5.+.37,y=j*5.+.61;
+        const double r2=(x-cx)*(x-cx)+(y-cy)*(y-cy);
+        if(std::abs(r2-100)<1.e-5) continue;
+        const bool inFootprint=x>0&&x<100&&y>0&&y<80;
+        const bool inStock=inFootprint&&z>0&&z<30;
+        const bool inBoss=r2<100&&z>30&&z<50&&(policy==BossBoundaryMode::Extend||inFootprint);
+        BRepClass3d_SolidClassifier c(shape,gp_Pnt(x,y,z).Transformed(transform),1.e-7);
+        require(c.State()==(inStock||inBoss?TopAbs_IN:TopAbs_OUT),"Boss analytic material occupancy mismatch");
+    }
+}
+TopoDS_Shape bossCase(double dx,double dy,BossBoundaryMode policy,double expected,
+                      const gp_Trsf& transform=gp_Trsf(),bool located=false) {
+    auto source=bossFixture();
+    if(located) source.Location(TopLoc_Location(transform));
+    else source=BRepBuilderAPI_Transform(source,transform,true).Shape();
+    const auto before=serialized(source);
+    const auto result=moveBoss(source,mantle(source),gp_Vec(dx,dy,0).Transformed(transform),policy);
+    require(bool(result),"Boss move refused: "+result.message);
+    require(result.code==(dx==0&&dy==0?Code::Unchanged:Code::Moved),"Unexpected boss success code");
+    require(result.message.find(policy==BossBoundaryMode::Trim?"Trim":"Extend")!=std::string::npos,"Missing explicit policy diagnostic");
+    certified(result.shape,expected);bossOccupancy(result.shape,30+dx,40+dy,policy,transform);
+    near(result.radius,10,"Changed boss radius");near(result.height,20,"Changed boss height");
+    const gp_Ax1 axis(gp_Pnt(30+dx,40+dy,30).Transformed(transform),gp_Dir(0,0,1).Transformed(transform));
+    require(result.axis.IsCoaxial(axis,1.e-8,1.e-6),"Wrong translated boss axis");
+    double mantleArea=0,capArea=0;
+    for(TopExp_Explorer it(result.shape,TopAbs_FACE);it.More();it.Next()) {
+        const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);
+        GProp_GProps p;BRepGProp::SurfaceProperties(f,p);
+        if(s.GetType()==GeomAbs_Cylinder) {
+            near(s.Cylinder().Radius(),10,"Wrong final boss radius");
+            require(s.Cylinder().Axis().IsCoaxial(axis,1.e-8,1.e-6),"Wrong final boss cylinder");
+            mantleArea+=p.Mass();
+        } else if(s.GetType()==GeomAbs_Plane&&s.Plane().Axis().Direction().IsParallel(axis.Direction(),1.e-8)&&
+                  s.Plane().Distance(gp_Pnt(30+dx,40+dy,50).Transformed(transform))<1.e-6)
+            capArea+=p.Mass();
+    }
+    require(mantleArea>0,"Lost boss curved wall");
+    if(policy==BossBoundaryMode::Extend) {near(mantleArea,400*pi,"Extend truncated the mantle");near(capArea,100*pi,"Extend truncated the cap");}
+    require(serialized(source)==before,"Boss source mutated");return result.shape;
+}
+void bossRefused(const TopoDS_Shape& source,const TopoDS_Face& face,const gp_Vec& delta,
+                 BossBoundaryMode policy,Status status,Code code) {
+    const auto before=serialized(source);const auto result=moveBoss(source,face,delta,policy);
+    require(!result&&result.shape.IsNull(),"Boss refusal returned geometry");
+    require(result.status==status&&result.code==code,"Wrong boss diagnostic: "+result.message);
+    require(!result.message.empty(),"Missing boss error");require(serialized(source)==before,"Boss refusal mutated input");
+}
+void bossTests() {
+    const double full=240000+2000*pi,half=240000+1000*pi,quarter=240000+500*pi;
+    const double segment=100*std::acos(.5)-5*std::sqrt(75.);
+    for(auto policy:{BossBoundaryMode::Trim,BossBoundaryMode::Extend}) {
+        bossCase(0,0,policy,full);
+        bossCase(70,0,policy,policy==BossBoundaryMode::Trim?half:full);
+        bossCase(-30,0,policy,policy==BossBoundaryMode::Trim?half:full);
+        bossCase(75,0,policy,policy==BossBoundaryMode::Trim?240000+20*segment:full);
+        bossCase(70,40,policy,policy==BossBoundaryMode::Trim?quarter:full);
+        bossCase(-22,-32,policy,policy==BossBoundaryMode::Trim?full-20*(200*std::acos(.8)-16*6):full);
+        // Last case crosses two sides near a corner; the discarded segments do
+        // not overlap because the corner lies outside the circle.
+        gp_Trsf transform;transform.SetRotation(gp_Ax1(gp_Pnt(0,0,0),gp_Dir(1,2,3)),.71);
+        transform.SetTranslationPart(gp_Vec(210,-130,73));
+        bossCase(70,0,policy,policy==BossBoundaryMode::Trim?half:full,transform);
+        bossCase(75,0,policy,policy==BossBoundaryMode::Trim?240000+20*segment:full,transform,true);
+        const auto source=bossFixture();const auto face=mantle(source);
+        for(double dx:{80.,100.}) // tangent line contact and full separation
+            bossRefused(source,face,gp_Vec(dx,0,0),policy,Status::Failure,Code::DisconnectedBoss);
+        bossRefused(source,face,gp_Vec(3,0,1),policy,Status::InvalidInput,Code::InvalidDisplacement);
+        bossRefused(source,face,gp_Vec(std::numeric_limits<double>::quiet_NaN(),0,0),policy,Status::InvalidInput,Code::InvalidDisplacement);
+        bossRefused(source,{},gp_Vec(3,0,0),policy,Status::Unsupported,Code::UnsupportedFeature);
+        const auto standalone=BRepPrimAPI_MakeCylinder(10,20).Shape();
+        bossRefused(standalone,mantle(standalone),gp_Vec(3,0,0),policy,Status::Unsupported,Code::UnsupportedFeature);
+        const auto hole=fixture();
+        bossRefused(hole,mantle(hole),gp_Vec(3,0,0),policy,Status::Unsupported,Code::UnsupportedFeature);
+        // A partial source boss is deliberately outside initial recognition.
+        const auto partial=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(block(),
+            BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0,40,30),gp_Dir(0,0,1)),10,20).Shape());
+        bossRefused(partial,mantle(partial),gp_Vec(3,0,0),policy,Status::Unsupported,Code::UnsupportedStock);
+        const auto two=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(source,
+            BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(70,40,30),gp_Dir(0,0,1)),5,20).Shape());
+        bossRefused(two,mantle(two),gp_Vec(3,0,0),policy,Status::Unsupported,Code::UnsupportedStock);
+    }
+    const auto trim=bossCase(25,5,BossBoundaryMode::Trim,full);
+    const auto extend=bossCase(25,5,BossBoundaryMode::Extend,full);
+    require(BRepReconstruction::equivalent(trim,extend),"Interior boss policies differ");
+    const auto source=bossFixture();
+    bossRefused(source,mantle(source),gp_Vec(1,0,0),static_cast<BossBoundaryMode>(99),Status::InvalidInput,Code::InvalidPolicy);
+    // Surface parameterization may point from the cap toward the support.
+    // Recognition must infer the attachment side, without reversing the axis.
+    const auto reversed=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(block(),
+        BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(30,40,50),gp_Dir(0,0,-1)),10,20).Shape());
+    const auto reversedBefore=serialized(reversed);
+    for(auto policy:{BossBoundaryMode::Trim,BossBoundaryMode::Extend}) {
+        const auto result=moveBoss(reversed,mantle(reversed),gp_Vec(70,0,0),policy);
+        require(bool(result),"Reversed-axis boss refused: "+result.message);
+        require(result.axis.Direction().IsEqual(BRepAdaptor_Surface(mantle(reversed)).Cylinder().Axis().Direction(),1.e-8),"Boss axis was reversed");
+        certified(result.shape,policy==BossBoundaryMode::Trim?half:full);bossOccupancy(result.shape,100,40,policy);
+        require(serialized(reversed)==reversedBefore,"Reversed-axis source mutated");
+    }
+    for(bool axial:{true,false}) {
+        BRepFeat_SplitShape split(source);
+        if(axial) split.Add(BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(gp_Pnt(30,40,40),gp_Dir(0,0,1)),10)).Edge(),mantle(source));
+        else split.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(20,40,30),gp_Pnt(20,40,50)).Edge(),mantle(source));
+        split.Build();require(split.IsDone(),"Boss split fixture failed");
+        const auto shape=split.Shape();const auto before=serialized(shape);
+        for(auto policy:{BossBoundaryMode::Trim,BossBoundaryMode::Extend}) {
+            const auto result=moveBoss(shape,mantle(shape),gp_Vec(70,0,0),policy);
+            require(bool(result),"Split boss refused: "+result.message);
+            certified(result.shape,policy==BossBoundaryMode::Trim?half:full);bossOccupancy(result.shape,100,40,policy);
+            require(serialized(shape)==before,"Split boss source mutated");
+        }
+    }
+}
 }
 int main() {
     try {
@@ -163,6 +282,7 @@ int main() {
         // multi-solid Boolean is still an invalid Move Face result.
         refused(source,selected,gp_Vec(-22,-32,0),Status::Failure);
         refused(source,selected,gp_Vec(-20,0,0),Status::Failure); // pinched tangent wall
+        bossTests();
         std::cout<<"Cylindrical move geometry tests passed\n";return 0;
     } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

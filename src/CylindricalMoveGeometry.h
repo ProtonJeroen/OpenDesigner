@@ -9,9 +9,11 @@
 // in the input B-Rep frame (including its TopLoc_Location).
 namespace CylindricalMoveGeometry {
 enum class Status { Success, Unsupported, InvalidInput, Failure };
+enum class BossBoundaryMode { Trim, Extend };
 enum class Code {
     Moved, Unchanged, HoleExited, InvalidDisplacement, InvalidSource,
-    UnsupportedFeature, UnsupportedStock, AmbiguousMaterial, InvalidResult, KernelFailure
+    UnsupportedFeature, UnsupportedStock, AmbiguousMaterial, InvalidResult, KernelFailure,
+    InvalidPolicy, DisconnectedBoss
 };
 struct Result {
     Status status = Status::Failure;
@@ -27,4 +29,9 @@ struct Result {
 // nonmanifold results are refused. Does not mutate source, even on failure.
 Result moveThroughHole(const TopoDS_Shape& source, const TopoDS_Face& mantle,
                        const gp_Vec& displacement);
+// Complete boss on rectangular stock. Trim clips against the original lateral
+// stock supports; Extend retains the full cylinder, including a connected
+// overhang. No invented bridges or support pedestals. Policy is always explicit.
+Result moveBoss(const TopoDS_Shape& source, const TopoDS_Face& mantle,
+                const gp_Vec& displacement, BossBoundaryMode policy);
 }

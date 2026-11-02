@@ -1,8 +1,8 @@
 # Cylindrical Move Face — phase 9 boundary reconstruction plan
 
 This supplements Issue #51 and the existing [Move Face](MOVE_FACE.md) contract.
-Phase 9A records the architecture; the 9B section describes the headless
-through-hole operation. Boss reconstruction and UI integration remain planned.
+Phase 9A records the architecture; the 9B and 9C sections describe the headless
+through-hole and boss operations. UI integration remains planned.
 
 ## 9A — completed architecture analysis
 
@@ -195,7 +195,7 @@ Future test homes: a dedicated headless cylindrical geometry suite, existing
 `src/CylindricalMoveGeometry.{h,cpp}` provides the single stateless entry point
 `moveThroughHole(source, selectedMantle, displacement)`. To keep this phase's API
 small, recognition and translation share one call; the proposed reusable
-`Prepared` session and boss options above remain deferred. The public API uses
+`Prepared` session above remains deferred; 9C adds an explicit boss policy. The public API uses
 only OCCT and the C++ standard library. The library links Qt Core for existing
 Boolean/reconstruction helpers, with no Widgets or visualization dependency.
 
@@ -258,7 +258,70 @@ Verification: the new headless target builds; `cylindrical-move-geometry`,
 `face-transform-geometry` and `delete-face-geometry` pass. `git diff --check`
 passes. No UI, command history or native document behavior is changed in 9B.
 
-## 9C — geometry and independent geometry tests
+## 9C — implemented headless boss geometry
+
+`moveBoss(source, selectedMantle, displacement, BossBoundaryMode)` reuses 9B's
+isolated geometry path, tolerances, stock recovery, mantle connectivity and rim
+certificates, material comparison, normalization and manifold checks. Policy has
+no default: callers must supply `Trim` or `Extend`; invalid enum values produce
+`InvalidInput / InvalidPolicy`. No UI, Part IDs, history or file storage enter the
+API. Through-hole behavior remains covered by the same cylindrical test target.
+
+Recognition requires outward-facing complete cylindrical mantle patches, one
+adjacent planar disk cap with a single wire, and the opposite complete rim on
+one planar supporting face. It identifies the cap from topology, area and axis
+placement, then excludes it from the stock's six oriented support planes. The
+cap lies beyond the stock face, with positive stock thickness below the full
+original footprint. Radial material classification must be IN inside the boss
+and OUT outside. Source material must equal `B ∪ C0`, and cutting out `C0` must
+recover the certified rectangular stock exactly within the shared material
+tolerance. Split axial bands/angular mantle patches are accepted when all rim,
+adjacency, normal and material certificates agree. No creation metadata is used.
+
+After removal of the original boss, Trim computes `B ∪ (Ct ∩ H)`. The finite
+representation of `H` is a prism bounded laterally by the original certified
+stock side planes and axially by the boss rim planes; its caps cannot crop any
+intended boss material. It is constructed in the stock support frame, never
+from an axis-aligned bounding box. New planar truncated walls may merge with
+stock sides. Extend computes `B ∪ Ct`, retaining the full translated cylinder;
+the part outside the support footprint has an underside on the original support
+plane. Reverse-facing patches on that plane are permitted, and all final planes
+must correspond to original stock or cap supports. No bridge or pedestal is
+invented, and neither policy falls back to the other.
+
+Both policies require reliable positive-area overlap with the original support:
+disk-to-rectangle penetration must exceed 100 linear tolerances, and the clipped
+prism intersection must be a certified positive-volume solid with area greater
+than 10000 squared linear tolerances. Tangent line/point contact, complete exit,
+fully trimmed-away bosses and ambiguous tiny overlaps return
+`Failure / DisconnectedBoss` with no result. Final acceptance additionally checks
+the requested material expression, unchanged stock, a surviving cylindrical wall
+and a valid single manifold solid. Extend independently requires the entire
+translated cylinder to be contained in the result. Radius, axial span and
+direction remain unchanged; Trim may shorten the surviving circular arcs.
+
+Initial limitations remain rectangular stock, a full original circular footprint,
+one boss with a unique disk cap and support face, no blends or other features.
+Recognizing an already overhanging/truncated boss for a new command, split caps
+or ambiguous support faces, nonrectangular support reconstruction and disconnected
+extensions are deferred. Input B-Reps remain untouched on success and refusal.
+
+Focused tests in `tests/CylindricalMoveGeometryTest.cpp` compare interior Trim
+and Extend by material equivalence; verify half-circle, circular-segment and
+corner Trim volumes; and verify full cap/mantle area for Extend overhangs. They
+sample analytic material occupancy below/above the support, at old/new footprints
+and outside stock sides, and check exact volumes, dimensions, valid connectivity
+and serialized source immutability. Cases include negative movement, rotations,
+located solids, split mantles, zero moves, complete exit/tangency refusals,
+invalid directions/policies and unsupported sources. Only the affected geometry
+target and relevant `cylindrical-move-geometry` CTest are needed for this phase.
+
+Verification: incremental build of `OpenDesignerCylindricalMoveTests` passed;
+`ctest --test-dir build -R '^cylindrical-move-geometry$' --output-on-failure`
+passed (including existing through-hole regressions). `git diff --check` passed.
+No GUI tests or complete CTest suite were run for 9C.
+
+### Reconstruction scope for later expansion
 
 Recognize the complete attached boss, its cap, original footprint, supporting
 material and physical exterior boundary supports from the source B-Rep, without

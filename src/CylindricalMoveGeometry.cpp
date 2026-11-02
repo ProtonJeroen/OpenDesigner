@@ -3,6 +3,7 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Common.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepGProp.hxx>
@@ -26,6 +27,7 @@
 #include <cmath>
 #include <limits>
 #include <numbers>
+#include <optional>
 #include <vector>
 
 namespace {
@@ -75,9 +77,15 @@ TopAbs_State classify(const TopoDS_Shape& shape,const gp_Pnt& point,double toler
 }
 }
 
-CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
-        const TopoDS_Shape& source,const TopoDS_Face& selected,const gp_Vec& delta) {
+namespace {
+// The source isolation, mantle/rim recognition, stock certificate and final
+// acceptance are shared; only the operation's explicit material expression differs.
+Result moveFeature(const TopoDS_Shape& source,const TopoDS_Face& selected,
+                   const gp_Vec& delta,std::optional<BossBoundaryMode> policy) {
+    const bool boss=policy.has_value();
     try {
+        if(boss&&*policy!=BossBoundaryMode::Trim&&*policy!=BossBoundaryMode::Extend)
+            return refuse(Status::InvalidInput,Code::InvalidPolicy,"Choose Trim or Extend explicitly.");
         if(!std::isfinite(delta.X())||!std::isfinite(delta.Y())||!std::isfinite(delta.Z()))
             return refuse(Status::InvalidInput,Code::InvalidDisplacement,"Displacement must be finite.");
         TopTools_IndexedMapOfShape members;
@@ -114,7 +122,7 @@ CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
                     return refuse(Status::Unsupported,Code::UnsupportedFeature,"Source subshape tolerance exceeds the supported 1e-6 limit.");
             }
         if(std::abs(delta.Dot(gp_Vec(cylinder.Axis().Direction())))>tolerance)
-            return refuse(Status::InvalidInput,Code::InvalidDisplacement,"Displacement must be perpendicular to the hole axis.");
+            return refuse(Status::InvalidInput,Code::InvalidDisplacement,"Displacement must be perpendicular to the cylinder axis.");
 
         // Recover a rectangular stock from physical oriented plane supports.
         // Never use the source's axis-aligned bounding box.
@@ -123,7 +131,32 @@ CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
             auto face=TopoDS::Face(it.Current()); const BRepAdaptor_Surface s(face);
             if(s.GetType()==GeomAbs_Plane) planes.push_back(face);
             else if(s.GetType()==GeomAbs_Cylinder && sameCylinder(cylinder,s.Cylinder(),tolerance)) mantles.push_back(face);
-            else return refuse(Status::Unsupported,Code::UnsupportedStock,"Only rectangular stock with one coaxial through-hole is supported.");
+            else return refuse(Status::Unsupported,Code::UnsupportedStock,"Only rectangular stock with one complete cylindrical feature is supported.");
+        }
+        TopTools_IndexedMapOfShape mantleMap; for(const auto& f:mantles) mantleMap.Add(f);
+        TopTools_IndexedDataMapOfShapeListOfShape adjacency;
+        TopExp::MapShapesAndAncestors(isolated,TopAbs_EDGE,TopAbs_FACE,adjacency);
+        TopoDS_Face cap;
+        if(boss) {
+            // A cap must be a disk adjacent to the mantle, not merely a plane
+            // at an axial extremum. Its circular boundary is certified below.
+            for(const auto& f:planes) {
+                const BRepAdaptor_Surface s(f);
+                if(!s.Plane().Axis().Direction().IsParallel(cylinder.Axis().Direction(),angular)) continue;
+                TopTools_IndexedMapOfShape wires;TopExp::MapShapes(f,TopAbs_WIRE,wires);
+                GProp_GProps p;BRepGProp::SurfaceProperties(f,p);
+                if(wires.Extent()!=1 || std::abs(p.Mass()-pi*radius*radius)>tolerance*std::max(1.,radius*radius) ||
+                   gp_Lin(cylinder.Axis()).Distance(p.CentreOfMass())>tolerance) continue;
+                bool adjacent=false;
+                for(TopExp_Explorer edge(f,TopAbs_EDGE);edge.More();edge.Next())
+                    for(TopTools_ListIteratorOfListOfShape it(adjacency.FindFromKey(edge.Current()));it.More();it.Next())
+                        adjacent=adjacent||mantleMap.Contains(it.Value());
+                if(!adjacent) continue;
+                if(!cap.IsNull()) return refuse(Status::Unsupported,Code::UnsupportedFeature,"Boss cap is ambiguous; a standalone cylinder is not an attached boss.");
+                cap=f;
+            }
+            if(cap.IsNull()) return refuse(Status::Unsupported,Code::UnsupportedFeature,"Boss needs one complete planar disk cap adjacent to its mantle.");
+            planes.erase(std::remove_if(planes.begin(),planes.end(),[&](const auto& f){return f.IsSame(cap);}),planes.end());
         }
         gp_Dir z=cylinder.Axis().Direction(),x;
         bool haveX=false;
@@ -141,7 +174,7 @@ CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
             if(face.Orientation()==TopAbs_REVERSED) n.Reverse();
             int axis=-1;
             for(int i=0;i<3;++i) if(n.IsParallel(basis[i],angular)) axis=i;
-            if(axis<0) return refuse(Status::Unsupported,Code::UnsupportedStock,"Stock planes do not form a rectangular block normal to the hole.");
+            if(axis<0) return refuse(Status::Unsupported,Code::UnsupportedStock,"Stock planes do not form a rectangular block normal to the cylinder.");
             const bool upper=n.Dot(basis[axis])>0; const int slot=2*axis+int(upper);
             const double d=coordinate(p.Location(),basis[axis]); auto& bound=upper?hi[axis]:lo[axis];
             if(seen[slot]&&std::abs(bound-d)>tolerance)
@@ -162,16 +195,22 @@ CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
         for(int i=0;i<2;++i) {
             const double c=coordinate(cylinder.Location(),basis[i]);
             if(c-radius-lo[i]<=100*tolerance || hi[i]-c-radius<=100*tolerance)
-                return refuse(Status::Unsupported,Code::UnsupportedFeature,"Source hole must have a complete circular mantle clear of stock sides.");
+                return refuse(Status::Unsupported,Code::UnsupportedFeature,"Source feature must have a complete circular footprint clear of stock sides.");
         }
-        const double height=hi[2]-lo[2];
-        const auto base=cylinder.Location().Translated(gp_Vec(z)*(lo[2]-coordinate(cylinder.Location(),z)));
+        const double stockHeight=hi[2]-lo[2];
+        double featureLo=lo[2],featureHi=hi[2],support=0;
+        if(boss) {
+            const double end=coordinate(BRepAdaptor_Surface(cap).Plane().Location(),z);
+            if(end>hi[2]+100*tolerance) {support=hi[2];featureLo=support;featureHi=end;}
+            else if(end<lo[2]-100*tolerance) {support=lo[2];featureLo=end;featureHi=support;}
+            else return refuse(Status::Unsupported,Code::UnsupportedFeature,"Boss cap must lie beyond its stock supporting plane.");
+        }
+        const double height=featureHi-featureLo;
+        if(height>1.e7) return refuse(Status::Unsupported,Code::UnsupportedFeature,"Feature height exceeds supported numerical limits.");
+        const auto base=cylinder.Location().Translated(gp_Vec(z)*(featureLo-coordinate(cylinder.Location(),z)));
 
         // Certify mantle boundary topology: seams/internal split edges are not
-        // rims. Every exterior arc borders exactly one axial planar stock face.
-        TopTools_IndexedMapOfShape mantleMap; for(const auto& f:mantles) mantleMap.Add(f);
-        TopTools_IndexedDataMapOfShapeListOfShape adjacency;
-        TopExp::MapShapesAndAncestors(isolated,TopAbs_EDGE,TopAbs_FACE,adjacency);
+        // rims. Every exterior arc borders an axial planar support or cap face.
         std::vector<bool> reached(mantleMap.Extent()+1,false);
         reached[mantleMap.FindIndex(target)]=true;
         bool changed=true;
@@ -189,6 +228,7 @@ CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
         for(int f=1;f<=mantleMap.Extent();++f) if(!reached[f])
             return refuse(Status::Unsupported,Code::UnsupportedFeature,"Cylindrical patches do not form one connected mantle.");
         std::array<double,2> rimLength{};
+        TopTools_IndexedMapOfShape supportFaces;
         for(int i=1;i<=adjacency.Extent();++i) {
             TopTools_IndexedMapOfShape inside,outside;
             for(TopTools_ListIteratorOfListOfShape it(adjacency.FindFromIndex(i));it.More();it.Next())
@@ -201,13 +241,23 @@ CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
             if(neighbor.GetType()!=GeomAbs_Plane||!neighbor.Plane().Axis().Direction().IsParallel(z,angular)||edge.GetType()!=GeomAbs_Circle)
                 return refuse(Status::Unsupported,Code::UnsupportedFeature,"Mantle must terminate in circular rims on axial stock planes.");
             const auto circle=edge.Circle(); const double d=coordinate(circle.Location(),z);
-            const int end=std::abs(d-lo[2])<=tolerance?0:std::abs(d-hi[2])<=tolerance?1:-1;
+            const int end=std::abs(d-featureLo)<=tolerance?0:std::abs(d-featureHi)<=tolerance?1:-1;
             if(end<0||std::abs(circle.Radius()-radius)>tolerance||gp_Lin(cylinder.Axis()).Distance(circle.Location())>tolerance)
                 return refuse(Status::Unsupported,Code::UnsupportedFeature,"Incomplete or inconsistent circular rim.");
+            if(boss) {
+                const bool atSupport=std::abs(d-support)<=tolerance;
+                if(atSupport) supportFaces.Add(outside(1));
+                else if(!outside(1).IsSame(cap))
+                    return refuse(Status::Unsupported,Code::UnsupportedFeature,"Boss top rim must border its unique disk cap.");
+                if(atSupport&&outside(1).IsSame(cap))
+                    return refuse(Status::Unsupported,Code::UnsupportedFeature,"Boss footprint and cap must be distinct.");
+            }
             GProp_GProps length; BRepGProp::LinearProperties(adjacency.FindKey(i),length);rimLength[end]+=length.Mass();
         }
         for(double length:rimLength) if(std::abs(length-2*pi*radius)>tolerance*std::max(1.,radius))
             return refuse(Status::Unsupported,Code::UnsupportedFeature,"Both complete circular rims are required.");
+        if(boss&&supportFaces.Extent()!=1)
+            return refuse(Status::Unsupported,Code::UnsupportedFeature,"Boss footprint must border one unambiguous planar support face.");
         double area=0;
         for(const auto& f:mantles) {
             GProp_GProps p;BRepGProp::SurfaceProperties(f,p);area+=p.Mass();
@@ -220,8 +270,8 @@ CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
             auto normal=props.Normal();if(f.Orientation()==TopAbs_REVERSED) normal.Reverse();
             const auto point=s.Value(u,v);
             auto radial=gp_Vec(base,point);radial-=gp_Vec(z)*radial.Dot(gp_Vec(z));
-            if(normal.Dot(gp_Dir(radial))>-.99)
-                return refuse(Status::Unsupported,Code::UnsupportedFeature,"Mantle is not oriented toward a cylindrical void.");
+            if((boss?1.:-1.)*normal.Dot(gp_Dir(radial))<.99)
+                return refuse(Status::Unsupported,Code::UnsupportedFeature,"Mantle orientation does not match the requested feature kind.");
         }
         if(std::abs(area-2*pi*radius*height)>tolerance*std::max(1.,radius*height))
             return refuse(Status::Unsupported,Code::UnsupportedFeature,"Mantle does not cover the complete cylindrical span.");
@@ -231,30 +281,55 @@ CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
             const gp_Vec radial=gp_Vec(cylinder.XAxis().Direction())*std::cos(2*pi*(a+.37)/12)+
                                 gp_Vec(cylinder.YAxis().Direction())*std::sin(2*pi*(a+.37)/12);
             const auto center=base.Translated(gp_Vec(z)*(h*height));
-            if(classify(isolated,center.Translated(radial*(radius-probe)),tolerance)!=TopAbs_OUT ||
-               classify(isolated,center.Translated(radial*(radius+probe)),tolerance)!=TopAbs_IN)
-                return refuse(Status::Unsupported,Code::AmbiguousMaterial,"Cylinder does not have unambiguous through-hole material sides.");
+            if(classify(isolated,center.Translated(radial*(radius-probe)),tolerance)!=(boss?TopAbs_IN:TopAbs_OUT) ||
+               classify(isolated,center.Translated(radial*(radius+probe)),tolerance)!=(boss?TopAbs_OUT:TopAbs_IN))
+                return refuse(Status::Unsupported,Code::AmbiguousMaterial,"Cylinder does not have unambiguous feature material sides.");
         }
         const auto corner=gp_Pnt(0,0,0).Translated(gp_Vec(x)*lo[0]+gp_Vec(y)*lo[1]+gp_Vec(z)*lo[2]);
-        const auto stockOracle=BRepPrimAPI_MakeBox(gp_Ax2(corner,z,x),hi[0]-lo[0],hi[1]-lo[1],height).Shape();
+        const auto stockOracle=BRepPrimAPI_MakeBox(gp_Ax2(corner,z,x),hi[0]-lo[0],hi[1]-lo[1],stockHeight).Shape();
         const auto originalTool=BRepPrimAPI_MakeCylinder(gp_Ax2(base,z),radius,height).Shape();
-        const auto originalOracle=BooleanGeometry::combine<BRepAlgoAPI_Cut>(stockOracle,originalTool);
+        const auto originalOracle=boss?BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stockOracle,originalTool):
+                                       BooleanGeometry::combine<BRepAlgoAPI_Cut>(stockOracle,originalTool);
         if(!BRepReconstruction::equivalent(isolated,originalOracle))
-            return refuse(Status::Unsupported,Code::AmbiguousMaterial,"Source differs from rectangular stock minus one complete through-hole.");
+            return refuse(Status::Unsupported,Code::AmbiguousMaterial,"Source differs from rectangular stock with exactly one complete requested feature.");
         QString error;
         TopoDS_Shape stock;
-        if(!BRepReconstruction::normalize(BooleanGeometry::combine<BRepAlgoAPI_Fuse>(isolated,originalTool),stock,error)||
+        const auto restored=boss?BooleanGeometry::combine<BRepAlgoAPI_Cut>(isolated,originalTool):
+                                 BooleanGeometry::combine<BRepAlgoAPI_Fuse>(isolated,originalTool);
+        if(!BRepReconstruction::normalize(restored,stock,error)||
            !BRepReconstruction::equivalent(stock,stockOracle))
-            return refuse(Status::Failure,Code::AmbiguousMaterial,"Closing the old hole did not recover the certified stock.");
-        // Extend the tool axially only. The source cylinder radius/direction and
-        // the stock's exterior surfaces stay fixed while their trims may change.
+            return refuse(Status::Failure,Code::AmbiguousMaterial,"Removing the old feature did not recover the certified stock.");
+        // Only the through-hole cutting tool extends axially. Cylinder radius/
+        // direction and stock supports stay fixed while their trims may change.
         const double margin=std::max(1.,height);
         const auto translatedBase=base.Translated(delta);
-        const auto tool=BRepPrimAPI_MakeCylinder(gp_Ax2(translatedBase.Translated(gp_Vec(z)*-margin),z),radius,height+2*margin).Shape();
-        const auto candidate=BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,tool);
+        const auto finiteTool=BRepPrimAPI_MakeCylinder(gp_Ax2(translatedBase,z),radius,height).Shape();
+        TopoDS_Shape candidate,expected;
+        if(boss) {
+            // A prism bounded by the certified lateral stock planes, with its
+            // axial ends exactly on the boss rims. These are physical support
+            // extensions, never an axis-aligned bounding-box approximation.
+            const auto trimCorner=corner.Translated(gp_Vec(z)*(featureLo-lo[2]));
+            const auto lateralRegion=BRepPrimAPI_MakeBox(gp_Ax2(trimCorner,z,x),hi[0]-lo[0],hi[1]-lo[1],height).Shape();
+            const double cx=coordinate(translatedBase,x),cy=coordinate(translatedBase,y);
+            const double dx=std::max({lo[0]-cx,0.,cx-hi[0]}),dy=std::max({lo[1]-cy,0.,cy-hi[1]});
+            if(radius-std::hypot(dx,dy)<=100*tolerance)
+                return refuse(Status::Failure,Code::DisconnectedBoss,"Boss footprint has no reliable positive-area connection to the original support.");
+            const auto clipped=BooleanGeometry::combine<BRepAlgoAPI_Common>(finiteTool,lateralRegion);
+            double clippedVolume=0;
+            if(!BRepReconstruction::validSolid(clipped,clippedVolume)||clippedVolume/height<=10000*tolerance*tolerance)
+                return refuse(Status::Failure,Code::DisconnectedBoss,"Boss support overlap is empty, degenerate or ambiguous.");
+            const auto material=*policy==BossBoundaryMode::Trim?clipped:finiteTool;
+            candidate=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stock,material);
+            expected=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stockOracle,material);
+        } else {
+            const auto tool=BRepPrimAPI_MakeCylinder(gp_Ax2(translatedBase.Translated(gp_Vec(z)*-margin),z),radius,height+2*margin).Shape();
+            candidate=BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,tool);
+            expected=BooleanGeometry::combine<BRepAlgoAPI_Cut>(stockOracle,finiteTool);
+        }
         TopoDS_Shape result;
         if(!BRepReconstruction::normalize(candidate,result,error)||!manifold(result))
-            return refuse(Status::Failure,Code::InvalidResult,"Translated hole does not leave one closed manifold connected solid.");
+            return refuse(Status::Failure,Code::InvalidResult,"Translated feature does not leave one closed manifold connected solid.");
         // Validate final supports without requiring the cylinder to survive.
         auto translatedCylinder=cylinder;translatedCylinder.Translate(delta);
         bool hasMantle=false;
@@ -264,25 +339,43 @@ CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
                 hasMantle=true;allowed=sameCylinder(translatedCylinder,s.Cylinder(),tolerance);
             }
             if(s.GetType()==GeomAbs_Plane) for(const auto& p:planes)
-                allowed=allowed||BRepReconstruction::sameAnalyticSupport(p,f);
+                allowed=allowed||BRepReconstruction::sameAnalyticSupport(p,f)||
+                    (boss&&BRepReconstruction::sameAnalyticSupport(TopoDS::Face(p.Reversed()),f));
+            if(boss&&s.GetType()==GeomAbs_Plane)
+                allowed=allowed||BRepReconstruction::sameAnalyticSupport(cap,f);
             if(!allowed) return refuse(Status::Failure,Code::InvalidResult,"Result contains an unexpected exterior support.");
         }
-        const auto finiteTool=BRepPrimAPI_MakeCylinder(gp_Ax2(translatedBase,z),radius,height).Shape();
-        const auto expected=BooleanGeometry::combine<BRepAlgoAPI_Cut>(stockOracle,finiteTool);
         if(!BRepReconstruction::equivalent(result,expected))
-            return refuse(Status::Failure,Code::InvalidResult,"Result material differs from the requested translated hole.");
+            return refuse(Status::Failure,Code::InvalidResult,"Result material differs from the requested translated feature policy.");
+        if(boss&&(!hasMantle||!BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Common>(result,stockOracle),stockOracle)))
+            return refuse(Status::Failure,Code::InvalidResult,"Boss reconstruction lost its curved wall or changed the supporting stock.");
+        if(boss&&*policy==BossBoundaryMode::Extend&&
+           !BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Common>(result,finiteTool),finiteTool))
+            return refuse(Status::Failure,Code::InvalidResult,"Extend did not preserve the complete translated boss.");
         Result answer;answer.status=Status::Success;answer.shape=result;
         answer.axis=gp_Ax1(translatedBase,z);answer.radius=radius;answer.height=height;
-        const bool exited=!hasMantle;
+        const bool exited=!boss&&!hasMantle;
         if(exited&&!BRepReconstruction::equivalent(result,stockOracle))
             return refuse(Status::Failure,Code::InvalidResult,"A vanished hole did not leave the complete certified stock.");
         answer.code=delta.Magnitude()<=tolerance?Code::Unchanged:exited?Code::HoleExited:Code::Moved;
-        answer.message=exited?"Hole moved outside the stock.":"Through-hole translated successfully.";
+        answer.message=boss?(*policy==BossBoundaryMode::Trim?"Boss translated with Trim.":"Boss translated with Extend."):
+                           exited?"Hole moved outside the stock.":"Through-hole translated successfully.";
         return answer;
     } catch(const Standard_Failure& failure) {
-        Result r=refuse(Status::Failure,Code::KernelFailure,"OCCT could not certify the through-hole move.");
+        Result r=refuse(Status::Failure,Code::KernelFailure,"OCCT could not certify the cylindrical feature move.");
         if(failure.GetMessageString()) r.message+=" "+std::string(failure.GetMessageString());return r;
     } catch(const std::exception& failure) {
-        Result r=refuse(Status::Failure,Code::KernelFailure,"Through-hole reconstruction failed: ");r.message+=failure.what();return r;
+        Result r=refuse(Status::Failure,Code::KernelFailure,"Cylindrical reconstruction failed: ");r.message+=failure.what();return r;
     }
+}
+}
+
+CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
+        const TopoDS_Shape& source,const TopoDS_Face& selected,const gp_Vec& delta) {
+    return moveFeature(source,selected,delta,std::nullopt);
+}
+
+CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveBoss(
+        const TopoDS_Shape& source,const TopoDS_Face& selected,const gp_Vec& delta,BossBoundaryMode policy) {
+    return moveFeature(source,selected,delta,policy);
 }
