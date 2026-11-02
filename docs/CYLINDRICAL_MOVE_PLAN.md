@@ -1,0 +1,271 @@
+# Cylindrical Move Face — phase 9 boundary reconstruction plan
+
+This is planned work, not implemented behavior. It supplements Issue #51 and
+the existing [Move Face](MOVE_FACE.md) contract.
+
+## 9A — completed architecture analysis
+
+Analysis of the current branch; all API names below are proposals. No geometry
+or UI implementation is included in 9A.
+
+### Reusable components and required separation
+
+| Existing code | Reuse / boundary |
+| --- | --- |
+| `src/MoveFaceGeometry.{h,cpp}` | Keep planar `reference`/`move` unchanged. Offset-on-face changes radius for a cylinder; it does not laterally move a feature. The signed-volume-change rule also does not apply to relocation. |
+| `src/BRepReconstruction.{h,cpp}` | Reuse `validSolid`, `normalize`, `equivalent`, analytic support comparison and deep-copy discipline. `prepare` can preserve/map a selected patch, but is not a complete feature recognizer. Do not reuse plane-specific `finish`, `supports` or `rebuildPlanar` as cylindrical acceptance: they require a target plane and/or retained original supports. |
+| `src/BooleanGeometry.h` | Reuse non-destructive `combine` with OCCT Fuse/Cut/Common. Its Boolean validator permits multiple solids/shells; cylindrical edits require the stricter reconstruction validator. Never discard stray solids with `solidResult` to rescue a candidate. |
+| `src/DeleteFaceGeometry.cpp` | Reuse the design of edge/face adjacency, periodic-seam exclusion, planar rim certification and independent feature-volume certificates. Helpers are private and require deliberate extraction or a small local equivalent. Generic defeaturing success alone does not establish the intended stock. |
+| `src/MoveFace.cpp` | Reuse immutable `faceBefore`, full-solid preview, invalid-preview clearing, bounds update, `GeneralBRep` conversion and `applyFaceState`. Add cylindrical dispatch rather than change planar semantics. |
+| `src/SelectionContext.cpp` | Face owners identify the actual Part/member face. Split Move eligibility from Rotate/Align eligibility: currently all three share the planar `supported` flag. Keep preview AIS objects unselectable. |
+| `src/CadViewport.h`, `src/CadViewport.cpp` | Reuse `CommandSession`, `FaceChange`, commit/cancel and `restorePullChange` cached snapshots. Current scalar `value`/normal arrow are insufficient for two lateral components; parameter parsing, changed detection and confirmation need cylindrical dispatch. |
+| `src/NativeDocument.cpp` and viewport snapshot/restore | Existing BinXCAF local B-Rep, placement and persistent Part ID suffice. No feature history or schema extension is needed. Save excludes previews; Open clears undo history. |
+
+### Topology-based recognition
+
+Start from one selected analytic cylindrical member face on one valid closed
+solid with one shell (initial source budget: 64 faces). Deep-copy geometry and
+topology before kernel work. Build edge-to-face adjacency on the isolated source;
+maintain copy correspondence back to the selected face. Interpret surfaces with
+their OCCT locations, independently of the Part instance placement.
+
+Grow only the edge-connected, coaxial, equal-radius mantle component. Internal
+edges between its faces cancel; a periodic seam used twice on one face is not a
+rim or a second neighbor. Certify that the union covers one full 2π interval at
+every axial section between two distinct perpendicular rim planes, without gaps,
+overlaps or branches. UV bounds, a single seam, face orientation or two circular
+edges alone are insufficient. Verify pcurves/edge geometry and assemble boundary
+arcs into exactly two closed circular rims of the same radius; permit harmless
+split arcs/faces only when coverage and adjacency remain unique.
+
+- **Through-hole:** both rims border surviving planar exterior faces normal to
+  the axis; there is no disk cap. Material-side classification is outside the
+  cylinder and void is inside throughout the span. Fill the isolated cylindrical
+  void to obtain stock `B`; certify `source = B − C0`, and no material change
+  outside the recognized feature. The openings must actually exit the stock.
+- **Attached boss:** one rim bounds a planar disk cap, with no inner wires or
+  other attached feature, and the other rim is an inner footprint boundary of
+  the surviving planar support face. Material is inside the mantle and below
+  the footprint; the cap is exterior. Remove the isolated boss volume to obtain
+  stock `B`; certify `source = B ∪ C0`. The stock and boss share the full circular
+  base interface, with positive stock thickness below it.
+
+Use oriented surface normals AND solid classification on both sides of several
+well-separated regular mantle/rim/support points. Refuse conflicting or
+tolerance-indeterminate classifications. Certify stock recovery by Boolean
+material relations, not historical primitive flags or a bounding box. A standalone
+cylinder, blind hole, partial cylinder, countersink, fillet or ambiguous cap/rim
+is not one of these initial features. Split source mantles may be recognized;
+partially truncated *results* are legitimate, but recognizing them for a later
+new command is deferred.
+
+### Minimal proposed geometry API
+
+Add a geometry-only `CylindricalMoveGeometry` adapter, keeping the existing planar
+API stable. Declaration sketch (not compiled code):
+
+```cpp
+enum class FeatureKind { ThroughHole, Boss };
+enum class BossBoundaryMode { Trim, Extend }; // no implicit fallback/default
+struct Prepared; // opaque owned immutable source, stock, feature and rim certificate
+struct Reference {
+    FeatureKind kind;
+    gp_Ax2 frame; // origin at first rim center; Z=axis, X/Y=lateral input basis
+    double radius, height;
+};
+bool recognize(const TopoDS_Shape& source, const TopoDS_Face& selected,
+               Prepared& prepared, Reference& reference, QString& error);
+bool translate(const Prepared& prepared, const gp_Vec& localDelta,
+               std::optional<BossBoundaryMode> bossMode,
+               BRepReconstruction::Result& result, QString& error);
+```
+
+`Prepared` owns deep copies and source correspondence, never Part/UI pointers;
+implement as an opaque value or immutable shared implementation. Failure clears
+all outputs. `localDelta` must be finite and perpendicular to the axis within
+the documented linear tolerance: reject an axial component rather than silently
+project it away. A boss requires an explicit mode, even for an interior move;
+a hole requires no boss policy. Zero displacement returns unchanged material and
+creates no history. The caller converts world displacements using inverse Part
+placement (including scale) and supplies two signed distances in the reference
+X/Y frame. Choose a deterministic perpendicular basis once at recognition and
+retain it throughout the session; the clicked normal is not a translation axis.
+
+`Result::history` remains support correspondence, permitting empty/multiple
+descendants. Track the mantle on the translated cylinder and retained supports
+on their source geometry; assign new boundary patches to certified supports.
+Never choose an arbitrary target face: `target` is null unless exactly one final
+mantle patch exists. No persistent subshape naming or Align chaining is promised.
+
+### Material semantics and supported boundary cases
+
+Let `C0` be the original finite cylinder, `Ct` its exact lateral translation,
+and `B` the certified stock recovered above. Initially `B` is an arbitrary rigidly
+placed rectangular block certified from its six oriented plane supports, not
+an axis-aligned bounds reconstruction. Additional stock classes require their
+own certificates. The axis is normal to the block's support/opposite planes.
+
+| Operation | Required material |
+| --- | --- |
+| Through-hole, interior or boundary crossing | `B − Ct`; exterior support surfaces stay fixed but trims may open into an edge/corner notch, split, merge or disappear. Extend the cutting tool beyond both exit planes for robust Boolean construction; it is tooling, not added material. |
+| Boss Trim | `B ∪ (Ct ∩ H)`, where `H` is the lateral stock region bounded by extended physical side supports, unbounded along the boss axis. This clips walls/cap at actual exterior surfaces. |
+| Boss Extend, initial block scope | `B ∪ Ct`. Where the translated footprint still overlaps the original support with positive area and a manifold union exists, the exposed portion of the boss base becomes an underside on the support plane. This is the minimal connected extension; no additional support pedestal is implied. |
+
+For Extend cases requiring material below the support plane or a bridge after
+complete footprint separation, no unique extension follows from a general B-Rep.
+Such cases are explicitly deferred/refused until a separate support-extension
+rule and independent oracle are specified in 9C; never silently trim or invent
+a bridge. This does not refuse ordinary partial protrusion with a connected
+full cylinder. Future certified support reconstruction may add material only
+under an explicitly documented rule.
+
+Boundary-crossing holes may change from a closed bore to an open notch if the
+result is one valid solid and retains a positive-area translated cylindrical
+wall. Refuse a completely escaped tool (hole disappears), total removal of stock,
+disconnected remaining stock, or complete loss of the cylindrical target.
+For Trim require positive boss volume/height and a surviving curved wall;
+fully clipped-away bosses are refused. For Extend require the entire `Ct`
+material, including its full cap and circumference, and a positive-area base
+connection. Exact tangencies causing pinched/nonmanifold topology or uncertain
+classification are refused; tangency alone is not automatically an error if
+the resulting regular solid is certifiable.
+
+### Acceptance and safe refusal
+
+Normalize only after constructing the requested material, then validate again.
+Reuse `validSolid` for BRepCheck, one closed shell/solid, no loose subshapes,
+finite positive volume and copied self-interference analysis. Add explicit
+manifold edge/vertex neighborhood and positive-area interface certification;
+a reported single solid alone is not a material-connectivity certificate.
+Never sew an invalid open candidate or accept point/edge-only attachment.
+
+Compare final material with the policy expression using Common/equivalence
+(existing relative volume tolerance 1e-8 scaled by at least 1), including both
+directional differences where needed. Verify radius, axial direction, height,
+translated axis and allowed analytic supports independently. Interior translation
+preserves volume; boundary cases follow the expression, not a signed-distance
+volume rule. Check that stock and unrelated feature material outside the local
+edit region is unchanged. Auxiliary tool/seed faces must not survive as exterior
+supports. Legitimate topology changes override no face/edge-count invariant.
+
+Tests must use independent analytical volumes, construction oracles and IN/OUT
+samples around old/new footprints and side boundaries, not only replay the same
+Boolean algorithm. Tolerances derive from `Precision::Confusion()`, source
+subshape tolerances and model scale; document linear/angular/volume thresholds
+in 9B and refuse features/clearances comparable to them. Never increase fuzzy
+tolerance until a failed operation passes. Material equality within tolerance
+is a numerical certificate, not a mathematical proof for arbitrary geometry.
+
+Refuse invalid/nonmember selections, nonanalytic or incomplete features,
+multi-solid/cavity inputs, intersecting neighboring features in the edit region,
+ambiguous stock/support recovery, unsupported blends/freeform surfaces, invalid
+or excessive tolerances, degenerate sizes, failed Booleans, ambiguous histories
+and exhausted bounded complexity. Return actionable errors without changing
+the original Part, selection snapshot or history. No alternate mode on failure.
+
+### Concrete phase boundaries
+
+- **9A (this change):** code inspection, recognition/material contracts, proposed
+  API and phase plan only. No application code, UI, builds or tests.
+- **9B:** implement the isolated recognizer and geometry API, tolerance policy,
+  certified rectangular stock recovery and interior through-hole translation
+  only. Headless tests: seam/split mantle coverage, false-positive rejection,
+  exact axis/radius/span/volume, located B-Reps, source immutability, zero/invalid
+  vectors and independent material oracles. No boss reconstruction or mode UI.
+- **9C:** implement interior bosses, hole edge/corner crossings and both explicit
+  boss policies within the certified scope above; add topology-changing geometry,
+  material and refusal tests below. Any broader support-extension rule must be
+  specified and tested here before it becomes supported.
+- **9D:** integrate cylindrical selection/dispatch, two-component lateral input
+  and manipulators, explicit boss policy and matching full-solid live preview in
+  the existing Move Face Command Panel. Preserve planar Rotate/Align gating.
+- **9E:** complete history/identity/persistence regressions, negative transaction
+  tests and manual acceptance. No native schema change or persisted undo stack.
+
+Future test homes: a dedicated headless cylindrical geometry suite, existing
+`tests/MoveFaceTest.cpp`, `tests/FaceTransformTest.cpp`,
+`tests/BooleanOperationsTest.cpp`, `tests/NativeDocumentTest.cpp` and
+`tests/NativeDocumentSessionTest.cpp`. These are planned checks, not 9A results.
+
+## 9C — geometry and independent geometry tests
+
+Recognize the complete attached boss, its cap, original footprint, supporting
+material and physical exterior boundary supports from the source B-Rep, without
+requiring primitive history. Close the old footprint before reconstructing the
+translated feature. Resolve boundaries in the Part frame, including placed Parts.
+
+Specify and implement two separate candidate builders:
+
+- **Trim:** clip the translated boss against the extended original exterior
+  boundary surfaces. Reconstruct adjacent faces and close the solid; a circular
+  wall or cap can become truncated, with planar wall patches where the exterior
+  supports are planar. Preserve the cylinder's analytic radius and axis on its
+  surviving curved patches. Do not clamp against the axis-aligned bounding box.
+- **Extend:** retain the entire translated cylinder, including full circumference,
+  cap, radius and height, even beyond the original Part boundary. Reconstruct or
+  extend supporting material to keep it connected. First certify an unambiguous
+  extension of the original support region and its exterior supports; do not
+  invent an arbitrary bridge. Refuse cases where the required extension cannot
+  be determined uniquely. Define the support-material construction and its
+  independent material oracle before accepting each new geometry class.
+
+Allow faces/edges to split, merge, appear or disappear; unchanged topology counts
+are not acceptance criteria. Keep unrelated features and material unchanged
+outside the certified reconstruction region. Neither builder may fall back to
+the other policy on failure.
+
+Begin with a circular boss on a planar rectangular block. Use independent
+analytic intersections/unions and material classification to certify expected
+volume and occupancy for moves wholly inside, crossing one edge, crossing a
+corner, and reaching or passing tangency. Compare both modes at identical
+translations: Trim has truncated material at exterior supports; Extend retains
+the complete cylinder and the specified support extension. Include moves with
+no remaining original footprint overlap: accept only when that mode's certified
+construction remains valid and connected; otherwise refuse. Cover both signs,
+rotated/located Parts and tolerance-scale perturbations. Add nonrectangular
+support cases only with explicit boundary orientation and material certificates.
+
+Validate BRepCheck, closed manifold shells, one positive-volume solid, absence
+of loose topology/self-interference, and volumetric material connectivity.
+Reject point/edge-only contact, slivers or ambiguous boundary classification.
+Check expected material as well as validity; a valid but semantically wrong solid
+must fail. Verify the original serialized B-Rep is unchanged after success or
+refusal. Existing hole behavior remains independently covered.
+
+## 9D — Command Panel and live preview
+
+Expose **Trim / Extend** in the existing Move Face Command Panel for applicable
+boss reconstruction. Keep the selected policy explicit and stable as the boss
+crosses a boundary, numeric values change or the manipulator is dragged. Never
+switch policies silently. Unsupported geometry produces a mode-specific refusal.
+
+Rebuild each preview from the original snapshot and the selected policy, using
+the same builder and validation as confirmation. Show the full reconstructed
+solid, including truncated walls or extended supporting material. A mode change
+invalidates the previous candidate; an invalid candidate disables confirmation
+and clears/restores the preview according to the existing invalid-input behavior.
+Do not leave a stale valid preview confirmable.
+
+Test numeric and drag input across boundary thresholds, repeated mode changes,
+invalid-to-valid recovery, Cancel/Esc, OK/Enter and preview cleanup. Compare the
+preview B-Rep/material to the committed result for each mode, in addition to
+rendered checks. Confirm the UI cannot commit a candidate from another policy
+or an earlier displacement. Check existing planar and hole Move Face sessions.
+
+## 9E — transactions, persistence and acceptance
+
+Confirm once into the same Part slot with one cached Undo/Redo step. Preserve
+Part identity, name, appearance, visibility, placement, presentation and browser
+references. Undo restores the exact source; Redo restores the validated result
+without rebuilding under a different policy. Cancel and every refusal leave
+document geometry and history unchanged.
+
+For both policies, round-trip native Save/Open and compare geometry, material
+occupancy, connectivity, placement and Part metadata. Test Save/Open after
+Undo/Redo as supported by the existing document history contract; do not assume
+undo stacks persist across reopening. Require preview/commit agreement and
+final B-Rep validation before replacement. Exercise edge/corner crossings,
+tangency and disconnected/ambiguous constructions through the GUI and document
+layer. Include unrelated Parts/features and regression coverage for existing
+Move/Rotate/Align operations. Manual acceptance must demonstrate both modes on
+the same boundary-crossing move and safe refusal without source changes.

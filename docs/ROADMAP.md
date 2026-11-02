@@ -210,6 +210,14 @@ duplicated.
   including its cylindrical mantle, cap and footprint on the support face, so
   the support face closes at the old location and opens at the new one. The
   cylinder remains attached to the Part, not a detached separate solid.
+- [ ] **Boss boundary policy:** offer explicit **Trim / Extend** in the existing
+  Move Face Command Panel. Trim clips against extended original exterior
+  boundary surfaces; Extend preserves the complete translated cylinder and
+  reconstructs connected supporting material. Allow legitimate topology changes,
+  validate B-Rep and material connectivity, and refuse ambiguous/invalid results
+  atomically without switching modes. Plan geometry, live preview and transaction/
+  Save/Open tests in **9C–9E**, with no implementation during architecture **9A**;
+  see the [phase 9 boundary reconstruction plan](CYLINDRICAL_MOVE_PLAN.md).
 - [ ] Start with exact and tractable examples: a complete circular **through-hole
   in a block** and a complete circular **boss on a planar block face**.
   Subsequently consider blind holes, multiple features and more complex analytic
