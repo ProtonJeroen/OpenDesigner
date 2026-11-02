@@ -65,6 +65,14 @@ add_library(OpenDesignerDeleteFaceGeometry STATIC src/DeleteFaceGeometry.cpp src
     src/PlanarFaceDeletion.cpp src/PlanarFaceDeletion.h)
 target_include_directories(OpenDesignerDeleteFaceGeometry PUBLIC src ${OpenCASCADE_INCLUDE_DIR})
 target_link_libraries(OpenDesignerDeleteFaceGeometry PUBLIC ${OPENDESIGNER_LIBRARIES})
+add_library(OpenDesignerCylindricalMoveGeometry STATIC src/CylindricalMoveGeometry.cpp
+    src/CylindricalMoveGeometry.h src/BRepReconstruction.cpp)
+target_include_directories(OpenDesignerCylindricalMoveGeometry PUBLIC src ${OpenCASCADE_INCLUDE_DIR})
+# Headless geometry: existing reconstruction/helpers use QString internally,
+# but neither the API nor this target depends on Qt Widgets or OCCT visualization.
+target_link_libraries(OpenDesignerCylindricalMoveGeometry PUBLIC
+    Qt6::Core TKBRep TKPrim TKTopAlgo TKBO TKBool TKGeomBase TKGeomAlgo
+    TKShHealing TKG3d TKG2d TKMath TKernel)
 add_library(OpenDesignerDebug STATIC src/DebugModel.cpp src/DebugModel.h)
 target_include_directories(OpenDesignerDebug PUBLIC src ${OpenCASCADE_INCLUDE_DIR})
 target_link_libraries(OpenDesignerDebug PUBLIC ${OPENDESIGNER_LIBRARIES} LibArchive::LibArchive)
@@ -80,6 +88,10 @@ install(TARGETS OpenDesigner RUNTIME DESTINATION bin)
 option(OPENDESIGNER_BUILD_TESTS "Build viewport pull regression tests" OFF)
 if(OPENDESIGNER_BUILD_TESTS)
     enable_testing()
+    add_executable(OpenDesignerCylindricalMoveTests tests/CylindricalMoveGeometryTest.cpp)
+    target_link_libraries(OpenDesignerCylindricalMoveTests PRIVATE OpenDesignerCylindricalMoveGeometry TKFeat)
+    add_test(NAME cylindrical-move-geometry COMMAND OpenDesignerCylindricalMoveTests)
+    set_tests_properties(cylindrical-move-geometry PROPERTIES TIMEOUT 120)
     add_executable(OpenDesignerProfileRevolutionTests tests/SketchProfileRevolutionTest.cpp src/BRepReconstruction.cpp)
     target_link_libraries(OpenDesignerProfileRevolutionTests PRIVATE OpenDesignerConstruction)
     add_test(NAME sketch-profile-revolution COMMAND OpenDesignerProfileRevolutionTests)

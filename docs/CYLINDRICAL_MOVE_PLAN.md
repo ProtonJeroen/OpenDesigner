@@ -1,7 +1,8 @@
 # Cylindrical Move Face — phase 9 boundary reconstruction plan
 
-This is planned work, not implemented behavior. It supplements Issue #51 and
-the existing [Move Face](MOVE_FACE.md) contract.
+This supplements Issue #51 and the existing [Move Face](MOVE_FACE.md) contract.
+Phase 9A records the architecture; the 9B section describes the headless
+through-hole operation. Boss reconstruction and UI integration remain planned.
 
 ## 9A — completed architecture analysis
 
@@ -120,9 +121,10 @@ full cylinder. Future certified support reconstruction may add material only
 under an explicitly documented rule.
 
 Boundary-crossing holes may change from a closed bore to an open notch if the
-result is one valid solid and retains a positive-area translated cylindrical
-wall. Refuse a completely escaped tool (hole disappears), total removal of stock,
-disconnected remaining stock, or complete loss of the cylindrical target.
+result is one valid manifold solid. The Phase 9B requirement supersedes the
+original retained-cylinder restriction: a completely escaped tool is accepted
+as the recovered stock, with an explicit `HoleExited` diagnostic. Refuse total
+removal of stock or disconnected/nonmanifold remaining material.
 For Trim require positive boss volume/height and a surviving curved wall;
 fully clipped-away bosses are refused. For Extend require the entire `Ct`
 material, including its full cap and circumference, and a positive-area base
@@ -168,11 +170,12 @@ the original Part, selection snapshot or history. No alternate mode on failure.
 - **9A (this change):** code inspection, recognition/material contracts, proposed
   API and phase plan only. No application code, UI, builds or tests.
 - **9B:** implement the isolated recognizer and geometry API, tolerance policy,
-  certified rectangular stock recovery and interior through-hole translation
-  only. Headless tests: seam/split mantle coverage, false-positive rejection,
+  certified rectangular stock recovery and through-hole translation, including
+  edge/corner crossings and complete exit (expanded by the 9B requirement).
+  Headless tests: seam/split mantle coverage, false-positive rejection,
   exact axis/radius/span/volume, located B-Reps, source immutability, zero/invalid
   vectors and independent material oracles. No boss reconstruction or mode UI.
-- **9C:** implement interior bosses, hole edge/corner crossings and both explicit
+- **9C:** implement interior bosses and both explicit
   boss policies within the certified scope above; add topology-changing geometry,
   material and refusal tests below. Any broader support-extension rule must be
   specified and tested here before it becomes supported.
@@ -186,6 +189,74 @@ Future test homes: a dedicated headless cylindrical geometry suite, existing
 `tests/MoveFaceTest.cpp`, `tests/FaceTransformTest.cpp`,
 `tests/BooleanOperationsTest.cpp`, `tests/NativeDocumentTest.cpp` and
 `tests/NativeDocumentSessionTest.cpp`. These are planned checks, not 9A results.
+
+## 9B — implemented headless through-hole geometry
+
+`src/CylindricalMoveGeometry.{h,cpp}` provides the single stateless entry point
+`moveThroughHole(source, selectedMantle, displacement)`. To keep this phase's API
+small, recognition and translation share one call; the proposed reusable
+`Prepared` session and boss options above remain deferred. The public API uses
+only OCCT and the C++ standard library. The library links Qt Core for existing
+Boolean/reconstruction helpers, with no Widgets or visualization dependency.
+
+`Result` carries a nullable shape, translated axis, radius/span, a `Status`
+(`Success`, `Unsupported`, `InvalidInput`, `Failure`), a machine-readable `Code`
+and a descriptive message. Success distinguishes `Moved`, `Unchanged` and
+`HoleExited`. Every refusal returns a null shape; no partial result or source
+mutation is exposed. Subshape history is deferred to command integration.
+
+Recognition isolates the source on a deep copy, certifies one manifold solid,
+collects coaxial cylindrical mantle patches and verifies circular rim adjacency
+on opposite axial stock planes. Internal split edges and periodic seams are
+excluded from rims. Both rim lengths and total mantle area must cover the full
+cylinder. Oriented mantle normals and radial IN/OUT probes distinguish a void
+from a boss. Six oriented orthogonal physical plane supports define an oriented
+stock oracle. Material equivalence to stock minus the original cylinder certifies
+coverage and absence of other features; no primitive metadata or bounding box is
+used. This also accepts mantle patches split into axial bands or angular patches.
+
+The operation fuses in the original cylinder, normalizes and certifies the filled
+stock against that oracle, then cuts the translated cylinder using an axially
+extended tool. Final validation checks one closed shell/solid, self-interference,
+two edge uses (including seam uses), connected vertex fans, material equivalence
+to the finite-cylinder expression, and only original planes/translated-cylinder
+supports. Open notches, corner crossings, disappearing cylinders and healed old
+footprints are permitted. Point contacts, pinched tangent walls and corner cuts
+that isolate another solid are refused.
+
+Numerical scope is intentionally conservative: linear tolerance is
+`10 * Precision::Confusion()` (1e-6 mm), angular tolerance 1e-8 radians;
+source subshape tolerances above the linear limit are refused. Radius, stock
+thickness and original side clearances must exceed 100 linear tolerances.
+Final planar support correspondence uses the existing shared helper's 1e-5 mm
+and 1e-7 rad thresholds; translated cylinder correspondence uses the stricter
+linear/angular thresholds above.
+Mantle area/rim length comparisons scale this linear tolerance by feature size;
+material equivalence uses the existing 1e-8 relative volume rule. IN/OUT probes
+are 1e-4 of the smallest radius/span/stock scale and must exceed 10 linear
+tolerances. Source complexity is bounded to 64 faces and 256 edges/vertices,
+dimensions to 1e7 mm and plane coordinates to 1e9 mm. No fuzzy tolerance is raised
+on failure. Axis-parallel displacement components exceeding the linear tolerance
+are invalid input; permitted numerical residue is not projected away.
+
+Unsupported inputs include blind holes, partial source mantles/notches, standalone
+cylinders, bosses, multiple holes, nonrectangular stock, cavities and blends.
+Zero displacement is recognized and certified as unchanged material; a caller
+must avoid adding history for `Unchanged`. Fully exited holes produce the filled
+stock and cannot be selected as holes in a subsequent new command. These limits
+do not constrain a later Trim/Extend builder to retain the original topology.
+
+Headless coverage is in `tests/CylindricalMoveGeometryTest.cpp`, registered as
+`cylindrical-move-geometry`. It checks analytic volumes and sampled material
+occupancy for interior, positive/negative edge, circular-segment and corner cuts,
+complete exit, zero moves, rigidly transformed and located solids. It exercises
+split mantle recognition, source serialization preservation, geometry/axis
+dimensions and atomic refusals for invalid vectors, nonmember/planar targets,
+blind/partial holes, multiple features, bosses and disconnected/pinched results.
+
+Verification: the new headless target builds; `cylindrical-move-geometry`,
+`face-transform-geometry` and `delete-face-geometry` pass. `git diff --check`
+passes. No UI, command history or native document behavior is changed in 9B.
 
 ## 9C — geometry and independent geometry tests
 
