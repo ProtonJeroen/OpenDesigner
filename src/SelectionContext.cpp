@@ -9,6 +9,7 @@
 #include <QAction>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QLabel>
 #include <QContextMenuEvent>
 #include <StdSelect_BRepOwner.hxx>
@@ -242,9 +243,12 @@ void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection
     }
     auto* move=menu.addAction(tr("Move Face"));move->setObjectName(QStringLiteral("context.move_face"));
     QString error=tr("Select exactly one supported planar face.");gp_Pnt center;gp_Dir direction;
-    const bool supported=selection.faces.size()==1 && MoveFaceGeometry::reference(
+    const bool supported=selection.faces.size()==1 && BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Plane && MoveFaceGeometry::reference(
         boxes_[selection.faces.front().partIndex].shape,selection.faces.front().face,center,direction,error);
-    if(!supported) { delete move; move=nullptr; }
+    MoveFaceFeature feature;
+    const bool moveSupported=supported || (selection.faces.size()==1 && moveFaceReference(
+        boxes_[selection.faces.front().partIndex].shape,selection.faces.front().face,feature,center,direction,error));
+    if(!moveSupported) { delete move; move=nullptr; }
     else move->setToolTip(error);
     if(move) connect(move,&QAction::triggered,this,&CadViewport::moveFace);
     if(supported) {
@@ -337,6 +341,8 @@ void CadViewport::resetModelingTools() {
     }
     dragDimension_->hide(); commandPanel_->hide();
     faceAxisSelector_->hide(); faceAlignSelector_->hide();
+    cylinderMoveLabel_->hide(); cylinderMoveDirection_->hide();
+    cylinderMoveAngle_->hide(); cylinderBossBoundary_->hide();
     faceAlignTargetLabel_->hide(); faceAlignReferenceLabel_->hide();
     emit transformModesChanged(false,false,false);
     emit selectionModeChanged(selectionMode_);

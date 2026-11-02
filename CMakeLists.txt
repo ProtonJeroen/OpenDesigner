@@ -189,7 +189,7 @@ if(OPENDESIGNER_BUILD_TESTS)
     add_test(NAME boolean-operations COMMAND OpenDesignerBooleanTests)
     set_tests_properties(primitive-pull cylindrical-face-pull native-document-pull cone-pull gizmo-center rotation-pivot command-sessions PROPERTIES TIMEOUT 60)
     add_executable(OpenDesignerMoveFaceTests
-        tests/MoveFaceTest.cpp src/MainWindow.h src/MainWindow.cpp
+        tests/MoveFaceTest.cpp tests/CylindricalMoveFaceSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
         src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
         src/MoveFace.cpp src/FaceOperations.cpp src/FaceTransformGeometry.cpp
         src/FaceTransformGeometry.h src/SelectionContext.cpp src/MoveFaceGeometry.h src/BRepReconstruction.cpp src/MoveFaceGeometry.cpp)
@@ -197,6 +197,10 @@ if(OPENDESIGNER_BUILD_TESTS)
     target_compile_definitions(OpenDesignerMoveFaceTests PRIVATE OPENDESIGNER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     target_link_libraries(OpenDesignerMoveFaceTests PRIVATE ${OPENDESIGNER_LIBRARIES})
     add_test(NAME move-face COMMAND OpenDesignerMoveFaceTests)
+    add_test(NAME cylindrical-move-face-sessions COMMAND OpenDesignerMoveFaceTests --cylindrical)
+    add_test(NAME cylindrical-move-face-sessions-hidpi COMMAND OpenDesignerMoveFaceTests --cylindrical)
+    set_tests_properties(cylindrical-move-face-sessions cylindrical-move-face-sessions-hidpi PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+    set_tests_properties(cylindrical-move-face-sessions-hidpi PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=2")
     add_executable(OpenDesignerSelectionContextTests
         tests/SelectionContextTest.cpp tests/DeletePartSessionTest.cpp tests/ActivePartSessionTest.cpp tests/ProfileExtrusionSessionTest.cpp tests/ProfileRevolutionSessionTest.cpp tests/SketchDisplayBoundsSessionTest.cpp tests/WorkplaneRenderingTest.cpp tests/NativeDocumentSessionTest.cpp tests/ConstructionSessionTest.cpp tests/SketchSessionTest.cpp tests/SketchDrawingTest.cpp tests/SketchOrthogonalLineTest.cpp tests/SketchOverdrawSessionTest.cpp tests/SketchConstructionSessionTest.cpp tests/SketchReleaseSessionTest.cpp tests/SketchPointSessionTest.cpp tests/SketchEllipseSessionTest.cpp tests/SketchEllipseDrawingTest.cpp tests/CommandPanelSessionTest.cpp tests/SketchProjectionSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
         src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
@@ -298,7 +302,7 @@ endif()
 foreach(viewport_target OpenDesigner OpenDesignerPullTests OpenDesignerBooleanTests OpenDesignerMoveFaceTests OpenDesignerSelectionContextTests OpenDesignerDebugModelTests OpenDesignerDeleteFaceTests)
     if(TARGET ${viewport_target})
         target_sources(${viewport_target} PRIVATE src/DebugExport.cpp src/DeleteFace.cpp src/ModelingErrors.cpp src/NativeDocument.cpp src/ConstructionTools.cpp src/ConstructionPanel.cpp src/SketchTools.cpp src/SketchDrawing.cpp src/SketchEllipseDrawing.cpp src/SketchDrawingPanel.cpp src/SketchOverdrawTools.cpp src/SketchOverdrawPanel.cpp src/SketchConstructionTools.cpp src/SketchConstructionPanel.cpp src/SketchProjectionTools.cpp src/SketchProjectionPanel.cpp src/SketchProfileExtrusionTools.cpp src/SketchProfileRevolutionTools.cpp)
-        target_link_libraries(${viewport_target} PRIVATE OpenDesignerDeleteFaceGeometry OpenDesignerDebug OpenDesignerConstruction OpenDesignerCommandPanels)
+        target_link_libraries(${viewport_target} PRIVATE OpenDesignerCylindricalMoveGeometry OpenDesignerDeleteFaceGeometry OpenDesignerDebug OpenDesignerConstruction OpenDesignerCommandPanels)
     endif()
 endforeach()
 install(TARGETS OpenDesignerDebugModel RUNTIME DESTINATION bin)

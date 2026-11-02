@@ -2,7 +2,8 @@
 
 This supplements Issue #51 and the existing [Move Face](MOVE_FACE.md) contract.
 Phase 9A records the architecture; the 9B and 9C sections describe the headless
-through-hole and boss operations. UI integration remains planned.
+through-hole and boss operations. Phase 9D integrates them into Move Face;
+manual Fedora KDE acceptance and phase 9E remain outstanding.
 
 ## 9A — completed architecture analysis
 
@@ -179,9 +180,10 @@ the original Part, selection snapshot or history. No alternate mode on failure.
   boss policies within the certified scope above; add topology-changing geometry,
   material and refusal tests below. Any broader support-extension rule must be
   specified and tested here before it becomes supported.
-- **9D:** integrate cylindrical selection/dispatch, two-component lateral input
-  and manipulators, explicit boss policy and matching full-solid live preview in
-  the existing Move Face Command Panel. Preserve planar Rotate/Align gating.
+- **9D:** integrate cylindrical selection/dispatch, explicit lateral reference
+  and direction angle plus signed distance (a full lateral displacement),
+  manipulator, boss policy and matching full-solid live preview in the existing
+  Move Face Command Panel. Preserve planar Rotate/Align gating.
 - **9E:** complete history/identity/persistence regressions, negative transaction
   tests and manual acceptance. No native schema change or persisted undo stack.
 
@@ -366,7 +368,63 @@ Check expected material as well as validity; a valid but semantically wrong soli
 must fail. Verify the original serialized B-Rep is unchanged after success or
 refusal. Existing hole behavior remains independently covered.
 
-## 9D — Command Panel and live preview
+## 9D — interactive Move Face integration
+
+The existing **3D Modeling → Move Face** command dispatches planar faces to the
+unchanged planar geometry adapter and cylindrical mantles to the unchanged 9B/9C
+APIs. The existing typed face context menu offers cylindrical Move Face after
+zero-displacement geometry certification. Rotate/Align remain planar-only. The
+selected member face identifies the single target Part; an unrelated Active Part
+does not override it. No new modeling command, geometry API, history framework
+or file schema is introduced.
+
+Cylindrical sessions begin with **Choose lateral reference…** and no arrow or
+confirmable candidate. The user chooses Part X, Y or Z projected perpendicular
+to the cylinder axis; references parallel to the axis are disabled. An exact
+direction-angle field rotates that projection in the lateral plane using the
+right-hand rule about the displayed cylinder axis in Part coordinates. The
+orange arrow then defines positive movement; drag it or type a signed distance
+in mm in the existing distance editor. Angle zero and the chosen reference are
+explicit, never an arbitrary basis derived from the cylinder axis. This polar
+input spans both lateral degrees of freedom without adding two distance editors.
+
+Directions originate in the Part's B-Rep frame, then transform to a normalized
+world direction for the arrow and scalar world-mm displacement. Inverse Part
+placement converts the complete vector back to the geometry frame, including
+scale; no instance translation is applied to vectors. Numeric angle, distance,
+reference and policy changes rebuild from `faceBefore`, never the last preview.
+Dragging uses the existing arrow hit testing, mm snapping and Shift bypass.
+
+Bosses visibly default to **Extend — full round boss** on each new command. The
+**Trim — original stock boundaries** choice remains selected throughout that
+session, including invalid displacement and direction changes. Through-holes
+hide the policy selector. Failed geometry clears the candidate and restores
+the original display, disables OK, reports the geometry diagnostic and cannot
+confirm an earlier candidate. Missing/invalid directions are also refused.
+
+The full reconstructed B-Rep uses the existing blue translucent, unselectable
+AIS preview and original Part placement. The orange arrow remains unselectable
+and in the topmost layer. Existing CommandSession confirmation/cancellation,
+Escape/Enter routing and selection-owner restoration are reused. All controls
+live in the existing raster Qt Tool panel managed by CommandPanelPositioner;
+preview updates do not reset its placement or create a second tool window.
+
+`tests/CylindricalMoveFaceSessionTest.cpp` runs through the affected Move Face
+session target with `--cylindrical`. Coverage includes typed context-menu gating,
+explicit references, angle/distance updates, actual reconstructed material,
+visible blue previews, invalid-input recovery, both policies, source immutability,
+basic Cancel/Escape/commit, Part placement/scale, real arrow dragging, panel bounds
+and Active Part precedence. CTest registers normal and `QT_SCALE_FACTOR=2` runs.
+Existing planar Move Face tests remain enabled because shared dispatch/session
+code changes. Detailed Undo/Redo, Save/Open and lifecycle matrices remain 9E;
+manual Fedora KDE acceptance must follow 9D before that phase.
+
+Verification: incremental builds of `OpenDesigner` and `OpenDesignerMoveFaceTests`
+passed. The focused `cylindrical-move-face-sessions`, its HiDPI variant and the
+existing `move-face` CTests passed. No full CTest suite was run. Geometry APIs
+remain unchanged; manual Fedora KDE acceptance is still required.
+
+### Preview acceptance contract
 
 Expose **Trim / Extend** in the existing Move Face Command Panel for applicable
 boss reconstruction. Keep the selected policy explicit and stable as the boss

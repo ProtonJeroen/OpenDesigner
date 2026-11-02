@@ -145,6 +145,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     faceAxisSelector_->setObjectName(QStringLiteral("rotateFaceAxisSelector"));
     faceAxisSelector_->addItems({tr("Choose a straight edge…"),tr("World X axis"),tr("World Y axis"),tr("World Z axis")});
     faceAxisSelector_->hide(); commandLayout->addWidget(faceAxisSelector_);
+    initializeCylindricalMoveControls();
     faceAlignSelector_=new QComboBox(commandPanel_);
     faceAlignSelector_->setObjectName(QStringLiteral("alignFaceModeSelector"));
     faceAlignSelector_->addItems({tr("Coplanar"),tr("Parallel")});
@@ -217,6 +218,8 @@ void CadViewport::beginCommandSession(CommandSession::Kind kind,
     dragDimension_->setText(QLocale().toString(0.0,'f',2));
     commandButtons_->button(QDialogButtonBox::Ok)->setEnabled(true);
     faceAxisSelector_->setVisible(kind==CommandSession::Kind::RotateFace);
+    cylinderMoveLabel_->hide(); cylinderMoveDirection_->hide();
+    cylinderMoveAngle_->hide(); cylinderBossBoundary_->hide();
     faceAlignSelector_->setVisible(kind==CommandSession::Kind::AlignFace);
     faceAlignTargetLabel_->setVisible(kind==CommandSession::Kind::AlignFace);
     faceAlignReferenceLabel_->setVisible(kind==CommandSession::Kind::AlignFace);
@@ -271,6 +274,9 @@ bool CadViewport::updateCommandParameter(bool reportError) {
             commandSession_->state=CommandSession::State::Parameters;
             QString error;
             presentFacePreview(*commandSession_->faceBefore,false,error);
+            if(commandSession_->kind==CommandSession::Kind::MoveFace && commandSession_->moveFeature!=MoveFaceFeature::Planar
+               && commandSession_->lateralDirectionReady && !moveFaceArrow_.IsNull())
+                displayPullArrow(moveFaceArrow_,commandSession_->pivot,gp_Vec(commandSession_->direction));
             redrawFacePreview();
         }
         if (reportError || faceCommand) emit statusMessage(tr("Enter a valid finite angle or distance before confirming."));
@@ -380,6 +386,8 @@ void CadViewport::closeCommandSession(bool confirm) {
     groupRotationDragging_ = false;
     dragDimension_->hide(); commandButtons_->hide(); commandPanel_->hide();
     faceAxisSelector_->hide(); faceAlignSelector_->hide();
+    cylinderMoveLabel_->hide(); cylinderMoveDirection_->hide();
+    cylinderMoveAngle_->hide(); cylinderBossBoundary_->hide();
     commandLayout_->removeWidget(dragDimension_);
     dragDimension_->setParent(this);
     resetModelingTools();

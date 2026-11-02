@@ -428,12 +428,17 @@ struct MoveFaceTest {
         v.redoPull();require(v.boxes_[exactIndex].shape.IsSame(exactEdited),"exact oblique Redo did not restore cached result");RotateMoveFixture::verify(v.boxes_[exactIndex].shape);
     }
 };
+void runCylindricalMoveFaceSessionTests();
 int main(int argc,char** argv) {
 #if defined(Q_OS_LINUX)
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM") && !qEnvironmentVariableIsEmpty("DISPLAY")) qputenv("QT_QPA_PLATFORM","xcb");
 #endif
     QLocale::setDefault(QLocale(QLocale::Dutch,QLocale::Netherlands));
     QApplication app(argc,argv);
-    try { MoveFaceTest::geometry();MoveFaceTest::ui();std::cout<<"Move Face geometry, preview, identity, input and history passed.\n";return 0; }
+    try {
+        if(app.arguments().contains("--cylindrical")) runCylindricalMoveFaceSessionTests();
+        else {MoveFaceTest::geometry();MoveFaceTest::ui();std::cout<<"Move Face geometry, preview, identity, input and history passed.\n";}
+        return 0;
+    }
     catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

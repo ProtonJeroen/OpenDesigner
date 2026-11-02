@@ -1,5 +1,40 @@
 # General Move Face (v0.3.6)
 
+## Cylindrical features (v0.4.9, phase 9D)
+
+The existing **3D Modeling → Move Face** command also accepts the cylindrical
+mantle of one complete circular through-hole or attached boss on rectangular
+stock. A supported cylindrical face also offers Move Face in its Face context
+menu. The selected face determines the target, independently of Active Part.
+Planar Move Face keeps its normal-offset workflow described below.
+
+Choose an explicit **Part X/Y/Z projected into lateral plane** reference in the
+Command Panel. References parallel to the cylinder axis are disabled. Set the
+**Direction angle** to rotate that reference in the lateral plane; positive angles
+follow the right-hand rule about the displayed cylinder axis (Part coordinates).
+The orange arrow shows the resulting positive direction. Drag it or type signed
+mm in the distance field. References and angles are relative to the Part; signed
+distance is measured in world mm, including for rotated/scaled Parts. No lateral
+direction is chosen automatically. Linear snapping and Shift bypass still apply.
+
+Bosses default visibly to **Extend**, which keeps the full round cylinder and
+valid overhangs. **Trim** clips it against the original stock side surfaces and
+can produce planar truncated walls. The choice stays fixed during the command.
+Through-holes hide this selector; they can open into a side notch or leave the
+stock completely, healing the original hole. Both policies preserve valid
+connected material; completely detached or clipped-away bosses are refused.
+
+Direction, distance and policy changes show the actual rebuilt blue translucent
+solid. Invalid geometry restores the source display and disables OK. Correct the
+parameters or cancel with Esc/Cancel; Enter/OK confirms through the existing
+session. Initial support excludes blind holes, blends, multiple features,
+nonrectangular stock and already truncated/overhanging source bosses. Geometry
+calculation remains synchronous. See the [phase plan](CYLINDRICAL_MOVE_PLAN.md).
+Automated session checks cover normal/HiDPI; manual Fedora KDE acceptance and
+phase 9E lifecycle/persistence coverage remain pending.
+
+## Planar workflow
+
 Choose **Modeling > Move Face**, then click one planar face. A preselected face
 can also be used, including through the viewport Face context menu. The visible
 Faces selection mode keeps Boolean/GeneralBRep faces selectable even with part
