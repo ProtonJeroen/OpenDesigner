@@ -3,6 +3,7 @@
 #include "BooleanGeometry.h"
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
@@ -22,6 +23,7 @@
 #include <gp_Circ.hxx>
 #include <gp_Trsf.hxx>
 #include <cmath>
+#include <array>
 #include <iostream>
 #include <limits>
 #include <numbers>
@@ -200,7 +202,8 @@ void bossTests() {
         bossRefused(partial,mantle(partial),gp_Vec(3,0,0),policy,Status::Unsupported,Code::UnsupportedStock);
         const auto two=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(source,
             BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(70,40,30),gp_Dir(0,0,1)),5,20).Shape());
-        bossRefused(two,mantle(two),gp_Vec(3,0,0),policy,Status::Unsupported,Code::UnsupportedStock);
+        const auto movedTwo=moveBoss(two,mantle(two),gp_Vec(3,0,0),policy);
+        require(bool(movedTwo),"Independent second boss was refused: "+movedTwo.message);certified(movedTwo.shape,240000+2500*pi);
     }
     const auto trim=bossCase(25,5,BossBoundaryMode::Trim,full);
     const auto extend=bossCase(25,5,BossBoundaryMode::Extend,full);
@@ -233,9 +236,104 @@ void bossTests() {
         }
     }
 }
+void independentFeatureTests() {
+    const auto stock=BRepPrimAPI_MakeBox(163,80,60).Shape();
+    struct Feature {double x,r,height;bool boss;};
+    const auto cylinder=[](const Feature& f) {
+        return BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(f.x,36,f.boss?60:0),gp_Dir(0,0,1)),f.r,f.height).Shape();
+    };
+    const auto apply=[&](const TopoDS_Shape& shape,const Feature& f) {
+        return f.boss?BooleanGeometry::combine<BRepAlgoAPI_Fuse>(shape,cylinder(f)):BooleanGeometry::combine<BRepAlgoAPI_Cut>(shape,cylinder(f));
+    };
+    const auto selected=[](const TopoDS_Shape& shape,double radius) {
+        for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(face);
+            if(s.GetType()==GeomAbs_Cylinder&&std::abs(s.Cylinder().Radius()-radius)<1.e-7) return face;
+        }
+        return TopoDS_Face();
+    };
+    for(const auto kinds:{std::pair{false,true},std::pair{false,false},std::pair{true,true}}) {
+        const std::array<Feature,2> features{{{54,17,kinds.first?25.:60.,kinds.first},{121,18,kinds.second?55.:60.,kinds.second}}};
+        const auto source=apply(apply(stock,features[0]),features[1]);const auto before=serialized(source);
+        for(int which=0;which<2;++which) {
+            const auto& f=features[which];const auto face=selected(source,f.r);
+            for(auto policy:{BossBoundaryMode::Trim,BossBoundaryMode::Extend}) {
+                if(!f.boss&&policy==BossBoundaryMode::Trim) continue;
+                // Includes both directions, hole exit and boss edge crossings.
+                for(double dx:{which==0?-8.:8.,which==0?-54.:42.}) {
+                    const auto moved=f.boss?moveBoss(source,face,gp_Vec(dx,0,0),policy):moveThroughHole(source,face,gp_Vec(dx,0,0));
+                    require(bool(moved),"Independent feature move refused: "+moved.message);
+                    auto translated=f;translated.x+=dx;
+                    auto material=cylinder(translated);
+                    if(f.boss&&policy==BossBoundaryMode::Trim) {
+                        const auto sides=BRepPrimAPI_MakeBox(gp_Pnt(0,0,60),163,80,f.height).Shape();
+                        material=BooleanGeometry::combine<BRepAlgoAPI_Common>(material,sides);
+                    }
+                    auto expected=apply(stock,features[1-which]);
+                    expected=f.boss?BooleanGeometry::combine<BRepAlgoAPI_Fuse>(expected,material):BooleanGeometry::combine<BRepAlgoAPI_Cut>(expected,material);
+                    require(BRepReconstruction::equivalent(moved.shape,expected),"Unselected feature changed material");
+                    certified(moved.shape,volume(expected));
+                    for(int x=-7;x<=176;x+=7) for(int y=-3;y<=85;y+=8) for(double z:{-1.,10.,59.,61.,70.,114.,116.}) {
+                        const double px=x+.31,py=y+.47;bool inside=px>0&&px<163&&py>0&&py<80&&z>0&&z<60;
+                        for(int i=0;i<2;++i) {
+                            const auto item=i==which?translated:features[i];
+                            const bool circle=(px-item.x)*(px-item.x)+(py-36)*(py-36)<item.r*item.r;
+                            if(item.boss) inside=inside||(circle&&z>60&&z<60+item.height&&
+                                (i!=which||policy==BossBoundaryMode::Extend||(px>0&&px<163&&py>0&&py<80)));
+                            else if(circle&&z>0&&z<60) inside=false;
+                        }
+                        BRepClass3d_SolidClassifier classifier(moved.shape,gp_Pnt(px,py,z),1.e-7);
+                        require(classifier.State()==(inside?TopAbs_IN:TopAbs_OUT),"Independent analytic occupancy mismatch");
+                    }
+                    const auto remaining=selected(moved.shape,features[1-which].r);
+                    require(!remaining.IsNull(),"Lost unselected cylindrical mantle");
+                    const auto old=selected(source,features[1-which].r);
+                    GProp_GProps a,b;BRepGProp::SurfaceProperties(old,a);BRepGProp::SurfaceProperties(remaining,b);
+                    near(a.Mass(),b.Mass(),"Unselected mantle area changed");
+                    require(serialized(source)==before,"Independent source mutated");
+                }
+                const double collision=features[1-which].x-f.x;
+                const auto failed=f.boss?moveBoss(source,face,gp_Vec(collision,0,0),policy):moveThroughHole(source,face,gp_Vec(collision,0,0));
+                require(!failed&&failed.shape.IsNull()&&failed.code==Code::InteractingFeatures,"Interacting features were accepted");
+                require(serialized(source)==before,"Interacting failure mutated source");
+            }
+        }
+        // Entire exit removes only the selected hole, leaving the other feature.
+        if(!features[0].boss) {
+            const auto exited=moveThroughHole(source,selected(source,17),gp_Vec(-110,0,0));
+            require(bool(exited)&&exited.code==Code::HoleExited,"Multi-feature hole exit failed");
+            require(BRepReconstruction::equivalent(exited.shape,apply(stock,features[1])),"Hole exit lost unrelated feature");
+        }
+        if(!features[0].boss&&features[1].boss) {
+            gp_Trsf transform;transform.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.71);
+            transform.SetTranslationPart(gp_Vec(210,-130,73));
+            const auto located=source.Moved(TopLoc_Location(transform));const auto locatedBefore=serialized(located);
+            const auto moved=moveThroughHole(located,selected(located,17),gp_Vec(-8,0,0).Transformed(transform));
+            require(bool(moved),"Located independent features refused: "+moved.message);
+            auto f=features[0];f.x-=8;const auto expected=apply(apply(stock,f),features[1]).Moved(TopLoc_Location(transform));
+            require(BRepReconstruction::equivalent(moved.shape,expected)&&serialized(located)==locatedBefore,"Located independent geometry changed incorrectly");
+            BRepFeat_SplitShape split(source);
+            split.Add(BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(gp_Pnt(54,36,30),gp_Dir(0,0,1)),17)).Edge(),selected(source,17));
+            split.Build();require(split.IsDone(),"Multi-feature split fixture failed");
+            const auto divided=split.Shape();const auto dividedBefore=serialized(divided);
+            const auto splitMove=moveThroughHole(divided,selected(divided,17),gp_Vec(-8,0,0));
+            require(bool(splitMove),"Connected split mantle not recognized independently: "+splitMove.message);
+            require(BRepReconstruction::equivalent(splitMove.shape,apply(apply(stock,f),features[1]))&&serialized(divided)==dividedBefore,
+                "Split independent feature moved incorrectly");
+        }
+    }
+    // A valid solid with intersecting holes is not an independent-feature input.
+    const Feature a{54,17,60,false},b{70,18,60,false};
+    const auto interacting=apply(apply(stock,a),b);const auto before=serialized(interacting);
+    const auto refusedMove=moveThroughHole(interacting,selected(interacting,17),gp_Vec(-8,0,0));
+    require(!refusedMove&&refusedMove.shape.IsNull()&&serialized(interacting)==before,"Interacting source geometry was accepted or mutated");
 }
-int main() {
+}
+int main(int argc,char** argv) {
     try {
+        if(argc>1&&std::string(argv[1])=="--independent") {
+            independentFeatureTests();std::cout<<"Independent cylindrical feature geometry tests passed\n";return 0;
+        }
         const double full=240000-3000*pi,half=240000-1500*pi;
         moveCase(25,5,full);moveCase(70,0,half);moveCase(100,0,240000,Code::HoleExited);
         moveCase(80,0,240000,Code::HoleExited); // external tangency, no removed volume
@@ -277,7 +375,8 @@ int main() {
         refused(boss,mantle(boss),gp_Vec(5,0,0),Status::Unsupported);
         const auto two=BooleanGeometry::combine<BRepAlgoAPI_Cut>(source,
             BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(70,40,-5),gp_Dir(0,0,1)),5,40).Shape());
-        refused(two,mantle(two),gp_Vec(5,0,0),Status::Unsupported);
+        const auto movedTwo=moveThroughHole(two,mantle(two),gp_Vec(5,0,0));
+        require(bool(movedTwo),"Independent second hole was refused: "+movedTwo.message);certified(movedTwo.shape,240000-3750*pi);
         // A circle crossing both sides can isolate a corner island. A valid
         // multi-solid Boolean is still an invalid Move Face result.
         refused(source,selected,gp_Vec(-22,-32,0),Status::Failure);

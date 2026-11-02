@@ -1,10 +1,12 @@
 # General Move Face (v0.3.6)
 
-## Cylindrical features (v0.4.9, phase 9D)
+## Cylindrical features (v0.4.9, phases 9D–9D.1)
 
 The existing **3D Modeling → Move Face** command also accepts the cylindrical
-mantle of one complete circular through-hole or attached boss on rectangular
-stock. A supported cylindrical face also offers Move Face in its Face context
+mantle of one selected complete circular through-hole or attached boss on
+rectangular stock. Up to eight independent parallel cylindrical features may
+coexist in that Part; unselected features remain unchanged. A supported
+cylindrical face also offers Move Face in its Face context
 menu. The selected face determines the target, independently of Active Part.
 Planar Move Face keeps its normal-offset workflow described below.
 
@@ -27,9 +29,10 @@ connected material; completely detached or clipped-away bosses are refused.
 Direction, distance and policy changes show the actual rebuilt blue translucent
 solid. Invalid geometry restores the source display and disables OK. Correct the
 parameters or cancel with Esc/Cancel; Enter/OK confirms through the existing
-session. Initial support excludes blind holes, blends, multiple features,
-nonrectangular stock and already truncated/overhanging source bosses. Geometry
-calculation remains synchronous. See the [phase plan](CYLINDRICAL_MOVE_PLAN.md).
+session. Support excludes blind holes, blends, intersecting/touching feature
+footprints, nonparallel feature axes, nonrectangular stock and already truncated/
+overhanging source features. Moving into an unselected feature is refused.
+Geometry calculation remains synchronous. See the [phase plan](CYLINDRICAL_MOVE_PLAN.md).
 Automated session checks cover normal/HiDPI; manual Fedora KDE acceptance and
 phase 9E lifecycle/persistence coverage remain pending.
 

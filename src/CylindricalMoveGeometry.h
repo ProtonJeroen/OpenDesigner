@@ -13,7 +13,7 @@ enum class BossBoundaryMode { Trim, Extend };
 enum class Code {
     Moved, Unchanged, HoleExited, InvalidDisplacement, InvalidSource,
     UnsupportedFeature, UnsupportedStock, AmbiguousMaterial, InvalidResult, KernelFailure,
-    InvalidPolicy, DisconnectedBoss
+    InvalidPolicy, DisconnectedBoss, InteractingFeatures
 };
 struct Result {
     Status status = Status::Failure;
@@ -24,12 +24,14 @@ struct Result {
     double radius = 0, height = 0;
     explicit operator bool() const { return status == Status::Success; }
 };
-// Initially supports one complete circular through-hole normal to a rectangular
-// stock face. Boundary crossings and complete exit are allowed; disconnected or
+// One selected complete circular through-hole normal to rectangular stock.
+// Independent parallel holes/bosses in the same Part are preserved. Boundary
+// crossings and complete exit are allowed; interacting, disconnected or
 // nonmanifold results are refused. Does not mutate source, even on failure.
 Result moveThroughHole(const TopoDS_Shape& source, const TopoDS_Face& mantle,
                        const gp_Vec& displacement);
-// Complete boss on rectangular stock. Trim clips against the original lateral
+// One complete boss on rectangular stock, preserving independent parallel
+// cylindrical features. Trim clips against the original lateral
 // stock supports; Extend retains the full cylinder, including a connected
 // overhang. No invented bridges or support pedestals. Policy is always explicit.
 Result moveBoss(const TopoDS_Shape& source, const TopoDS_Face& mantle,

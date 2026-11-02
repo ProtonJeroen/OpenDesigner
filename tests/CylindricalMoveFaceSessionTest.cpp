@@ -84,8 +84,8 @@ struct CylindricalMoveFaceSessionTest {
         check(snapshot.parts.size()==2,"Unexpected document Part count");
         check(BRepReconstruction::equivalent(snapshot.parts[0].shape,combined),"Document differs from the independent two-feature material oracle");
         near(volume(snapshot.parts[0].shape),163*80*60-std::numbers::pi*17*17*60+std::numbers::pi*18*18*55,"Wrong native combined material volume");
-        // Each feature alone meets 9B/9C; the combined Part is outside their
-        // explicit single-feature contract, despite both cylinders being regular.
+        // The same unchanged single-feature certificates remain the foundation
+        // for recognizing each independent feature in the combined Part.
         check(bool(CylindricalMoveGeometry::moveThroughHole(holeOnly,mantle(holeOnly),gp_Vec(1,0,0))),"Isolated document hole is not supported");
         check(bool(CylindricalMoveGeometry::moveBoss(bossOnly,mantle(bossOnly),gp_Vec(1,0,0),CylindricalMoveGeometry::BossBoundaryMode::Extend)),"Isolated document boss is not supported");
         MainWindow window;window.resize(1200,900);window.show();events();auto& v=*window.findChild<CadViewport*>();
@@ -104,12 +104,11 @@ struct CylindricalMoveFaceSessionTest {
             const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface surface(face);
             if(surface.GetType()!=GeomAbs_Cylinder) continue;
             ++count;
+            const bool isBoss=face.Orientation()==TopAbs_FORWARD;
             for(bool asBoss:{false,true}) {
                 const auto result=asBoss?CylindricalMoveGeometry::moveBoss(source,face,gp_Vec(0,0,0),CylindricalMoveGeometry::BossBoundaryMode::Extend):
                     CylindricalMoveGeometry::moveThroughHole(source,face,gp_Vec(0,0,0));
-                check(!result&&result.shape.IsNull()&&result.status==CylindricalMoveGeometry::Status::Unsupported&&
-                    result.code==CylindricalMoveGeometry::Code::UnsupportedStock,"Combined features bypassed single-feature material certification");
-                check(QString::fromStdString(result.message).contains("another cylindrical feature"),"Missing multi-feature recognition diagnostic");
+                check(bool(result)==(asBoss==isBoss),"Independent feature recognition or kind classification failed");
             }
             // Real detected owners, not fabricated selection, for both the
             // through-hole wall and external boss wall.
@@ -129,17 +128,35 @@ struct CylindricalMoveFaceSessionTest {
                 "Typed selection did not resolve document cylinder to its actual Part");
             std::unique_ptr<QMenu> menu(v.createSelectionMenu(hit));
             auto* move=menu?menu->findChild<QAction*>("context.move_face"):nullptr;
-            check(move&&!move->isEnabled()&&move->toolTip().contains("another cylindrical feature")&&menu->toolTipsVisible(),
-                "Unsupported cylinder silently hides Move Face instead of explaining its limit");
+            check(move&&move->isEnabled(),"Independent cylinder cannot activate Move Face");
             check(!menu->findChild<QAction*>("context.rotate_face")&&!menu->findChild<QAction*>("context.align_face"),"Unsupported cylinder enabled planar actions");
             diagnostic.clear();action->trigger();
-            check(!v.commandSession_&&diagnostic.contains("another cylindrical feature"),"Menu activation lost geometry refusal reason");
+            check(v.commandSession_&&v.commandSession_->changes.front().partIndex==0,"Independent document feature did not start a session on its selected Part");
+            v.cylinderMoveDirection_->setCurrentIndex(1);input(v,"5");
+            const auto translatedBoss=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(126,36,60),gp_Dir(0,0,1)),18,55).Shape();
+            const auto translatedBore=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(59,36,-10),gp_Dir(0,0,1)),17,80).Shape();
+            const auto expected=isBoss?BRepAlgoAPI_Fuse(holeOnly,translatedBoss).Shape():
+                BRepAlgoAPI_Fuse(BRepAlgoAPI_Cut(stock,translatedBore).Shape(),boss).Shape();
+            preview(v,volume(expected));check(BRepReconstruction::equivalent(v.commandSession_->candidate,expected),"Independent native preview changed unrelated material");
+            occupancy(v.commandSession_->candidate,gp_Pnt(54,36,30),false);
+            occupancy(v.commandSession_->candidate,gp_Pnt(121,36,90),true);
+            if(isBoss) {occupancy(v.commandSession_->candidate,gp_Pnt(104,36,90),false);occupancy(v.commandSession_->candidate,gp_Pnt(143,36,90),true);}
+            else {occupancy(v.commandSession_->candidate,gp_Pnt(38,36,30),true);occupancy(v.commandSession_->candidate,gp_Pnt(74,36,30),false);}
+            if(isBoss) {
+                input(v,"42");preview(v,163*80*60-std::numbers::pi*17*17*60+std::numbers::pi*18*18*55);
+                v.cylinderBossBoundary_->setCurrentIndex(1);
+                preview(v,163*80*60-std::numbers::pi*17*17*60+std::numbers::pi*18*18*55/2);
+                occupancy(v.commandSession_->candidate,gp_Pnt(170,36,90),false);
+            }
+            input(v,isBoss?"-67":"67");
+            check(!v.commandSession_->valid&&v.commandSession_->candidate.IsNull()&&diagnostic.contains("unselected feature"),"Interacting native edit was not refused safely");
+            v.cancelCommandSession();
             v.selectParts({});action->trigger();check(v.moveFacePicking_,"Command-first picking unavailable");
             diagnostic.clear();
             QMouseEvent press(QEvent::MouseButtonPress,QPointF(hit),QPointF(hit),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);v.mousePressEvent(&press);
-            check(!v.commandSession_&&diagnostic.contains("another cylindrical feature"),"Viewport command-first path lost geometry refusal reason");
-            check(v.boxes_[0].shape.IsSame(source)&&serialized(source)==stamp&&v.undoStack_.size()==history,"Refused document command changed geometry/history");
-            std::cout<<"Native cylinder radius="<<surface.Cylinder().Radius()<<": viewport selects Part 0; command available; recognition safely refuses additional feature\n";
+            check(v.commandSession_.has_value(),"Viewport command-first path did not recognize independent feature");v.cancelCommandSession();
+            check(v.boxes_[0].shape.IsSame(source)&&serialized(source)==stamp&&v.undoStack_.size()==history,"Document previews/cancellation changed geometry/history");
+            std::cout<<"Native cylinder radius="<<surface.Cylinder().Radius()<<": selected feature moves independently, preserving unrelated material\n";
         }
         QObject::disconnect(connection);check(count==2,"Unexpected cylindrical face inventory");
         if(!path.isEmpty()) {QFile file(path);check(file.open(QIODevice::ReadOnly)&&file.readAll()==originalBytes,"Supplied document bytes changed");}

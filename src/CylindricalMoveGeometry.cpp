@@ -133,7 +133,7 @@ Result moveFeature(const TopoDS_Shape& source,const TopoDS_Face& selected,
             else if(s.GetType()==GeomAbs_Cylinder && sameCylinder(cylinder,s.Cylinder(),tolerance)) mantles.push_back(face);
             else if(s.GetType()==GeomAbs_Cylinder)
                 return refuse(Status::Unsupported,Code::UnsupportedStock,
-                    "This Part contains another cylindrical feature. Move Face currently requires rectangular stock with exactly one through-hole or boss; preserving other features during relocation is not yet supported.");
+                    "Cylindrical surfaces outside the selected mantle require independent-feature certification.");
             else return refuse(Status::Unsupported,Code::UnsupportedStock,"Only rectangular stock with one complete cylindrical feature is supported.");
         }
         TopTools_IndexedMapOfShape mantleMap; for(const auto& f:mantles) mantleMap.Add(f);
@@ -373,12 +373,214 @@ Result moveFeature(const TopoDS_Shape& source,const TopoDS_Face& selected,
 }
 }
 
+namespace {
+struct IndependentFeature {
+    gp_Cylinder cylinder;
+    std::vector<TopoDS_Face> mantles;
+    TopoDS_Face cap;
+    TopoDS_Shape volume;
+    bool boss=false;
+};
+double faceArea(const TopoDS_Shape& shape) {
+    GProp_GProps p;BRepGProp::SurfaceProperties(shape,p);return p.Mass();
+}
+// Compare trimmed surface regions, not face identities/counts. Normalization
+// may split/merge faces; every original unselected mantle/cap region must remain.
+bool retainedFeature(const IndependentFeature& feature,const TopoDS_Shape& result) {
+    auto originals=feature.mantles;if(feature.boss) originals.push_back(feature.cap);
+    for(const auto& original:originals) {
+        double covered=0;
+        for(TopExp_Explorer it(result,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());
+            if(BRepReconstruction::sameAnalyticSupport(original,face))
+                covered+=faceArea(BooleanGeometry::combine<BRepAlgoAPI_Common>(original,face));
+        }
+        if(std::abs(covered-faceArea(original))>1.e-8*std::max(1.,faceArea(original))) return false;
+    }
+    double before=0,after=0;
+    for(const auto& f:feature.mantles) before+=faceArea(f);
+    for(TopExp_Explorer it(result,TopAbs_FACE);it.More();it.Next()) {
+        const auto face=TopoDS::Face(it.Current());
+        if(BRepReconstruction::sameAnalyticSupport(feature.mantles.front(),face)) after+=faceArea(face);
+    }
+    return std::abs(before-after)<=1.e-8*std::max(1.,before);
+}
+
+Result moveSelected(const TopoDS_Shape& source,const TopoDS_Face& selected,
+                    const gp_Vec& delta,std::optional<BossBoundaryMode> policy) {
+    // Preserve the existing fast path and its input, tolerance and solid checks.
+    const auto direct=moveFeature(source,selected,delta,policy);
+    if(direct||direct.code!=Code::UnsupportedStock) return direct;
+    try {
+        const double tolerance=10*Precision::Confusion();
+        BRepBuilderAPI_Copy copy(source,true,false);const auto isolated=copy.Shape();
+        const auto target=TopoDS::Face(copy.ModifiedShape(selected));
+        TopTools_IndexedMapOfShape cylinders;
+        for(TopExp_Explorer it(isolated,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());const auto type=BRepAdaptor_Surface(face).GetType();
+            if(type==GeomAbs_Cylinder) cylinders.Add(face);
+            else if(type!=GeomAbs_Plane) return direct;
+        }
+        if(!cylinders.Contains(target)) return direct;
+        TopTools_IndexedDataMapOfShapeListOfShape adjacency;
+        TopExp::MapShapesAndAncestors(isolated,TopAbs_EDGE,TopAbs_FACE,adjacency);
+        std::vector<IndependentFeature> features;
+        std::vector<bool> visited(cylinders.Extent()+1,false);
+        size_t chosen=0;
+        for(int seed=1;seed<=cylinders.Extent();++seed) {
+            if(visited[seed]) continue;
+            IndependentFeature feature;feature.cylinder=BRepAdaptor_Surface(TopoDS::Face(cylinders(seed))).Cylinder();
+            std::vector<int> pending{seed};visited[seed]=true;
+            TopTools_IndexedMapOfShape members;
+            for(size_t next=0;next<pending.size();++next) {
+                const auto face=TopoDS::Face(cylinders(pending[next]));members.Add(face);feature.mantles.push_back(face);
+                for(TopExp_Explorer edge(face,TopAbs_EDGE);edge.More();edge.Next())
+                    for(TopTools_ListIteratorOfListOfShape it(adjacency.FindFromKey(edge.Current()));it.More();it.Next()) {
+                        const int index=cylinders.FindIndex(it.Value());
+                        if(index&&!visited[index]&&sameCylinder(feature.cylinder,BRepAdaptor_Surface(TopoDS::Face(it.Value())).Cylinder(),tolerance)) {
+                            visited[index]=true;pending.push_back(index);
+                        }
+                    }
+            }
+            if(members.Contains(target)) chosen=features.size();
+            if(!feature.cylinder.Axis().Direction().IsParallel(BRepAdaptor_Surface(target).Cylinder().Axis().Direction(),angular))
+                return refuse(Status::Unsupported,Code::UnsupportedStock,"Independent features currently require parallel cylinder axes normal to rectangular stock.");
+            const auto first=feature.mantles.front();BRepAdaptor_Surface surface(first);
+            const double u=(surface.FirstUParameter()+surface.LastUParameter())/2,v=(surface.FirstVParameter()+surface.LastVParameter())/2;
+            BRepLProp_SLProps props(surface,u,v,1,tolerance);
+            if(!props.IsNormalDefined()) return direct;
+            auto normal=props.Normal();if(first.Orientation()==TopAbs_REVERSED) normal.Reverse();
+            const auto z=feature.cylinder.Axis().Direction();
+            auto radial=gp_Vec(feature.cylinder.Location(),surface.Value(u,v));radial-=gp_Vec(z)*radial.Dot(gp_Vec(z));
+            feature.boss=normal.Dot(gp_Dir(radial))>0;
+            std::vector<double> ends;std::array<double,2> lengths{};
+            for(int edge=1;edge<=adjacency.Extent();++edge) {
+                TopTools_IndexedMapOfShape inside,outside;
+                for(TopTools_ListIteratorOfListOfShape it(adjacency.FindFromIndex(edge));it.More();it.Next())
+                    (members.Contains(it.Value())?inside:outside).Add(it.Value());
+                if(inside.IsEmpty()||outside.IsEmpty()) continue;
+                if(inside.Extent()!=1||outside.Extent()!=1)
+                    return refuse(Status::Unsupported,Code::UnsupportedFeature,"Feature rim adjacency is ambiguous or interacts with another feature.");
+                const BRepAdaptor_Surface neighbor(TopoDS::Face(outside(1)));
+                const BRepAdaptor_Curve curve(TopoDS::Edge(adjacency.FindKey(edge)));
+                if(neighbor.GetType()!=GeomAbs_Plane||!neighbor.Plane().Axis().Direction().IsParallel(z,angular)||curve.GetType()!=GeomAbs_Circle)
+                    return refuse(Status::Unsupported,Code::UnsupportedFeature,"Independent features need complete circular rims on perpendicular planar neighbors.");
+                const auto circle=curve.Circle();
+                if(std::abs(circle.Radius()-feature.cylinder.Radius())>tolerance||gp_Lin(feature.cylinder.Axis()).Distance(circle.Location())>tolerance)
+                    return refuse(Status::Unsupported,Code::UnsupportedFeature,"Feature rim is not concentric with its mantle.");
+                const double end=coordinate(circle.Location(),z);
+                size_t index=0;while(index<ends.size()&&std::abs(ends[index]-end)>tolerance) ++index;
+                if(index==ends.size()) ends.push_back(end);
+                if(index>=2) return refuse(Status::Unsupported,Code::UnsupportedFeature,"Feature must have exactly two axial rims.");
+                GProp_GProps p;BRepGProp::LinearProperties(adjacency.FindKey(edge),p);lengths[index]+=p.Mass();
+                if(feature.boss&&std::abs(faceArea(outside(1))-pi*circle.Radius()*circle.Radius())<=tolerance*std::max(1.,circle.Radius()*circle.Radius())) {
+                    if(!feature.cap.IsNull()&&!feature.cap.IsSame(outside(1))) return direct;
+                    feature.cap=TopoDS::Face(outside(1));
+                }
+            }
+            const double radius=feature.cylinder.Radius();
+            if(ends.size()!=2||std::abs(lengths[0]-2*pi*radius)>tolerance*std::max(1.,radius)||
+               std::abs(lengths[1]-2*pi*radius)>tolerance*std::max(1.,radius))
+                return refuse(Status::Unsupported,Code::UnsupportedFeature,"Independent feature rims must each form a complete circle.");
+            const double height=std::abs(ends[1]-ends[0]);
+            double area=0;for(const auto& face:feature.mantles) area+=faceArea(face);
+            if(height<=100*tolerance||std::abs(area-2*pi*radius*height)>tolerance*std::max(1.,radius*height)||
+               (feature.boss&&feature.cap.IsNull()))
+                return refuse(Status::Unsupported,Code::UnsupportedFeature,"Independent feature mantle or boss cap is incomplete.");
+            const auto base=feature.cylinder.Location().Translated(gp_Vec(z)*(std::min(ends[0],ends[1])-coordinate(feature.cylinder.Location(),z)));
+            const double probe=std::min(radius,height)*1.e-4;
+            if(probe<10*tolerance)
+                return refuse(Status::Unsupported,Code::AmbiguousMaterial,"Feature is too small for reliable material-side classification.");
+            for(int sample=0;sample<12;++sample) for(double fraction:{.2,.5,.8}) {
+                const double angle=2*pi*(sample+.37)/12;
+                const auto radial=gp_Vec(feature.cylinder.XAxis().Direction())*std::cos(angle)+
+                    gp_Vec(feature.cylinder.YAxis().Direction())*std::sin(angle);
+                const auto center=base.Translated(gp_Vec(z)*(fraction*height));
+                if(classify(isolated,center.Translated(radial*(radius-probe)),tolerance)!=(feature.boss?TopAbs_IN:TopAbs_OUT)||
+                   classify(isolated,center.Translated(radial*(radius+probe)),tolerance)!=(feature.boss?TopAbs_OUT:TopAbs_IN))
+                    return refuse(Status::Unsupported,Code::AmbiguousMaterial,"Original feature material sides are ambiguous or interact with other geometry.");
+            }
+            feature.volume=BRepPrimAPI_MakeCylinder(gp_Ax2(base,z),radius,height).Shape();
+            features.push_back(feature);
+            if(features.size()>8) return refuse(Status::Unsupported,Code::UnsupportedStock,"At most eight independent cylindrical features are supported.");
+        }
+        if(features.size()<2) return direct;
+        if(features[chosen].boss!=policy.has_value())
+            return refuse(Status::Unsupported,Code::UnsupportedFeature,"Selected mantle does not match the requested hole or boss operation.");
+        // Clearance is measured on footprints, including hole/boss pairs that
+        // would meet only on the support plane. Tangency is not independence.
+        for(size_t i=0;i<features.size();++i) for(size_t j=0;j<i;++j)
+            if(gp_Lin(features[i].cylinder.Axis()).Distance(features[j].cylinder.Location())<=
+               features[i].cylinder.Radius()+features[j].cylinder.Radius()+100*tolerance)
+                return refuse(Status::Unsupported,Code::InteractingFeatures,"Source feature footprints overlap, touch or cannot be certified as independent.");
+        auto movedCylinder=features[chosen].cylinder;movedCylinder.Translate(delta);
+        for(size_t i=0;i<features.size();++i) if(i!=chosen&&gp_Lin(movedCylinder.Axis()).Distance(features[i].cylinder.Location())<=
+            movedCylinder.Radius()+features[i].cylinder.Radius()+100*tolerance)
+            return refuse(Status::Failure,Code::InteractingFeatures,"Translated footprint overlaps or touches an unselected feature; original Part was kept.");
+        QString error;TopoDS_Shape stock=isolated;
+        for(const auto& feature:features) stock=feature.boss?BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,feature.volume):
+            BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stock,feature.volume);
+        TopoDS_Shape normalized;
+        if(!BRepReconstruction::normalize(stock,normalized,error))
+            return refuse(Status::Unsupported,Code::AmbiguousMaterial,"Independent feature removal did not recover one valid stock solid.");
+        stock=normalized;
+        TopoDS_Shape sourceOracle=stock,selectedOnly;TopoDS_Face selectedFace;
+        for(size_t i=0;i<features.size();++i) {
+            const auto& feature=features[i];
+            const auto single=feature.boss?BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stock,feature.volume):
+                BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,feature.volume);
+            TopoDS_Face face;
+            for(TopExp_Explorer it(single,TopAbs_FACE);it.More();it.Next())
+                if(BRepReconstruction::sameAnalyticSupport(feature.mantles.front(),TopoDS::Face(it.Current()))) {face=TopoDS::Face(it.Current());break;}
+            // Reuse all existing rectangular stock, cap/support, material-side,
+            // mantle/rim and exact source material certificates for EACH feature.
+            const auto certified=moveFeature(single,face,gp_Vec(0,0,0),feature.boss?
+                std::optional<BossBoundaryMode>(BossBoundaryMode::Extend):std::nullopt);
+            if(!certified||!retainedFeature(feature,certified.shape))
+                return refuse(Status::Unsupported,Code::AmbiguousMaterial,"An independent feature does not satisfy the complete-feature/rectangular-stock certificates.");
+            if(i==chosen) {selectedOnly=single;selectedFace=face;}
+            sourceOracle=feature.boss?BooleanGeometry::combine<BRepAlgoAPI_Fuse>(sourceOracle,feature.volume):
+                BooleanGeometry::combine<BRepAlgoAPI_Cut>(sourceOracle,feature.volume);
+        }
+        if(!BRepReconstruction::equivalent(sourceOracle,isolated))
+            return refuse(Status::Unsupported,Code::AmbiguousMaterial,"Stock and certified independent features do not reproduce the source material.");
+        auto answer=moveFeature(selectedOnly,selectedFace,delta,policy);
+        if(!answer) return answer;
+        // Edit the original locally. Recomposition is an independent oracle,
+        // not a replacement of unrelated features with newly generated geometry.
+        TopoDS_Shape local=policy?BooleanGeometry::combine<BRepAlgoAPI_Cut>(isolated,features[chosen].volume):
+            BooleanGeometry::combine<BRepAlgoAPI_Fuse>(isolated,features[chosen].volume);
+        if(policy) {
+            const auto added=BooleanGeometry::combine<BRepAlgoAPI_Cut>(answer.shape,stock);
+            local=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(local,added);
+        } else {
+            const auto& axis=answer.axis;const double margin=std::max(1.,answer.height);
+            const auto tool=BRepPrimAPI_MakeCylinder(gp_Ax2(axis.Location().Translated(gp_Vec(axis.Direction())*-margin),axis.Direction()),answer.radius,answer.height+2*margin).Shape();
+            local=BooleanGeometry::combine<BRepAlgoAPI_Cut>(local,tool);
+        }
+        TopoDS_Shape expected=answer.shape;
+        for(size_t i=0;i<features.size();++i) if(i!=chosen)
+            expected=features[i].boss?BooleanGeometry::combine<BRepAlgoAPI_Fuse>(expected,features[i].volume):
+                BooleanGeometry::combine<BRepAlgoAPI_Cut>(expected,features[i].volume);
+        if(!BRepReconstruction::normalize(local,normalized,error)||!manifold(normalized)||!BRepReconstruction::equivalent(normalized,expected))
+            return refuse(Status::Failure,Code::InvalidResult,"Local reconstruction failed the independent multi-feature material/solid certificate.");
+        for(size_t i=0;i<features.size();++i) if(i!=chosen&&!retainedFeature(features[i],normalized))
+            return refuse(Status::Failure,Code::InvalidResult,"An unselected feature's trimmed surface geometry changed.");
+        answer.shape=normalized;return answer;
+    } catch(const Standard_Failure&) {
+        return refuse(Status::Failure,Code::KernelFailure,"OCCT could not certify independent-feature reconstruction; original Part was kept.");
+    } catch(const std::exception& failure) {
+        Result r=refuse(Status::Failure,Code::KernelFailure,"Independent-feature reconstruction failed: ");r.message+=failure.what();return r;
+    }
+}
+}
+
 CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
         const TopoDS_Shape& source,const TopoDS_Face& selected,const gp_Vec& delta) {
-    return moveFeature(source,selected,delta,std::nullopt);
+    return moveSelected(source,selected,delta,std::nullopt);
 }
 
 CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveBoss(
         const TopoDS_Shape& source,const TopoDS_Face& selected,const gp_Vec& delta,BossBoundaryMode policy) {
-    return moveFeature(source,selected,delta,policy);
+    return moveSelected(source,selected,delta,policy);
 }

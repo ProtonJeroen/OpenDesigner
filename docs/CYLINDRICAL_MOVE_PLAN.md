@@ -4,6 +4,7 @@ This supplements Issue #51 and the existing [Move Face](MOVE_FACE.md) contract.
 Phase 9A records the architecture; the 9B and 9C sections describe the headless
 through-hole and boss operations. Phase 9D integrates them into Move Face;
 manual Fedora KDE acceptance and phase 9E remain outstanding.
+Phase 9D.1 below expands recognition to independent parallel features in one Part.
 
 ## 9A — completed architecture analysis
 
@@ -424,7 +425,7 @@ passed. The focused `cylindrical-move-face-sessions`, its HiDPI variant and the
 existing `move-face` CTests passed. No full CTest suite was run. Geometry APIs
 remain unchanged; manual Fedora KDE acceptance is still required.
 
-### Native document diagnosis: moveCylinder.odc
+### Native document diagnosis at 097d922 (superseded by 9D.1)
 
 The supplied file (SHA-256
 `3fcabc46f01ee3d79a15a4ee3b8ae589c563d632a7efd889d0a8812abf5cae47`)
@@ -449,13 +450,14 @@ is enabled and reaches the same safe geometry refusal. Previously the context
 menu silently removed Move Face on recognition failure. Unsupported cylinders
 now retain a disabled Move Face action with the refusal in its tooltip/status
 tip, and geometry diagnostics identify the additional cylindrical feature.
-This fixes the missing explanation; this two-feature Part remains unsupported.
+That commit fixed the missing explanation. Phase 9D.1 below removes this
+single-feature-per-Part limitation with additional material/geometry certificates.
 
 `cylindrical-move-face-recognition` tests a portable material-equivalent version
 of this document. To replay the exact private document without adding it to Git,
 run `OpenDesignerMoveFaceTests --cylindrical-document /path/to/moveCylinder.odc`.
 That path uses the native reader, checks the independent material oracle and
-real viewport detection, typed selection, menu/command-first refusal, unchanged
+real viewport detection, typed selection, menu/command-first activation, unchanged
 source/history and unchanged input bytes. No supplied binary is stored in Git.
 
 Verification: incremental application/session/geometry targets built; the exact
@@ -483,6 +485,77 @@ invalid-to-valid recovery, Cancel/Esc, OK/Enter and preview cleanup. Compare the
 preview B-Rep/material to the committed result for each mode, in addition to
 rendered checks. Confirm the UI cannot commit a candidate from another policy
 or an earlier displacement. Check existing planar and hole Move Face sessions.
+
+## 9D.1 — independent cylindrical features in one Part
+
+The geometry entry points and Move Face session infrastructure are reused.
+`moveSelected` retains the original single-feature path, with a bounded
+independent-feature path when other cylindrical supports prevent its stock
+certificate. It does not ignore unrelated cylindrical surfaces or weaken the
+original solid, radius/span, stock or material-side checks.
+
+Recognition builds edge/face adjacency on an isolated source copy and grows
+each mantle only through connected equal-radius coaxial cylinder faces.
+Periodic seams/internal split edges are excluded from boundary rims. Each group
+must have two complete concentric circular rims on perpendicular planar
+neighbors, the complete mantle area and a definite oriented material side.
+IN/OUT probes classify both radial sides of every feature in the actual source
+before decomposition, as well as in its later isolated certificate.
+Bosses require an adjacent full disk cap. Feature volume comes from these actual
+rim coordinates and analytic cylinder supports, not creation metadata.
+
+For this bounded scope, axes must be parallel and all source feature footprints
+must be separated by more than 100 linear tolerances. Footprint overlap/tangency
+is refused even when features occupy different axial spans; this prevents
+ambiguous hole/boss support interactions. Up to eight independent features are
+accepted within the existing 64-face/256-edge/vertex limits. Original features
+must be complete, with footprints inside the rectangular stock.
+
+The candidate decomposition fills holes and removes bosses to recover stock.
+Each feature alone is reconstructed on that stock and passed through the
+existing single-feature operation at zero displacement. This certifies the
+rectangular stock, complete cap/support/rim geometry and radial IN/OUT material
+sides independently for every feature. Original mantle/cap trimmed regions must
+match their isolated certificates. Reapplying all signed feature volumes must
+reproduce the entire original Part by Common material equivalence.
+
+The selected destination footprint must also clear every unselected feature.
+The original operation constructs the selected result with the requested Trim/
+Extend policy (or hole boundary crossing/exit). Actual editing starts from the
+original Part: fill only the old selected hole and cut the new one, or remove
+only the old selected boss and fuse its translated/clipped material. Rebuilding
+the other features is used only as an alternate material oracle, not as the
+production replacement. Final normalization, one-solid/manifold certification
+and equivalence to that oracle remain mandatory. Each unselected mantle/cap
+region must survive as a Common-equivalent trimmed surface on the same oriented
+support, with unchanged total mantle area. Split/merged face counts are allowed.
+
+An interacting source returns an unsupported diagnostic; an interacting
+destination returns `Failure / InteractingFeatures`. All refusals return null
+geometry and preserve the original source. Independence is evaluated at the
+source and requested destination, not along an animated/swept travel path.
+Conservative refusals remain for nonparallel/cross-drilled features, blind holes,
+coaxial stacked/interacting features, blends, split caps, nonrectangular stock,
+partially truncated/overhanging source features and ambiguous decompositions.
+
+The native reader regression now recognizes and previews both the R17 hole and
+R18 boss in the supplied Unite 5. It checks actual viewport/context-menu and
+command-first activation, material at old/new footprints, preserved unrelated
+features, boss Trim/Extend at the stock boundary, collision refusal, cancellation
+and unchanged document bytes. The portable equivalent remains the default
+`cylindrical-move-face-recognition` test; the optional private `.odc` path is never
+committed. `cylindrical-independent-features` adds headless hole+boss, two-hole,
+two-boss, both selected features, boundary/exit, exact occupancy, surface/solid,
+located/split-mantle and atomic source/destination interaction regressions.
+
+Verification: incremental builds of the application, cylindrical geometry and
+Move Face session targets passed. The four focused CTests
+`cylindrical-move-geometry`, `cylindrical-independent-features`,
+`cylindrical-move-face-sessions` and `cylindrical-move-face-recognition` passed.
+The exact native `moveCylinder.odc` replay also passed for both selected features,
+including Trim/Extend and interaction refusal, with the original SHA-256 intact.
+`git diff --check` passed. No full suite was run; the supplied binary stays
+untracked and unchanged.
 
 ## 9E — transactions, persistence and acceptance
 
