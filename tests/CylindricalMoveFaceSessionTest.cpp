@@ -15,6 +15,7 @@
 #include <QMenu>
 #include <QStandardItemModel>
 #include <QThread>
+#include <QFile>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
@@ -26,6 +27,7 @@
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
+#include <gp_Cylinder.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -61,6 +63,88 @@ void events() {
 }
 
 struct CylindricalMoveFaceSessionTest {
+    static void documentRegression(const QString& path) {
+        NativeDocumentSnapshot snapshot;QString error;QByteArray originalBytes;
+        const auto stock=BRepPrimAPI_MakeBox(163,80,60).Shape();
+        const auto bore=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,36,-10),gp_Dir(0,0,1)),17,80).Shape();
+        const auto boss=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(121,36,60),gp_Dir(0,0,1)),18,55).Shape();
+        const auto holeOnly=BRepAlgoAPI_Cut(stock,bore).Shape();
+        const auto bossOnly=BRepAlgoAPI_Fuse(stock,boss).Shape();
+        const auto combined=BRepAlgoAPI_Fuse(holeOnly,boss).Shape();
+        if(!path.isEmpty()) {
+            QFile file(path);check(file.open(QIODevice::ReadOnly),"Cannot read supplied document");originalBytes=file.readAll();file.close();
+            check(NativeDocumentStorage::load(path,snapshot,error),qPrintable(error));
+        } else {
+            // Portable equivalent of moveCylinder.odc; no private binary fixture.
+            NativePartState first;first.id="slot-4";first.name="Unite 5";first.shape=combined;
+            NativePartState second;second.id="other-part";second.name="Part 6";
+            second.shape=BRepPrimAPI_MakeBox(gp_Pnt(625,0,0),100,80,60).Shape();second.transform.SetTranslation(gp_Vec(-402,0,0));
+            snapshot.parts={first,second};snapshot.activePartId=second.id;
+        }
+        check(snapshot.parts.size()==2,"Unexpected document Part count");
+        check(BRepReconstruction::equivalent(snapshot.parts[0].shape,combined),"Document differs from the independent two-feature material oracle");
+        near(volume(snapshot.parts[0].shape),163*80*60-std::numbers::pi*17*17*60+std::numbers::pi*18*18*55,"Wrong native combined material volume");
+        // Each feature alone meets 9B/9C; the combined Part is outside their
+        // explicit single-feature contract, despite both cylinders being regular.
+        check(bool(CylindricalMoveGeometry::moveThroughHole(holeOnly,mantle(holeOnly),gp_Vec(1,0,0))),"Isolated document hole is not supported");
+        check(bool(CylindricalMoveGeometry::moveBoss(bossOnly,mantle(bossOnly),gp_Vec(1,0,0),CylindricalMoveGeometry::BossBoundaryMode::Extend)),"Isolated document boss is not supported");
+        MainWindow window;window.resize(1200,900);window.show();events();auto& v=*window.findChild<CadViewport*>();
+        check(v.importDocumentSnapshot(snapshot,error),qPrintable(error));
+        check(v.activePartId()==snapshot.parts[1].id,"Native Active Part was not restored");
+        const auto source=v.boxes_[0].shape;const auto stamp=serialized(source);
+        const auto history=v.undoStack_.size();
+        QAction* action=nullptr;
+        for(auto* a:window.findChildren<QAction*>()) if(a->text()=="Move Face") action=a;
+        check(action&&action->isEnabled(),"3D Modeling Move Face is unavailable");
+        QString diagnostic;
+        const auto connection=QObject::connect(&v,&CadViewport::statusMessage,&v,[&](const QString& text){diagnostic=text;});
+        int count=0;
+        v.view_->SetProj(V3d_XposYnegZpos);v.fitSelection({0});events();
+        for(TopExp_Explorer it(source,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface surface(face);
+            if(surface.GetType()!=GeomAbs_Cylinder) continue;
+            ++count;
+            for(bool asBoss:{false,true}) {
+                const auto result=asBoss?CylindricalMoveGeometry::moveBoss(source,face,gp_Vec(0,0,0),CylindricalMoveGeometry::BossBoundaryMode::Extend):
+                    CylindricalMoveGeometry::moveThroughHole(source,face,gp_Vec(0,0,0));
+                check(!result&&result.shape.IsNull()&&result.status==CylindricalMoveGeometry::Status::Unsupported&&
+                    result.code==CylindricalMoveGeometry::Code::UnsupportedStock,"Combined features bypassed single-feature material certification");
+                check(QString::fromStdString(result.message).contains("another cylindrical feature"),"Missing multi-feature recognition diagnostic");
+            }
+            // Real detected owners, not fabricated selection, for both the
+            // through-hole wall and external boss wall.
+            QPoint hit;bool found=false;
+            for(double fraction:{.1,.5,.85,.98}) for(int u=0;u<48&&!found;++u) {
+                const auto p=surface.Value(surface.FirstUParameter()+(u+.37)/48*(surface.LastUParameter()-surface.FirstUParameter()),
+                    surface.FirstVParameter()+fraction*(surface.LastVParameter()-surface.FirstVParameter())).Transformed(v.boxes_[0].orientation);
+                const auto screen=project(v,p);v.context_->MoveTo(screen.x(),screen.y(),v.view_,Standard_False);
+                if(!v.context_->HasDetected()) continue;
+                const auto owner=Handle(StdSelect_BRepOwner)::DownCast(v.context_->DetectedOwner());
+                if(!owner.IsNull()&&owner->Shape().IsSame(face)) {hit=screen;found=true;}
+            }
+            check(found,"Document cylinder cannot be selected in viewport");
+            v.context_->MoveTo(hit.x(),hit.y(),v.view_,Standard_False);v.context_->SelectDetected(AIS_SelectionScheme_Replace);
+            const auto selected=v.selectionContext();
+            check(selected.kind==CadViewport::SelectionContext::Kind::Faces&&selected.faces.size()==1&&selected.faces.front().partIndex==0,
+                "Typed selection did not resolve document cylinder to its actual Part");
+            std::unique_ptr<QMenu> menu(v.createSelectionMenu(hit));
+            auto* move=menu?menu->findChild<QAction*>("context.move_face"):nullptr;
+            check(move&&!move->isEnabled()&&move->toolTip().contains("another cylindrical feature")&&menu->toolTipsVisible(),
+                "Unsupported cylinder silently hides Move Face instead of explaining its limit");
+            check(!menu->findChild<QAction*>("context.rotate_face")&&!menu->findChild<QAction*>("context.align_face"),"Unsupported cylinder enabled planar actions");
+            diagnostic.clear();action->trigger();
+            check(!v.commandSession_&&diagnostic.contains("another cylindrical feature"),"Menu activation lost geometry refusal reason");
+            v.selectParts({});action->trigger();check(v.moveFacePicking_,"Command-first picking unavailable");
+            diagnostic.clear();
+            QMouseEvent press(QEvent::MouseButtonPress,QPointF(hit),QPointF(hit),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);v.mousePressEvent(&press);
+            check(!v.commandSession_&&diagnostic.contains("another cylindrical feature"),"Viewport command-first path lost geometry refusal reason");
+            check(v.boxes_[0].shape.IsSame(source)&&serialized(source)==stamp&&v.undoStack_.size()==history,"Refused document command changed geometry/history");
+            std::cout<<"Native cylinder radius="<<surface.Cylinder().Radius()<<": viewport selects Part 0; command available; recognition safely refuses additional feature\n";
+        }
+        QObject::disconnect(connection);check(count==2,"Unexpected cylindrical face inventory");
+        if(!path.isEmpty()) {QFile file(path);check(file.open(QIODevice::ReadOnly)&&file.readAll()==originalBytes,"Supplied document bytes changed");}
+        std::cout<<"Two-feature document selection/availability/recognition regression passed\n";
+    }
     static QPoint project(CadViewport& v,const gp_Pnt& point) {
         Standard_Integer x,y;v.view_->Convert(point.X(),point.Y(),point.Z(),x,y);return {x,y};
     }
@@ -224,3 +308,4 @@ struct CylindricalMoveFaceSessionTest {
     }
 };
 void runCylindricalMoveFaceSessionTests() {CylindricalMoveFaceSessionTest::run();}
+void runCylindricalMoveDocumentTest(const QString& path) {CylindricalMoveFaceSessionTest::documentRegression(path);}

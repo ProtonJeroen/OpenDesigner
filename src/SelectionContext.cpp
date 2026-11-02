@@ -248,8 +248,12 @@ void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection
     MoveFaceFeature feature;
     const bool moveSupported=supported || (selection.faces.size()==1 && moveFaceReference(
         boxes_[selection.faces.front().partIndex].shape,selection.faces.front().face,feature,center,direction,error));
-    if(!moveSupported) { delete move; move=nullptr; }
-    else move->setToolTip(error);
+    const bool cylinder=selection.faces.size()==1&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Cylinder;
+    if(!moveSupported&&!cylinder) { delete move; move=nullptr; }
+    else {
+        move->setEnabled(moveSupported);move->setToolTip(error);move->setStatusTip(error);
+        if(!moveSupported) menu.setToolTipsVisible(true);
+    }
     if(move) connect(move,&QAction::triggered,this,&CadViewport::moveFace);
     if(supported) {
         auto* rotate=menu.addAction(tr("Rotate Face"));

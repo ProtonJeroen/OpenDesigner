@@ -429,6 +429,7 @@ struct MoveFaceTest {
     }
 };
 void runCylindricalMoveFaceSessionTests();
+void runCylindricalMoveDocumentTest(const QString& path);
 int main(int argc,char** argv) {
 #if defined(Q_OS_LINUX)
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM") && !qEnvironmentVariableIsEmpty("DISPLAY")) qputenv("QT_QPA_PLATFORM","xcb");
@@ -436,7 +437,9 @@ int main(int argc,char** argv) {
     QLocale::setDefault(QLocale(QLocale::Dutch,QLocale::Netherlands));
     QApplication app(argc,argv);
     try {
-        if(app.arguments().contains("--cylindrical")) runCylindricalMoveFaceSessionTests();
+        const int document=app.arguments().indexOf("--cylindrical-document");
+        if(document>=0) runCylindricalMoveDocumentTest(app.arguments().value(document+1));
+        else if(app.arguments().contains("--cylindrical")) runCylindricalMoveFaceSessionTests();
         else {MoveFaceTest::geometry();MoveFaceTest::ui();std::cout<<"Move Face geometry, preview, identity, input and history passed.\n";}
         return 0;
     }

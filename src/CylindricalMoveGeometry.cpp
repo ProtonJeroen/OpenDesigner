@@ -131,6 +131,9 @@ Result moveFeature(const TopoDS_Shape& source,const TopoDS_Face& selected,
             auto face=TopoDS::Face(it.Current()); const BRepAdaptor_Surface s(face);
             if(s.GetType()==GeomAbs_Plane) planes.push_back(face);
             else if(s.GetType()==GeomAbs_Cylinder && sameCylinder(cylinder,s.Cylinder(),tolerance)) mantles.push_back(face);
+            else if(s.GetType()==GeomAbs_Cylinder)
+                return refuse(Status::Unsupported,Code::UnsupportedStock,
+                    "This Part contains another cylindrical feature. Move Face currently requires rectangular stock with exactly one through-hole or boss; preserving other features during relocation is not yet supported.");
             else return refuse(Status::Unsupported,Code::UnsupportedStock,"Only rectangular stock with one complete cylindrical feature is supported.");
         }
         TopTools_IndexedMapOfShape mantleMap; for(const auto& f:mantles) mantleMap.Add(f);

@@ -424,6 +424,46 @@ passed. The focused `cylindrical-move-face-sessions`, its HiDPI variant and the
 existing `move-face` CTests passed. No full CTest suite was run. Geometry APIs
 remain unchanged; manual Fedora KDE acceptance is still required.
 
+### Native document diagnosis: moveCylinder.odc
+
+The supplied file (SHA-256
+`3fcabc46f01ee3d79a15a4ee3b8ae589c563d632a7efd889d0a8812abf5cae47`)
+loads through `NativeDocumentStorage::load` as two visible Parts:
+
+| Part | Actual B-Rep material |
+| --- | --- |
+| Unite 5 | Rectangular stock `(0,0,0)..(163,80,60)`, through-hole radius 17 at `(54,36)` over z=0..60, boss radius 18 at `(121,36)` over z=60..115; identity placement, 9 faces, one valid solid |
+| Part 6 (Active Part) | Separate 100×80×60 box; local x=625..725, translated -402 along X, so world x=223..323; no cylindrical faces |
+
+Unite 5 has volume 783907.964473723 mm³. Its two mantles are complete circular
+features, but their **combination in one Part** fails the 9B/9C single-feature
+contract. Recognition refuses the other cylinder before stock reconstruction;
+simply ignoring it would also invalidate the source-material certificate and
+risk losing unselected material. Separately reconstructed hole-only and boss-only
+oracles satisfy the existing rules. Supporting their combination needs a further
+certified feature-preservation design, not weaker validation.
+
+Viewport face detection and typed membership resolve both cylinders to Unite 5;
+the unrelated Active Part does not override the target. The 3D Modeling action
+is enabled and reaches the same safe geometry refusal. Previously the context
+menu silently removed Move Face on recognition failure. Unsupported cylinders
+now retain a disabled Move Face action with the refusal in its tooltip/status
+tip, and geometry diagnostics identify the additional cylindrical feature.
+This fixes the missing explanation; this two-feature Part remains unsupported.
+
+`cylindrical-move-face-recognition` tests a portable material-equivalent version
+of this document. To replay the exact private document without adding it to Git,
+run `OpenDesignerMoveFaceTests --cylindrical-document /path/to/moveCylinder.odc`.
+That path uses the native reader, checks the independent material oracle and
+real viewport detection, typed selection, menu/command-first refusal, unchanged
+source/history and unchanged input bytes. No supplied binary is stored in Git.
+
+Verification: incremental application/session/geometry targets built; the exact
+native-file replay passed for both cylindrical faces with byte preservation.
+`cylindrical-move-geometry`, `cylindrical-move-face-sessions` and
+`cylindrical-move-face-recognition` passed. `git diff --check` passed; no full
+CTest suite was run.
+
 ### Preview acceptance contract
 
 Expose **Trim / Extend** in the existing Move Face Command Panel for applicable
