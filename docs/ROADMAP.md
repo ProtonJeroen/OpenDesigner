@@ -121,6 +121,35 @@ duplicated.
 - [ ] Future extensions: guide rails, tangent/continuity constraints and
   advanced surface lofts.
 
+### Fillet & Chamfer — 3D edge finishing (proposed milestone)
+
+- [ ] Add separate **3D Modeling > Fillet** and **3D Modeling > Chamfer**
+  commands, accessible from toolbar and appropriate edge context menus.
+- [ ] **Fillet (round)**: apply a constant-radius blend to one or multiple
+  selected solid edges; support internal/concave and external/convex edges
+  where the resulting B-Rep is valid. Provide exact radius input (mm).
+- [ ] **Chamfer (bevel)**: bevel one or multiple solid edges with exact
+  equal-distance input initially; later add asymmetric two-distance and
+  distance-angle modes, with an unambiguous face-side convention.
+- [ ] Reuse typed Edge selection and allow multi-edge selection on the same
+  Part; explicitly handle or reject adjacent-edge junctions, tangencies,
+  short edges and overlapping treatments without corrupting geometry.
+- [ ] Show a live, non-destructive blue result preview with OK/Cancel/Escape;
+  preserve Part UUID, appearance, placement, browser order, single-command
+  Undo/Redo and native Save/Open.
+- [ ] Reuse OCCT B-Rep fillet/chamfer algorithms and existing shape validation
+  and normalization. Refuse failed, degenerate or non-manifold results safely,
+  leaving the original Part unchanged.
+- [ ] Cover box edges, internal/outer edges, multiple edges, transformed Parts,
+  valid/invalid radii or distances, edge junctions, preview cleanup,
+  Undo/Redo and persistence with focused headless and session tests.
+- [ ] Stage development for efficiency: **(A)** constant-radius single-edge
+  Fillet, **(B)** equal-distance single-edge Chamfer, **(C)** multi-edge/junction
+  handling and expanded modes, followed by manual Fedora KDE acceptance.
+- [ ] Advanced variable-radius fillets, face-to-face blends, setback corners,
+  and complex freeform transitions remain future work; no blanket claim that
+  all OCCT-valid geometry is editable.
+
 ### Materials & Colors — Part and Face appearance (proposed v0.5.2)
 
 - [ ] **Part-level appearance**: edit an individual Part's default color and
