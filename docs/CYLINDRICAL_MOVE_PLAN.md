@@ -639,6 +639,61 @@ passed for both confirmations and subsequent edits, with zero stale face owners
 and the original SHA-256 unchanged. `git diff --check` passed. No full suite or
 unrelated tests were run.
 
+## 9D.4 — geometry-driven neighborhood foundation
+
+See [strategy, component review and extension boundaries](GEOMETRY_DRIVEN_MOVE_FACE.md).
+Face capability is evaluated from the current B-Rep and topology regardless of
+whether its geometry originated in a primitive, sweep, Boolean, direct edit or
+STEP import. No creator flags, feature tree or stored feature IDs enter this work.
+
+`BRepReconstruction::neighborhood` now isolates the source with explicit face
+copy correspondence, grows the connected selected analytic support patch and
+collects actual boundary edges and adjacent faces. Its checks concern source
+validity, tolerance, complexity and unambiguous adjacency; rectangular stock and
+global cylindrical feature counts are not analysis prerequisites. Neighborhood
+analysis does not claim every analyzed face has a certified reconstruction path.
+
+`finishLocal` normalizes a candidate, verifies material equivalence outside a
+caller-certified changed-material region and requires every unaffected trimmed
+face region to survive. It returns geometric old/new correspondence, allowing
+multiple descendants or disappearance of affected faces. This is current topology
+mapping, not feature history or persistent naming. Operation-specific inside-region
+material checks remain mandatory; a declared local region is not a safety bypass.
+
+The first new reconstruction path moves an unchanged complete boss after a
+through-hole has opened into a boundary notch. It certifies the current mantle,
+full circular rims, disk cap, planar support and radial material sides, then uses
+OCCT defeaturing as Delete Face does. Removal must independently equal subtracting
+the exact finite boss cylinder from the original shape. Original and translated
+base disks with a tolerance collar must lie entirely inside the actual healed
+support face, including all of its current hole/notch trims. Re-fusion must equal
+the direct Cut/Fuse material oracle and contain the entire translated boss.
+Neighborhood-based outside-material and unaffected-surface checks then certify
+the result. There is no rectangular stock reconstruction or global feature-count
+limit on this local path; existing source complexity budgets remain enforced.
+
+Trim and Extend agree for this fully supported local footprint. Existing boundary
+paths retain their tested truncation/overhang behavior. Contact-changing moves,
+partial/overhanging selected bosses, split caps, blends/freeform reconstruction,
+multi-shell solids and cases lacking a unique local closure need later operation
+certificates and are refused safely. Unrelated geometry is not regenerated or
+deleted to make a pattern match. Repeated edits analyze the new B-Rep again.
+
+`local-neighborhood-move-geometry` tests repeated boss moves beside a boundary
+notch, both policies, exact material occupancy, B-Rep validity, unchanged input,
+result-face mapping, rejection of outside-region material changes and interacting
+destinations, and a boss beside nine unrelated holes (beyond the old global count
+limit). The native document/session regression now opens the R17 hole in
+`moveCylinder.odc` to a notch, confirms repeated local R18 boss moves, verifies
+both policies/material preservation, and then previews an ordinary planar edit.
+The opposite sequence (hole/plane edits after boss boundary crossing) remains in
+the 9D.3 regression. Supplied native files remain private, unchanged and untracked.
+
+Verification: incremental application/session/geometry builds and all eight
+focused Move Face/cylindrical tests passed. The final complete-wall/cap survival
+guard was rechecked with the local neighborhood test and native-reader replay of
+both supplied documents. No full CTest suite was run.
+
 ## 9E — transactions, persistence and acceptance
 
 Confirm once into the same Part slot with one cached Undo/Redo step. Preserve

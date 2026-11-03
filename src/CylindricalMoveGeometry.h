@@ -32,8 +32,10 @@ struct Result {
 // bosses, can remain protected while the selected complete stock hole is moved.
 Result moveThroughHole(const TopoDS_Shape& source, const TopoDS_Face& mantle,
                        const gp_Vec& displacement);
-// One complete boss on rectangular stock, preserving independent parallel
-// cylindrical features. Trim clips against the original lateral
+// One complete boss on a certified planar support. The local interior path
+// preserves unrelated geometry without a rectangular-stock/cylinder-count rule.
+// Existing boundary paths preserve independent parallel cylindrical features.
+// Trim clips against the original lateral
 // stock supports; Extend retains the full cylinder, including a connected
 // overhang. No invented bridges or support pedestals. Policy is always explicit.
 Result moveBoss(const TopoDS_Shape& source, const TopoDS_Face& mantle,

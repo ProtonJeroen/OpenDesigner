@@ -1,11 +1,12 @@
 # General Move Face (v0.3.6)
 
-## Cylindrical features (v0.4.9, phases 9D–9D.1)
+## Cylindrical features (v0.4.9, phases 9D–9D.4)
 
 The existing **3D Modeling → Move Face** command also accepts the cylindrical
 mantle of one selected complete circular through-hole or attached boss on
-rectangular stock. Up to eight independent parallel cylindrical features may
-coexist in that Part; unselected features remain unchanged. A supported
+certified support geometry. The rectangular-stock paths allow up to eight
+independent parallel cylindrical features. The local interior-boss path below
+does not use those pattern/count rules. Unselected features remain unchanged. A supported
 cylindrical face also offers Move Face in its Face context
 menu. The selected face determines the target, independently of Active Part.
 Planar Move Face keeps its normal-offset workflow described below.
@@ -29,9 +30,10 @@ connected material; completely detached or clipped-away bosses are refused.
 Direction, distance and policy changes show the actual rebuilt blue translucent
 solid. Invalid geometry restores the source display and disables OK. Correct the
 parameters or cancel with Esc/Cancel; Enter/OK confirms through the existing
-session. Support excludes blind holes, blends, intersecting/touching feature
-footprints, nonparallel feature axes, nonrectangular stock and already truncated/
-overhanging source features. Moving into an unselected feature is refused.
+session. Blind selected holes, blends and interacting/touching edits remain
+unsupported. Existing boundary paths have rectangular-stock/parallel-feature
+limits; partial or overhanging selected bosses remain conditional/refused.
+Moving into an unselected feature is refused.
 Geometry calculation remains synchronous. See the [phase plan](CYLINDRICAL_MOVE_PLAN.md).
 After a boss crosses the stock boundary, its new topology may be refused as a
 newly selected boss. A separated complete through-hole remains editable: the
@@ -39,6 +41,12 @@ actual exterior boss material is preserved without re-recognizing it as an
 interior boss. Unaffected stock side planes can also move when a through-hole's
 physical rim planes certify the stock slab and the edit stays clear of exterior
 material. Interface planes and interacting edits remain conditional/refused.
+An unchanged complete boss can also move repeatedly after another hole becomes
+an open notch. This local path checks the actual cap, rims and planar support;
+it does not require the whole Part to match rectangular stock or a cylinder-count
+pattern. The old/new footprints must remain fully supported and clear of feature
+trims. Trim and Extend coincide for this interior case. Other boundary cases use
+the existing certified policy paths. See the [local reconstruction strategy](GEOMETRY_DRIVEN_MOVE_FACE.md).
 Automated session checks cover normal/HiDPI; manual Fedora KDE acceptance and
 phase 9E lifecycle/persistence coverage remain pending.
 

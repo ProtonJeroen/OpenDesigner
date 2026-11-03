@@ -272,6 +272,34 @@ struct CylindricalMoveFaceSessionTest {
             std::cout<<"Native cylinder radius="<<surface.Cylinder().Radius()<<": selected feature moves independently, preserving unrelated material\n";
         }
         QObject::disconnect(connection);check(count==2,"Unexpected cylindrical face inventory");
+        // The complete boss stays locally editable after the hole becomes an
+        // open exterior notch: no whole-Part rectangular feature pattern exists.
+        select(v,0,radiusFace(v.boxes_[0].shape,17));action->trigger();
+        check(v.commandSession_.has_value(),"Cannot start boundary-hole edit");v.cylinderMoveDirection_->setCurrentIndex(1);input(v,"-54");
+        check(v.commandSession_->valid,"Cannot preview open hole");v.commandButtons_->button(QDialogButtonBox::Ok)->click();currentOwners(v,0);
+        const auto notchedBase=BRepAlgoAPI_Cut(stock,BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0,36,0),gp_Dir(0,0,1)),17,60).Shape()).Shape();
+        const auto persistent=v.boxes_[0].persistentId;const auto presentation=v.boxes_[0].presentation;
+        double bossX=121;
+        for(double displacement:{5.,-3.}) {
+            select(v,0,radiusFace(v.boxes_[0].shape,18));action->trigger();
+            check(v.commandSession_&&v.commandSession_->moveFeature==CadViewport::MoveFaceFeature::Boss,"Current boss disabled by unrelated open notch");
+            near(v.commandSession_->pivot.Z(),87.5,"Local boss manipulator has incorrect axial anchor");
+            v.cylinderMoveDirection_->setCurrentIndex(1);input(v,QString::number(displacement));bossX+=displacement;
+            const auto expected=BRepAlgoAPI_Fuse(notchedBase,BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(bossX,36,60),gp_Dir(0,0,1)),18,55).Shape()).Shape();
+            preview(v,volume(expected));check(BRepReconstruction::equivalent(expected,v.commandSession_->candidate),"Local boss preview changed notch/stock material");
+            v.cylinderBossBoundary_->setCurrentIndex(1);preview(v,volume(expected)); // Trim/Extend coincide on supported interior footprint
+            const auto candidate=v.commandSession_->candidate;v.commandButtons_->button(QDialogButtonBox::Ok)->click();currentOwners(v,0);
+            check(BRepReconstruction::equivalent(candidate,v.boxes_[0].shape)&&v.boxes_[0].persistentId==persistent&&v.boxes_[0].presentation==presentation,
+                "Local commit changed geometry/identity unexpectedly");
+            occupancy(v.boxes_[0].shape,gp_Pnt(5,36,30),false);occupancy(v.boxes_[0].shape,gp_Pnt(45,36,30),true);
+        }
+        TopoDS_Face side;
+        for(TopExp_Explorer it(v.boxes_[0].shape,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(face);
+            if(s.GetType()==GeomAbs_Plane&&std::abs(s.Plane().Axis().Direction().X())>.99&&s.Plane().Distance(gp_Pnt(163,0,0))<1.e-6) {side=face;break;}
+        }
+        select(v,0,side);action->trigger();check(v.commandSession_&&v.commandSession_->moveFeature==CadViewport::MoveFaceFeature::Planar,"Planar capability was coupled to boss recognition");
+        input(v,"2");check(v.commandSession_->valid,"Planar edit after open hole/local boss move failed");v.cancelCommandSession();
         if(!path.isEmpty()) {QFile file(path);check(file.open(QIODevice::ReadOnly)&&file.readAll()==originalBytes,"Supplied document bytes changed");}
         std::cout<<"Two-feature document selection/availability/recognition regression passed\n";
     }

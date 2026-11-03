@@ -382,9 +382,73 @@ void boundaryFollowUpTests() {
         require(serialized(crossed.shape)==before,"Boundary follow-up mutated original geometry");
     }
 }
+void localNeighborhoodTests() {
+    const auto stock=BRepPrimAPI_MakeBox(163,80,60).Shape();
+    const auto hole=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,36,0),gp_Dir(0,0,1)),17,60).Shape();
+    const auto boss=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(121,36,60),gp_Dir(0,0,1)),18,55).Shape();
+    const auto find=[](const TopoDS_Shape& shape,double radius) {
+        for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {
+            const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);
+            if(s.GetType()==GeomAbs_Cylinder&&std::abs(s.Cylinder().Radius()-radius)<1.e-7) return f;
+        }return TopoDS_Face();
+    };
+    const auto original=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,hole),boss);
+    const auto opened=moveThroughHole(original,find(original,17),gp_Vec(-54,0,0));
+    require(bool(opened),"Cannot open boundary hole for local test");
+    const auto notch=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0,36,0),gp_Dir(0,0,1)),17,60).Shape();
+    const auto base=BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,notch);
+    for(auto policy:{BossBoundaryMode::Trim,BossBoundaryMode::Extend}) {
+        auto source=opened.shape;double x=121,y=36;
+        for(const auto delta:{gp_Vec(-5,4,0),gp_Vec(-3,0,0)}) {
+            const auto before=serialized(source);const auto target=find(source,18);
+            BRepReconstruction::Neighborhood n;QString error;
+            require(BRepReconstruction::neighborhood(source,target,n,error),"Neighborhood analysis failed: "+error.toStdString());
+            require(!n.patch.empty()&&n.neighbors.size()==2&&!n.boundary.empty()&&BRepReconstruction::equivalent(source,n.solid),"Incorrect local topology/copy certificate");
+            const auto moved=moveBoss(source,target,delta,policy);
+            require(bool(moved),"Local boss after open notch failed: "+moved.message);x+=delta.X();y+=delta.Y();
+            const auto expected=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(base,
+                BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(x,y,60),gp_Dir(0,0,1)),18,55).Shape());
+            require(BRepReconstruction::equivalent(moved.shape,expected),"Local edit changed unrelated planar/cylindrical material");certified(moved.shape,volume(expected));
+            near(moved.axis.Location().Z(),60,"Local axis anchor is not the actual rim");
+            for(int i=-5;i<175;i+=7) for(int j=-4;j<86;j+=7) for(double z:{-1.,15.,59.,61.,90.,114.,116.}) {
+                const double px=i+.27,py=j+.39;
+                const bool body=px>0&&px<163&&py>0&&py<80&&z>0&&z<60&&(px*px+(py-36)*(py-36)>17*17);
+                const bool feature=(px-x)*(px-x)+(py-y)*(py-y)<18*18&&z>60&&z<115;
+                BRepClass3d_SolidClassifier c(moved.shape,gp_Pnt(px,py,z),1.e-7);
+                require(c.State()==(body||feature?TopAbs_IN:TopAbs_OUT),"Local neighborhood analytic occupancy mismatch");
+            }
+            require(serialized(source)==before,"Local edit mutated source");source=moved.shape;
+        }
+        const auto before=serialized(source);
+        const auto bad=moveBoss(source,find(source,18),gp_Vec(-x,36-y,0),policy);
+        require(!bad&&bad.shape.IsNull()&&serialized(source)==before,"Local interaction was accepted or changed input");
+    }
+    // Generic acceptance: even a valid candidate must not alter material outside
+    // the caller's certified region, and correspondence must name result faces.
+    BRepReconstruction::Neighborhood n;QString error;BRepReconstruction::Result finished;
+    require(BRepReconstruction::neighborhood(opened.shape,find(opened.shape,18),n,error),"Cannot inspect local mapping");
+    auto affected=n.patch;affected.insert(affected.end(),n.neighbors.begin(),n.neighbors.end());gp_Trsf identity;
+    require(BRepReconstruction::finishLocal(n,n.solid,boss,affected,{},identity,finished,error),"Identity local certification failed: "+error.toStdString());
+    TopTools_IndexedMapOfShape resultFaces;TopExp::MapShapes(finished.solid,TopAbs_FACE,resultFaces);
+    for(const auto& mapping:finished.history) for(const auto& face:mapping.modified) require(resultFaces.Contains(face),"Local mapping names obsolete topology");
+    const auto wrong=BooleanGeometry::combine<BRepAlgoAPI_Cut>(n.solid,BRepPrimAPI_MakeBox(gp_Pnt(150,65,0),20,20,20).Shape());
+    require(!BRepReconstruction::finishLocal(n,wrong,boss,affected,{},identity,finished,error)&&finished.solid.IsNull(),"Outside material change passed local acceptance");
+    BRep_Builder builder;TopoDS_Compound loose;builder.MakeCompound(loose);builder.Add(loose,boss);builder.Add(loose,n.neighbors.back());
+    require(!BRepReconstruction::finishLocal(n,n.solid,loose,affected,{},identity,finished,error)&&finished.solid.IsNull(),"Local edit region with loose topology was accepted");
+    // Global cylinder counts are not a local capability rule.
+    auto many=BRepPrimAPI_MakeBox(320,160,40).Shape();
+    for(int i=0;i<9;++i) many=BooleanGeometry::combine<BRepAlgoAPI_Cut>(many,
+        BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(20+35*(i%5),25+35*(i/5),0),gp_Dir(0,0,1)),4,40).Shape());
+    many=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(many,BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(285,120,40),gp_Dir(0,0,1)),8,20).Shape());
+    const auto moved=moveBoss(many,find(many,8),gp_Vec(-5,-5,0),BossBoundaryMode::Extend);
+    require(bool(moved),"Unrelated cylinder count disabled local capability: "+moved.message);certified(moved.shape,volume(many));
+}
 }
 int main(int argc,char** argv) {
     try {
+        if(argc>1&&std::string(argv[1])=="--local") {
+            localNeighborhoodTests();std::cout<<"Local geometric neighborhood tests passed\n";return 0;
+        }
         if(argc>1&&std::string(argv[1])=="--boundary") {
             boundaryFollowUpTests();std::cout<<"Boundary follow-up geometry tests passed\n";return 0;
         }

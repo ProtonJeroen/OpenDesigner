@@ -5,6 +5,9 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Common.hxx>
+#include <BRepAlgoAPI_Defeaturing.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
@@ -26,6 +29,7 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 #include <gp_Cylinder.hxx>
+#include <gp_Circ.hxx>
 #include <gp_Lin.hxx>
 #include <gp_Pln.hxx>
 #include <algorithm>
@@ -737,6 +741,124 @@ Result moveWithExterior(const TopoDS_Shape& source,const TopoDS_Face& selected,
     } catch(const Standard_Failure&) {return refused;}
       catch(const std::exception&) {return refused;}
 }
+
+Result moveLocalBoss(const TopoDS_Shape& source,const TopoDS_Face& selected,
+                     const gp_Vec& delta,BossBoundaryMode policy,const Result& refused) {
+    if(refused.status!=Status::Unsupported||!std::isfinite(delta.X())||!std::isfinite(delta.Y())||!std::isfinite(delta.Z())) return refused;
+    if(policy!=BossBoundaryMode::Trim&&policy!=BossBoundaryMode::Extend) return refused;
+    try {
+        BRepReconstruction::Neighborhood local;QString error;
+        if(!BRepReconstruction::neighborhood(source,selected,local,error)||
+           BRepAdaptor_Surface(local.target).GetType()!=GeomAbs_Cylinder||local.neighbors.size()!=2) return refused;
+        const double tolerance=10*Precision::Confusion();
+        const auto cylinder=BRepAdaptor_Surface(local.target).Cylinder();const double radius=cylinder.Radius();
+        const auto axis=cylinder.Axis().Direction();
+        if(radius<=100*tolerance||std::abs(delta.Dot(gp_Vec(axis)))>tolerance) return refused;
+        TopoDS_Face cap,support;
+        for(const auto& face:local.neighbors) {
+            const BRepAdaptor_Surface s(face);if(s.GetType()!=GeomAbs_Plane||!s.Plane().Axis().Direction().IsParallel(axis,angular)) return refused;
+            TopTools_IndexedMapOfShape wires;TopExp::MapShapes(face,TopAbs_WIRE,wires);
+            GProp_GProps p;BRepGProp::SurfaceProperties(face,p);
+            if(wires.Extent()==1&&std::abs(p.Mass()-pi*radius*radius)<=tolerance*std::max(1.,radius*radius)&&
+               gp_Lin(cylinder.Axis()).Distance(p.CentreOfMass())<=tolerance) {
+                if(!cap.IsNull()) return refused;cap=face;
+            } else {if(!support.IsNull()) return refused;support=face;}
+        }
+        if(cap.IsNull()||support.IsNull()) return refused;
+        const double baseCoordinate=coordinate(BRepAdaptor_Surface(support).Plane().Location(),axis);
+        const double capCoordinate=coordinate(BRepAdaptor_Surface(cap).Plane().Location(),axis);
+        const double height=std::abs(capCoordinate-baseCoordinate);
+        if(height<=100*tolerance||height>1.e7||radius>1.e7) return refused;
+        auto outward=axis;if(capCoordinate<baseCoordinate) outward.Reverse();
+        const auto base=cylinder.Location().Translated(gp_Vec(axis)*(baseCoordinate-coordinate(cylinder.Location(),axis)));
+        std::array<double,2> lengths{};double area=0;
+        for(const auto& edge:local.boundary) {
+            const BRepAdaptor_Curve curve(edge);if(curve.GetType()!=GeomAbs_Circle) return refused;
+            const auto circle=curve.Circle();const double z=coordinate(circle.Location(),axis);
+            const int end=std::abs(z-baseCoordinate)<=tolerance?0:std::abs(z-capCoordinate)<=tolerance?1:-1;
+            if(end<0||std::abs(circle.Radius()-radius)>tolerance||gp_Lin(cylinder.Axis()).Distance(circle.Location())>tolerance) return refused;
+            GProp_GProps p;BRepGProp::LinearProperties(edge,p);lengths[end]+=p.Mass();
+        }
+        for(double length:lengths) if(std::abs(length-2*pi*radius)>tolerance*std::max(1.,radius)) return refused;
+        for(const auto& face:local.patch) {
+            area+=faceArea(face);BRepAdaptor_Surface s(face);
+            const double u=(s.FirstUParameter()+s.LastUParameter())/2,v=(s.FirstVParameter()+s.LastVParameter())/2;
+            BRepLProp_SLProps p(s,u,v,1,tolerance);if(!p.IsNormalDefined()) return refused;
+            auto normal=p.Normal();if(face.Orientation()==TopAbs_REVERSED) normal.Reverse();
+            auto radial=gp_Vec(base,s.Value(u,v));radial-=gp_Vec(axis)*radial.Dot(gp_Vec(axis));
+            if(normal.Dot(gp_Dir(radial))<.99) return refused;
+        }
+        if(std::abs(area-2*pi*radius*height)>tolerance*std::max(1.,radius*height)) return refused;
+        const double probe=std::min(radius,height)*1.e-4;if(probe<10*tolerance) return refused;
+        for(int i=0;i<12;++i) for(double fraction:{.2,.5,.8}) {
+            const double angle=2*pi*(i+.37)/12;
+            const auto radial=gp_Vec(cylinder.XAxis().Direction())*std::cos(angle)+gp_Vec(cylinder.YAxis().Direction())*std::sin(angle);
+            const auto center=base.Translated(gp_Vec(outward)*(height*fraction));
+            if(classify(local.solid,center.Translated(radial*(radius-probe)),tolerance)!=TopAbs_IN||
+               classify(local.solid,center.Translated(radial*(radius+probe)),tolerance)!=TopAbs_OUT) return refused;
+        }
+        const auto oldBoss=BRepPrimAPI_MakeCylinder(gp_Ax2(base,outward),radius,height).Shape();
+        if(!BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Common>(local.solid,oldBoss),oldBoss)) return refused;
+        auto removed=local.patch;removed.push_back(cap);
+        // Same OCCT closure strategy as Delete Face, certified independently
+        // below against the actual cylinder volume instead of any stock pattern.
+        BRepAlgoAPI_Defeaturing deletion;deletion.SetShape(local.solid);deletion.SetToFillHistory(true);
+        for(const auto& face:removed) deletion.AddFaceToRemove(face);
+        deletion.Build();
+        if(!deletion.IsDone()||deletion.HasErrors()||deletion.HasWarnings()) return refused;
+        for(const auto& face:removed) if(!deletion.IsDeleted(face)) return refused;
+        TopoDS_Shape healed;if(!BRepReconstruction::normalize(deletion.Shape(),healed,error)) return refused;
+        const auto baseOracle=BooleanGeometry::combine<BRepAlgoAPI_Cut>(local.solid,oldBoss);
+        if(!BRepReconstruction::equivalent(healed,baseOracle)) return refused;
+        const auto diskInside=[&](const gp_Pnt& center) {
+            const double r=radius+100*tolerance;
+            const auto wire=BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(center,outward),r)).Edge()).Wire();
+            const auto disk=BRepBuilderAPI_MakeFace(gp_Pln(center,outward),wire,true).Face();
+            double covered=0;
+            for(TopExp_Explorer it(healed,TopAbs_FACE);it.More();it.Next()) {
+                const auto face=TopoDS::Face(it.Current());
+                if(BRepReconstruction::sameAnalyticSupport(support,face)) covered+=faceArea(BooleanGeometry::combine<BRepAlgoAPI_Common>(disk,face));
+            }
+            return std::abs(covered-pi*r*r)<=1.e-8*std::max(1.,pi*r*r);
+        };
+        if(!diskInside(base)) return refused;
+        const auto destination=base.Translated(delta);
+        if(!diskInside(destination))
+            return refuse(Status::Unsupported,Code::InteractingFeatures,"Local boss movement requires a fully supported footprint clear of current boundary and feature trims.");
+        const auto newBoss=BRepPrimAPI_MakeCylinder(gp_Ax2(destination,outward),radius,height).Shape();
+        const auto candidate=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(healed,newBoss);
+        const auto oracle=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(baseOracle,newBoss);
+        if(!BRepReconstruction::equivalent(candidate,oracle)||
+           !BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Common>(candidate,newBoss),newBoss))
+            return refuse(Status::Failure,Code::InvalidResult,"Local boss material does not match the requested translated cylinder.");
+        const auto region=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(oldBoss,newBoss);
+        auto affected=removed;affected.push_back(support);gp_Trsf shift;shift.SetTranslation(delta);
+        BRepReconstruction::Result finished;
+        if(!BRepReconstruction::finishLocal(local,candidate,region,affected,removed,shift,finished,error)||!manifold(finished.solid))
+            return refuse(Status::Failure,Code::InvalidResult,"Local boss reconstruction changed protected material or face geometry.");
+        // This local class preserves a COMPLETE boss. Generic local acceptance
+        // allows affected supports to vanish, but this operation must retain
+        // every translated wall/cap region (splits and merges remain valid).
+        for(TopExp_Explorer it(newBoss,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(face);
+            if(s.GetType()==GeomAbs_Plane&&s.Plane().Distance(destination)<=tolerance) continue; // material interface
+            double covered=0;
+            for(TopExp_Explorer next(finished.solid,TopAbs_FACE);next.More();next.Next()) {
+                const auto finalFace=TopoDS::Face(next.Current());
+                if(BRepReconstruction::sameAnalyticSupport(face,finalFace))
+                    covered+=faceArea(BooleanGeometry::combine<BRepAlgoAPI_Common>(face,finalFace));
+            }
+            if(std::abs(covered-faceArea(face))>1.e-8*std::max(1.,faceArea(face)))
+                return refuse(Status::Failure,Code::InvalidResult,"Local reconstruction lost part of the translated boss wall or cap.");
+        }
+        Result result;result.status=Status::Success;result.code=delta.Magnitude()<=tolerance?Code::Unchanged:Code::Moved;
+        const auto lowEnd=cylinder.Location().Translated(gp_Vec(axis)*(std::min(baseCoordinate,capCoordinate)-coordinate(cylinder.Location(),axis)));
+        result.shape=finished.solid;result.radius=radius;result.height=height;result.axis=gp_Ax1(lowEnd.Translated(delta),axis);
+        result.message=policy==BossBoundaryMode::Trim?"Boss translated locally with Trim (fully supported footprint).":"Boss translated locally with Extend (fully supported footprint).";
+        return result;
+    } catch(const Standard_Failure&) {return refused;}
+      catch(const std::exception&) {return refused;}
+}
 }
 
 CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
@@ -747,7 +869,8 @@ CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
 
 CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveBoss(
         const TopoDS_Shape& source,const TopoDS_Face& selected,const gp_Vec& delta,BossBoundaryMode policy) {
-    return moveSelected(source,selected,delta,policy);
+    const auto result=moveSelected(source,selected,delta,policy);
+    return result?result:moveLocalBoss(source,selected,delta,policy,result);
 }
 
 CylindricalMoveGeometry::Result CylindricalMoveGeometry::movePlanarPreservingExterior(

@@ -72,7 +72,7 @@ target_include_directories(OpenDesignerCylindricalMoveGeometry PUBLIC src ${Open
 # but neither the API nor this target depends on Qt Widgets or OCCT visualization.
 target_link_libraries(OpenDesignerCylindricalMoveGeometry PUBLIC
     Qt6::Core TKBRep TKPrim TKTopAlgo TKBO TKBool TKGeomBase TKGeomAlgo
-    TKShHealing TKOffset TKG3d TKG2d TKMath TKernel)
+    TKShHealing TKOffset TKFeat TKG3d TKG2d TKMath TKernel)
 add_library(OpenDesignerDebug STATIC src/DebugModel.cpp src/DebugModel.h)
 target_include_directories(OpenDesignerDebug PUBLIC src ${OpenCASCADE_INCLUDE_DIR})
 target_link_libraries(OpenDesignerDebug PUBLIC ${OPENDESIGNER_LIBRARIES} LibArchive::LibArchive)
@@ -93,6 +93,8 @@ if(OPENDESIGNER_BUILD_TESTS)
     add_test(NAME cylindrical-move-geometry COMMAND OpenDesignerCylindricalMoveTests)
     add_test(NAME cylindrical-independent-features COMMAND OpenDesignerCylindricalMoveTests --independent)
     add_test(NAME cylindrical-boundary-follow-up-geometry COMMAND OpenDesignerCylindricalMoveTests --boundary)
+    add_test(NAME local-neighborhood-move-geometry COMMAND OpenDesignerCylindricalMoveTests --local)
+    set_tests_properties(local-neighborhood-move-geometry PROPERTIES TIMEOUT 120)
     set_tests_properties(cylindrical-boundary-follow-up-geometry PROPERTIES TIMEOUT 120)
     set_tests_properties(cylindrical-independent-features PROPERTIES TIMEOUT 120)
     set_tests_properties(cylindrical-move-geometry PROPERTIES TIMEOUT 120)
