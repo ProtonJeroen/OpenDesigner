@@ -100,6 +100,23 @@ See [Extrude](EXTRUDE_PROFILE.md), [Revolve](REVOLVE.md),
   camera rotation. Keep this milestone separate from in-progress v0.4.9
   geometry work.
 
+## Planned — Workplane frame visibility and minimum extent
+
+- [ ] **Fix WP Move/Rotate preview:** the Workplane frame/ring must remain
+  visible throughout translation and rotation previews, including active and
+  inactive appearance, without flicker or disappearing behind the manipulator.
+  Keep the preview aligned with the transformed WP and restore the original on Cancel.
+- [ ] **Minimum Workplane frame extent:** enforce at least **100 × 100 mm** in
+  Workplane-local coordinates, centered around the content-derived frame when
+  smaller. Larger Sketch contents must continue to expand the frame dynamically;
+  never clip them or change underlying Sketch/Workplane geometry.
+- [ ] **Reduce active green frame ring width from 15 mm to 10 mm**; keep its
+  open-ring styling and existing transparency unless separately changed.
+  Apply consistent geometry to active/inactive and transformed previews.
+- [ ] Keep these as presentation-only changes; preserve picking, transforms,
+  Undo/Redo, active-WP state and native Save/Open. Add focused normal/HiDPI
+  viewport checks for small/empty WPs, Move/Rotate previews and Cancel.
+
 ## Planned — Sweep, Loft, and Materials & Colors
 
 These are **future milestones, not yet implemented**. Proposed numbering and order
