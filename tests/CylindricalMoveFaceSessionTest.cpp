@@ -18,10 +18,14 @@
 #include <QStandardItemModel>
 #include <QThread>
 #include <QTreeWidget>
+#include <QTemporaryDir>
 #include <QFile>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepAlgoAPI_Common.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepGProp.hxx>
@@ -70,6 +74,97 @@ void events() {
 }
 
 struct CylindricalMoveFaceSessionTest {
+    static void crashPreview(const QString& path,const QString& displacement) {
+        const auto fullBoss=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(158,36,60),gp_Dir(0,0,1)),18,55).Shape();
+        const auto hole=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,36,-10),gp_Dir(0,0,1)),17,80).Shape();
+        const auto oracle=[&](double d) {
+            const auto stock=BRepPrimAPI_MakeBox(163+d,80,60).Shape();
+            const auto half=BRepPrimAPI_MakeHalfSpace(BRepBuilderAPI_MakeFace(gp_Pln(gp_Pnt(163+d,0,0),gp_Dir(1,0,0))).Face(),gp_Pnt(0,0,0)).Solid();
+            const auto boss=d>=13?fullBoss:BooleanGeometry::combine<BRepAlgoAPI_Common>(fullBoss,half);
+            return BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,hole),boss);
+        };
+        NativeDocumentSnapshot snapshot;QString error;QTemporaryDir temporary;QString document=path;
+        if(document.isEmpty()) {
+            // Exact analytic material of the private native document. Exercise
+            // the native reader without committing or depending on its binary.
+            NativePartState p;p.id="slot-4";p.name="Unite 5";
+            check(BRepReconstruction::normalize(oracle(0),p.shape,error),qPrintable(error));snapshot.parts={p};snapshot.activePartId=p.id;
+            document=temporary.filePath("crash-equivalent.odc");check(NativeDocumentStorage::save(document,snapshot,error),qPrintable(error));
+        }
+        QFile file(document);check(file.open(QIODevice::ReadOnly),"Cannot read crash document");const auto bytes=file.readAll();file.close();
+        check(NativeDocumentStorage::load(document,snapshot,error),qPrintable(error));
+        check(snapshot.parts.size()==1,"Crash document Part count changed");const auto source=snapshot.parts[0].shape;
+        TopTools_IndexedMapOfShape sourceFaces;TopExp::MapShapes(source,TopAbs_FACE,sourceFaces);check(sourceFaces.Extent()==9,"Crash fixture must have the native merged end-face topology");
+        check(BRepReconstruction::equivalent(source,oracle(0)),"Native crash geometry differs from independent oracle");
+        const auto rightEnd=[&](const TopoDS_Shape& shape) {
+            TopoDS_Face right;double end=-1.e100;
+            for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {
+                const auto f=TopoDS::Face(it.Current());if(BRepAdaptor_Surface(f).GetType()!=GeomAbs_Plane) continue;
+                gp_Pnt c;gp_Dir n;check(MoveFaceGeometry::reference(shape,f,c,n,error),qPrintable(error));
+                if(n.X()>.99&&c.X()>end) {end=c.X();right=f;}
+            }return right;
+        };
+        const auto target=rightEnd(source);check(!target.IsNull(),"No right-end planar face");
+        near(BRepAdaptor_Surface(target).Plane().Location().X(),163,"Wrong crash face");
+        double mass=0;check(BRepReconstruction::validSolid(source,mass),"Invalid native crash solid");
+        std::cout<<"Native crash Part="<<snapshot.parts[0].id.toStdString()<<" right end x=163; R17 hole and clipped R18 boss at (158,36); volume="<<mass<<std::endl;
+        if(displacement=="inspect") return;
+        const auto stamp=serialized(source);
+        const auto verify=[&](const TopoDS_Shape& shape,double d) {
+            double actual=0;check(BRepReconstruction::validSolid(shape,actual),"Preview is not a certified closed solid");
+            TopTools_IndexedMapOfShape edges;TopExp::MapShapes(shape,TopAbs_EDGE,edges);
+            for(int i=1;i<=edges.Extent();++i) {
+                int uses=0;for(TopExp_Explorer f(shape,TopAbs_FACE);f.More();f.Next())
+                    for(TopExp_Explorer e(f.Current(),TopAbs_EDGE);e.More();e.Next()) if(e.Current().IsSame(edges(i))) ++uses;
+                check(uses==2,"Nonmanifold preview edge");
+            }
+            const double a=std::min(18.,5+d),pi=std::numbers::pi;
+            const double area=18*18*(pi/2+std::asin(a/18))+a*std::sqrt(std::max(0.,18*18-a*a));
+            const double expectedVolume=(163+d)*80*60-pi*17*17*60+area*55;
+            check(std::abs(actual-expectedVolume)<1.e-6*expectedVolume,qPrintable(QString("Wrong analytic volume at %1: actual=%2 expected=%3").arg(d).arg(actual,0,'g',15).arg(expectedVolume,0,'g',15)));
+            check(BRepReconstruction::equivalent(shape,oracle(d)),"Preview changed unrelated material");
+            for(double x:{10.37,54.37,140.37,157.37,162.37,165.37,170.37,175.37,180.37})
+                for(double y:{10.61,25.61,35.61,50.61,70.61}) for(double z:{-.5,10.,59.5,60.5,90.,114.5,115.5}) {
+                    const bool body=x>0&&x<163+d&&y>0&&y<80&&z>0&&z<60&&std::hypot(x-54,y-36)>17;
+                    const bool boss=x<163+d&&std::hypot(x-158,y-36)<18&&z>60&&z<115;
+                    BRepClass3d_SolidClassifier c(shape,gp_Pnt(x,y,z),1.e-7);
+                    check(c.State()==(body||boss?TopAbs_IN:TopAbs_OUT),"Crash preview material occupancy mismatch");
+                }
+        };
+        const auto distances=displacement=="regression"||displacement=="scan"?std::vector<double>{.1,1,2,5,10,12.9,13,13.1,20,40}:std::vector<double>{displacement.toDouble()};
+        for(double d:distances) {
+            std::cout<<"Isolated Move Face offset="<<d<<std::endl;const auto moved=MoveFaceGeometry::move(source,target,d,error);
+            check(!moved.IsNull(),qPrintable(error));verify(moved,d);check(serialized(source)==stamp,"Move mutated original B-Rep");
+        }
+        for(double d:{-.1,-5.,-100.}) {
+            check(MoveFaceGeometry::move(source,target,d,error).IsNull()&&!error.isEmpty(),"Unsupported inward cut was not refused");
+            check(serialized(source)==stamp,"Refusal changed original B-Rep");
+        }
+        MainWindow window;window.resize(1200,900);window.show();events();auto& v=*window.findChild<CadViewport*>();
+        check(v.importDocumentSnapshot(snapshot,error),qPrintable(error));v.view_->SetProj(V3d_XposYnegZpos);v.fitSelection({0});events();
+        const auto before=v.boxes_[0];const auto history=v.undoStack_.size();QAction* action=nullptr;
+        for(auto* a:window.findChildren<QAction*>()) if(a->text()=="Move Face") action=a;
+        check(action,"Move Face action missing");
+        const auto start=[&] {select(v,0,rightEnd(v.boxes_[0].shape));action->trigger();check(v.commandSession_.has_value(),"Crash face cannot activate Move Face");};
+        start();const auto grab=project(v,v.commandSession_->pivot.Translated(gp_Vec(v.commandSession_->direction)*15));
+        QMouseEvent press(QEvent::MouseButtonPress,QPointF(grab),QPointF(grab),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);v.mousePressEvent(&press);
+        check(v.draggingFace_,"Crash face arrow cannot be dragged");
+        const auto end=grab+QPoint(qRound(v.dragScreenX_*5/v.dragMmPerPixel_),qRound(v.dragScreenY_*5/v.dragMmPerPixel_));
+        QMouseEvent drag(QEvent::MouseMove,QPointF(end),QPointF(end),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);v.mouseMoveEvent(&drag);
+        check(v.commandSession_->valid&&std::abs(v.commandSession_->value-5)<.5,"Interactive crash-range preview failed");verify(v.commandSession_->candidate,v.commandSession_->value);
+        check(!v.commandSession_->preview.IsNull()&&v.context_->IsDisplayed(v.commandSession_->preview),"Live preview not displayed");
+        v.cancelCommandSession();check(v.boxes_[0].shape.IsSame(before.shape)&&v.undoStack_.size()==history,"Drag Cancel changed document/history");
+        start();input(v,"5");check(v.commandSession_->valid,"Exact crash offset preview failed");verify(v.commandSession_->candidate,5);
+        input(v,"-5");check(!v.commandSession_->valid,"Invalid preview is confirmable");
+        input(v,"13");check(v.commandSession_->valid,"Full-cylinder transition preview failed");verify(v.commandSession_->candidate,13);
+        input(v,"5");const auto previewCandidate=v.commandSession_->candidate;v.commandButtons_->button(QDialogButtonBox::Ok)->click();
+        const auto committed=v.boxes_[0].shape;check(BRepReconstruction::equivalent(committed,previewCandidate),"Commit differs from crash preview");
+        verify(v.boxes_[0].shape,5);currentOwners(v,0);check(v.boxes_[0].persistentId==before.persistentId&&v.boxes_[0].presentation==before.presentation,"Crash fix changed Part identity");
+        v.undoPull();check(v.boxes_[0].shape.IsSame(before.shape),"Crash edit Undo failed");v.redoPull();check(v.boxes_[0].shape.IsSame(committed),"Crash edit Redo failed");
+        start();input(v,"2");check(v.commandSession_->valid,"Repeated right-end preview failed");verify(v.commandSession_->candidate,7);v.cancelCommandSession();
+        check(file.open(QIODevice::ReadOnly)&&file.readAll()==bytes,"Original crash document was modified");
+        std::cout<<"Isolated native crash geometry, drag, preview, Cancel and Undo/Redo regression passed\n";
+    }
     static void currentOwners(CadViewport& v,size_t index) {
         TopTools_IndexedMapOfShape faces;TopExp::MapShapes(v.boxes_[index].shape,TopAbs_FACE,faces);
         const auto selection=v.boxes_[index].presentation->Selection(AIS_Shape::SelectionMode(TopAbs_FACE));
@@ -509,3 +604,4 @@ struct CylindricalMoveFaceSessionTest {
 void runCylindricalMoveFaceSessionTests() {CylindricalMoveFaceSessionTest::run();}
 void runCylindricalMoveDocumentTest(const QString& path) {CylindricalMoveFaceSessionTest::documentRegression(path);}
 void runCylindricalMoveBoundaryTest(const QString& path) {CylindricalMoveFaceSessionTest::afterBoundary(path);}
+void runCrashPlanarTest(const QString& path,const QString& displacement) {CylindricalMoveFaceSessionTest::crashPreview(path,displacement);}

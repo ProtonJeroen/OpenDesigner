@@ -719,6 +719,32 @@ builds passed; all nine focused regressions passed. Separate native-reader repla
 of both supplied documents passed both policies and post-confirmation edits.
 Binary files remain unchanged/untracked. No full CTest suite was run.
 
+## 9D.6 — exact crash document and changing boss trim
+
+See [exact reproduction, coredump and certificates](CRASH_03112026.md).
+The actual private native file has a merged right-end stock/boss cut face at
+x=163. Its +5 mm preview reproducibly SIGSEGVs in OCCT 7.9's offset intersections,
+matching the original coredump. The prior constant-section local path refuses
+this changing circular trim and, being dispatched after offset, cannot protect it.
+
+Run certified local paths first. Reconstruct this outward planar cut from the
+actual finite boss cylinder and original/moved plane halfspaces; move its healed
+support with existing local planar reconstruction. Certify both material
+partitions and protected neighborhoods without a stock proxy. If a transverse
+cylinder contact cannot be reconstructed, refuse before the unsafe offset path,
+including across coplanar seams. Preserve normal editing on other supported faces.
+
+The dedicated isolated-process crash regression uses a portable native-storage
+equivalent and accepts the original private path for exact replay. It checks
+analytic occupancy/volume, topology transition to a full cylinder, actual arrow
+drag, preview lifecycle, cached history and source/file immutability. Inward and
+multi-clip/interacting cases outside the new certificate remain safe refusals.
+
+Verification: incremental application and affected targets built; all six focused
+geometry/session regressions passed. Exact-file replay in an isolated GDB process
+also passed with an assertion that the unsafe offset routine was never entered.
+The original native file remains unchanged and untracked. No full CTest suite ran.
+
 ## 9E — transactions, persistence and acceptance
 
 Confirm once into the same Part slot with one cached Undo/Redo step. Preserve

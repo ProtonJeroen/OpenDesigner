@@ -9,6 +9,7 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
@@ -949,6 +950,95 @@ Result moveLocalBoss(const TopoDS_Shape& source,const TopoDS_Face& selected,
     } catch(const Standard_Failure&) {return refused;}
       catch(const std::exception&) {return refused;}
 }
+
+// A planar end can include both stock and the flat cut through a boss. Move
+// that support by intersecting the actual finite cylinder with the new plane,
+// not by sweeping the old (varying-section) end face or regenerating stock.
+Result moveClippedBossPlane(const TopoDS_Shape& source,const TopoDS_Face& selected,double distance) {
+    const auto unsupported=refuse(Status::Unsupported,Code::UnsupportedFeature,"No certified planar cut through one cylindrical boss was found.");
+    if(!std::isfinite(distance)||distance<=10*Precision::Confusion()) return unsupported;
+    try {
+        BRepReconstruction::Neighborhood local;QString error;
+        if(!BRepReconstruction::neighborhood(source,selected,local,error)||local.patch.size()!=1||BRepAdaptor_Surface(local.target).GetType()!=GeomAbs_Plane) return unsupported;
+        auto plane=BRepAdaptor_Surface(local.target).Plane();auto normal=plane.Axis().Direction();
+        if(local.target.Orientation()==TopAbs_REVERSED) normal.Reverse();
+        TopoDS_Face mantle;
+        for(const auto& face:local.neighbors) {
+            const BRepAdaptor_Surface s(face);
+            if(s.GetType()!=GeomAbs_Cylinder) continue;
+            if(!mantle.IsNull()||std::abs(s.Cylinder().Axis().Direction().Dot(normal))>angular) return unsupported;
+            mantle=face;
+        }
+        if(mantle.IsNull()) return unsupported;
+        BRepReconstruction::Neighborhood boss;
+        if(!BRepReconstruction::neighborhood(local.solid,mantle,boss,error)||boss.patch.size()!=1||boss.neighbors.size()!=3) return unsupported;
+        const auto cylinder=BRepAdaptor_Surface(mantle).Cylinder();const auto axis=cylinder.Axis().Direction();
+        const double radius=cylinder.Radius(),tolerance=10*Precision::Confusion();std::vector<double> ends;
+        for(const auto& face:boss.neighbors) {
+            const BRepAdaptor_Surface s(face);if(s.GetType()!=GeomAbs_Plane) return unsupported;
+            if(BRepReconstruction::sameAnalyticSupport(face,local.target)) continue;
+            if(!s.Plane().Axis().Direction().IsParallel(axis,angular)) return unsupported;
+            ends.push_back(coordinate(s.Plane().Location(),axis));
+        }
+        if(ends.size()!=2||radius<=100*tolerance||radius>1.e7) return unsupported;
+        const double low=std::min(ends[0],ends[1]),height=std::abs(ends[0]-ends[1]);
+        if(height<=100*tolerance||height>1.e7) return unsupported;
+        const auto base=cylinder.Location().Translated(gp_Vec(axis)*(low-coordinate(cylinder.Location(),axis)));
+        const auto full=BRepPrimAPI_MakeCylinder(gp_Ax2(base,axis),radius,height).Shape();
+        const auto clip=[&](const gp_Pln& p) {
+            if(gp_Vec(p.Location(),base).Dot(gp_Vec(normal))<=-radius) return full;
+            const auto inside=p.Location().Translated(gp_Vec(normal)*-std::max(1.,radius));
+            return BooleanGeometry::combine<BRepAlgoAPI_Common>(full,BRepPrimAPI_MakeHalfSpace(BRepBuilderAPI_MakeFace(p).Face(),inside).Solid());
+        };
+        const auto oldBoss=clip(plane);
+        if(!BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Common>(local.solid,full),oldBoss)) return unsupported;
+        // The selected cylindrical wall must be exterior boss material.
+        BRepAdaptor_Surface s(mantle);const double u=(s.FirstUParameter()+s.LastUParameter())/2,v=(s.FirstVParameter()+s.LastVParameter())/2;
+        BRepLProp_SLProps props(s,u,v,1,tolerance);if(!props.IsNormalDefined()) return unsupported;
+        auto outward=props.Normal();if(mantle.Orientation()==TopAbs_REVERSED) outward.Reverse();
+        auto radial=gp_Vec(base,s.Value(u,v));radial-=gp_Vec(axis)*radial.Dot(gp_Vec(axis));
+        if(outward.Dot(gp_Dir(radial))<.99) return unsupported;
+        TopoDS_Shape healed;
+        if(!BRepReconstruction::normalize(BooleanGeometry::combine<BRepAlgoAPI_Cut>(local.solid,full),healed,error,true)||
+           !BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Fuse>(healed,oldBoss),local.solid)) return unsupported;
+        TopoDS_Face stockEnd;
+        for(TopExp_Explorer it(healed,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());
+            if(BRepReconstruction::sameAnalyticSupport(local.target,face)) {
+                if(!stockEnd.IsNull()) return unsupported;stockEnd=face;
+            }
+        }
+        if(stockEnd.IsNull()) return unsupported;
+        BRepReconstruction::Result movedStock;
+        if(!BRepReconstruction::movePlanarLocal(healed,stockEnd,distance,movedStock,error)) return unsupported;
+        const gp_Vec delta=gp_Vec(normal)*distance;plane.Translate(delta);
+        const auto newBoss=clip(plane);
+        const auto candidate=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(movedStock.solid,newBoss);
+        // A full cylinder plus the exact, independently certified stock change
+        // bounds the entire local edit. Unrelated material/surfaces stay fixed.
+        const auto stockChange=BooleanGeometry::combine<BRepAlgoAPI_Cut>(movedStock.solid,healed);
+        const auto region=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stockChange,full);
+        auto affected=local.neighbors;affected.push_back(local.target);gp_Trsf shift;shift.SetTranslation(delta);
+        BRepReconstruction::Result finished;
+        if(!BRepReconstruction::finishLocal(local,candidate,region,affected,{local.target},shift,finished,error)||!manifold(finished.solid)||
+           !BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Common>(finished.solid,full),newBoss)||
+           !BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Cut>(finished.solid,full),movedStock.solid))
+            return refuse(Status::Failure,Code::InvalidResult,"Moving the clipped boss plane failed local material or manifold certification.");
+        bool targetPresent=false;
+        for(TopExp_Explorer it(finished.solid,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());bool allowed=false;
+            const auto translated=TopoDS::Face(BRepBuilderAPI_Transform(local.target,shift,true).Shape());
+            if(BRepReconstruction::sameAnalyticSupport(translated,face)) {allowed=true;targetPresent=true;}
+            for(TopExp_Explorer old(local.solid,TopAbs_FACE);old.More()&&!allowed;old.Next())
+                if(!old.Current().IsSame(local.target)) allowed=BRepReconstruction::sameAnalyticSupport(TopoDS::Face(old.Current()),face);
+            if(!allowed) return refuse(Status::Failure,Code::InvalidResult,"Moving the clipped boss plane introduced an unintended surface.");
+        }
+        if(!targetPresent) return refuse(Status::Failure,Code::InvalidResult,"The moved end plane disappeared.");
+        Result result;result.status=Status::Success;result.code=Code::Moved;result.shape=finished.solid;
+        result.message="Planar end moved with its cylindrical boss trim reconstructed from current supports.";return result;
+    } catch(const Standard_Failure&) {return unsupported;}
+      catch(const std::exception&) {return unsupported;}
+}
 }
 
 CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
@@ -967,6 +1057,8 @@ CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveBoss(
 
 CylindricalMoveGeometry::Result CylindricalMoveGeometry::movePlanarPreservingExterior(
         const TopoDS_Shape& source,const TopoDS_Face& plane,double distance) {
+    const auto clipped=moveClippedBossPlane(source,plane,distance);
+    if(clipped||clipped.status==Status::Failure) return clipped;
     const auto refused=refuse(Status::Unsupported,Code::UnsupportedStock,"No certified unaffected stock slab with exterior features was found.");
     for(TopExp_Explorer it(source,TopAbs_FACE);it.More();it.Next()) {
         const auto face=TopoDS::Face(it.Current());

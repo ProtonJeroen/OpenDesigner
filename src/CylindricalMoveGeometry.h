@@ -42,9 +42,9 @@ Result moveThroughHole(const TopoDS_Shape& source, const TopoDS_Face& mantle,
 // overhang. No invented bridges or support pedestals. Policy is always explicit.
 Result moveBoss(const TopoDS_Shape& source, const TopoDS_Face& mantle,
                 const gp_Vec& displacement, BossBoundaryMode policy);
-// Narrow fallback for an unchanged stock side plane when exterior bosses make
-// the global offset builder fail. Uses physical through-hole rim planes to
-// isolate the stock; keeps separated exterior geometry fixed and certified.
+// Certified paths before global offset: preserve exterior features during a
+// side-plane edit, or reconstruct an outward planar cut through one boss.
+// Uses actual rim/cap planes and material, not primitive history or a stock crop.
 Result movePlanarPreservingExterior(const TopoDS_Shape& source,
                                     const TopoDS_Face& plane, double distance);
 }

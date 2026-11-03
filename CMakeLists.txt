@@ -203,6 +203,10 @@ if(OPENDESIGNER_BUILD_TESTS)
     target_compile_definitions(OpenDesignerMoveFaceTests PRIVATE OPENDESIGNER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     target_link_libraries(OpenDesignerMoveFaceTests PRIVATE ${OPENDESIGNER_LIBRARIES})
     add_test(NAME move-face COMMAND OpenDesignerMoveFaceTests)
+    # Dedicated process: an OCCT signal must fail only this regression, not a
+    # combined in-process session suite. Optional CLI path replays the private ODC.
+    add_test(NAME move-face-crash03112026 COMMAND OpenDesignerMoveFaceTests --crash-planar)
+    set_tests_properties(move-face-crash03112026 PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
     add_test(NAME cylindrical-move-face-sessions COMMAND OpenDesignerMoveFaceTests --cylindrical)
     add_test(NAME cylindrical-move-face-recognition COMMAND OpenDesignerMoveFaceTests --cylindrical-document)
     add_test(NAME cylindrical-move-face-boundary COMMAND OpenDesignerMoveFaceTests --cylindrical-boundary)

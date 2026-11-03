@@ -167,15 +167,29 @@ static TopoDS_Shape offsetMove(const TopoDS_Shape& source, const TopoDS_Face& so
 
 TopoDS_Shape MoveFaceGeometry::move(const TopoDS_Shape& source,const TopoDS_Face& face,
                                   double distance,QString& error) {
-    const auto offset=offsetMove(source,face,distance,error);
-    if(!offset.IsNull()) return offset;
-    const QString offsetError=error;
     gp_Pnt center;gp_Dir normal;
-    if(!std::isfinite(distance)||!reference(source,face,center,normal,error)) return {};
+    if(!std::isfinite(distance)) {error=QStringLiteral("Enter a finite face offset.");return {};}
+    if(!reference(source,face,center,normal,error)) return {};
+    if(std::abs(distance)<tolerance) return source;
     BRepReconstruction::Result local;QString localError;
     if(BRepReconstruction::movePlanarLocal(source,face,distance,local,localError)) {error.clear();return local.solid;}
     const auto preserved=CylindricalMoveGeometry::movePlanarPreservingExterior(source,face,distance);
     if(preserved) {error.clear();return preserved.shape;}
+    // OCCT 7.9's global offset intersection can SIGSEGV at a planar cut through
+    // a cylinder. A failed local certificate must refuse, never retry that path.
+    BRepReconstruction::Neighborhood contact;QString contactError;
+    if(!BRepReconstruction::neighborhood(source,face,contact,contactError)) {
+        error=QStringLiteral("Cannot certify the selected neighborhood for offset fallback: %1").arg(contactError);return {};
+    }
+    for(const auto& adjacent:contact.neighbors) {
+        const BRepAdaptor_Surface s(adjacent);
+        if(s.GetType()!=GeomAbs_Cylinder||s.Cylinder().Axis().Direction().IsParallel(normal,1.e-8)) continue;
+        error=QStringLiteral("Move Face refused at a transverse cylindrical intersection. %1 %2")
+            .arg(localError,QString::fromStdString(preserved.message));return {};
+    }
+    const auto offset=offsetMove(source,face,distance,error);
+    if(!offset.IsNull()) return offset;
+    const QString offsetError=error;
     auto expected=BRepAdaptor_Surface(face).Plane();expected.Translate(gp_Vec(normal)*distance);
     BRepReconstruction::Result rebuilt;
     if(!BRepReconstruction::rebuildPlanar(source,face,expected,rebuilt,error)) {
