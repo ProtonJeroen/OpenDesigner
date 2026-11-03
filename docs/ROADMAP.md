@@ -76,6 +76,30 @@ See [Extrude](EXTRUDE_PROFILE.md), [Revolve](REVOLVE.md),
 - STEP, IGES, STL
 - GLB/glTF and FBX import/export
 
+## Planned — View display modes and Workplane activation workflow
+
+- [ ] Add **View > Wireframe** and **View > Shaded** display modes, with
+  corresponding toolbar actions to switch the current 3D viewport mode.
+  Keep the chosen display mode independent of Part selection and editing tools.
+- [ ] Add a **Show/Hide 3D Geometry** toggle to the View menu and toolbar.
+  Temporarily hide or show all 3D solid geometry without changing individual
+  Part visibility flags or deleting geometry. Keep Sketches, Workplanes and
+  construction references available while solids are hidden.
+- [ ] Change **Edit Sketch** to activate the Sketch's Workplane (WP) and enter
+  the sketch-editing context **without automatically rotating the camera**.
+  Preserve the current camera position, orientation and zoom.
+- [ ] Provide a separate explicit **Look at Workplane / Normal to WP** view
+  action, so users may choose when to align the camera to the Workplane.
+  Activating a WP and rotating the view must be independent operations.
+- [ ] Preserve viewport mode, temporary 3D-geometry visibility and user-chosen
+  camera orientation across appropriate tool changes; define any Save/Open
+  persistence behavior explicitly. Ensure selection/picking respects hidden
+  solids and all toggles behave consistently on Fedora KDE.
+- [ ] Add focused viewport, Sketch session and UI regressions, including
+  switching Wireframe/Shaded, toggling 3D solids and Edit Sketch without
+  camera rotation. Keep this milestone separate from in-progress v0.4.9
+  geometry work.
+
 ## Planned — Sweep, Loft, and Materials & Colors
 
 These are **future milestones, not yet implemented**. Proposed numbering and order
