@@ -533,9 +533,73 @@ void localNeighborhoodTests() {
     const auto moved=moveBoss(many,find(many,8),gp_Vec(-5,-5,0),BossBoundaryMode::Extend);
     require(bool(moved),"Unrelated cylinder count disabled local capability: "+moved.message);certified(moved.shape,volume(many));
 }
+void radialPullTests() {
+    const auto stock=BRepPrimAPI_MakeBox(163,80,60).Shape();
+    const auto bore=[](double r){return BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,36,-10),gp_Dir(0,0,1)),r,80).Shape();};
+    const auto boss=[](double x,double r){return BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(x,36,60),gp_Dir(0,0,1)),r,55).Shape();};
+    const auto original=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,bore(17)),boss(121,18));
+    const auto face=[](const TopoDS_Shape& shape,double r) {
+        for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {
+            const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);
+            if(s.GetType()==GeomAbs_Cylinder&&std::abs(s.Cylinder().Radius()-r)<1.e-7) return f;
+        }return TopoDS_Face();
+    };
+    const auto trimmed=moveBoss(original,face(original,18),gp_Vec(37,0,0),BossBoundaryMode::Trim);
+    require(bool(trimmed),"Cannot construct post-Trim radius fixture");
+    const auto clip=[&](double r) {
+        if(r<=5) return boss(158,r);
+        return BooleanGeometry::combine<BRepAlgoAPI_Common>(boss(158,r),BRepPrimAPI_MakeBox(gp_Pnt(0,0,60),163,80,55).Shape());
+    };
+    for(bool partial:{false,true}) for(double r:{4.,5.,5.1,16.,20.,24.}) {
+        const auto source=partial?trimmed.shape:original;const auto stamp=serialized(source);
+        const auto result=resizeRadius(source,face(source,18),r);
+        require(bool(result),"Radius reconstruction failed: "+result.message);
+        const auto feature=partial?clip(r):boss(121,r);
+        const auto expected=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,bore(17)),feature);
+        require(BRepReconstruction::equivalent(result.shape,expected),"Radial reconstruction changed unrelated material");
+        const double a=std::min(r,5.);
+        const double area=partial?r*r*(pi/2+std::asin(a/r))+a*std::sqrt(std::max(0.,r*r-a*a)):pi*r*r;
+        certified(result.shape,163*80*60-pi*17*17*60+area*55);
+        for(double x:{10.23,54.23,120.23,140.23,150.23,157.23,162.23,165.23})
+            for(double y:{10.31,20.31,35.31,45.31,60.31}) for(double z:{10.,59.5,60.5,100.,114.5,116.}) {
+                const bool body=x<163&&z<60&&std::hypot(x-54,y-36)>17;
+                const bool featureIn=std::hypot(x-(partial?158:121),y-36)<r&&z>60&&z<115&&(!partial||x<163);
+                BRepClass3d_SolidClassifier c(result.shape,gp_Pnt(x,y,z),1.e-7);
+                require(c.State()==(body||featureIn?TopAbs_IN:TopAbs_OUT),"Radial analytic occupancy mismatch");
+            }
+        require(serialized(source)==stamp,"Radial edit mutated input");
+        // A reconstructed partial or now-complete mantle remains editable.
+        const auto repeated=resizeRadius(result.shape,face(result.shape,r),r+1);
+        if(partial&&r==5) require(!repeated&&!repeated.message.empty(),"A now-complete boss invented a vanished Trim plane to cross the boundary");
+        else require(bool(repeated),"Repeated radial edit failed (partial="+std::to_string(partial)+", R="+std::to_string(r)+"): "+repeated.message);
+    }
+    const auto stamp=serialized(trimmed.shape);
+    for(double r:{0.,.005,40.,100.,std::numeric_limits<double>::quiet_NaN()}) {
+        const auto rejected=resizeRadius(trimmed.shape,face(trimmed.shape,18),r);
+        require(!rejected&&rejected.shape.IsNull()&&!rejected.message.empty()&&serialized(trimmed.shape)==stamp,"Invalid/unsupported radial edit changed input");
+    }
+    for(double r:{15.,20.}) {
+        const auto resized=resizeRadius(trimmed.shape,face(trimmed.shape,17),r);
+        const auto expected=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,bore(r)),clip(18));
+        require(bool(resized)&&BRepReconstruction::equivalent(resized.shape,expected),"Independent through-hole radius edit changed trimmed boss");
+        certified(resized.shape,volume(expected));
+    }
+    const auto overhang=moveBoss(original,face(original,18),gp_Vec(45,0,0),BossBoundaryMode::Extend);
+    require(bool(overhang)&&!resizeRadius(overhang.shape,face(overhang.shape,18),20),"Uncertified overhang radius extension was accepted");
+    const auto notch=moveThroughHole(original,face(original,17),gp_Vec(-54,0,0));
+    require(bool(notch)&&!resizeRadius(notch.shape,face(notch.shape,17),20),"Partial/open hole was treated as a complete cylinder");
+    const auto blind=BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,36,20),gp_Dir(0,0,1)),17,40).Shape());
+    require(!resizeRadius(blind,face(blind,17),20),"Uncertified blind-hole closure was accepted");
+    gp_Trsf rotated;rotated.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.53);rotated.SetTranslationPart(gp_Vec(120,-74,93));
+    const auto placed=BRepBuilderAPI_Transform(trimmed.shape,rotated,true).Shape();
+    const auto result=resizeRadius(placed,face(placed,18),20);
+    const auto expected=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,bore(17)),clip(20));
+    require(bool(result)&&BRepReconstruction::equivalent(result.shape,BRepBuilderAPI_Transform(expected,rotated,true).Shape()),"Transformed radial reconstruction failed");
+}
 }
 int main(int argc,char** argv) {
     try {
+        if(argc>1&&std::string(argv[1])=="--radius") {radialPullTests();std::cout<<"Certified radial Pull geometry passed\n";return 0;}
         if(argc>1&&std::string(argv[1])=="--local") {
             localNeighborhoodTests();std::cout<<"Local geometric neighborhood tests passed\n";return 0;
         }

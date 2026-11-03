@@ -1049,6 +1049,121 @@ CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
     return exterior?exterior:moveLocalHole(source,selected,delta,exterior);
 }
 
+CylindricalMoveGeometry::Result CylindricalMoveGeometry::resizeRadius(
+        const TopoDS_Shape& source,const TopoDS_Face& selected,double radius) {
+    const auto unsupported=[](const char* message){return refuse(Status::Unsupported,Code::UnsupportedFeature,message);};
+    if(!std::isfinite(radius)||radius<=.01||radius>1.e7)
+        return refuse(Status::InvalidInput,Code::InvalidDisplacement,"Cylinder radius must be finite and greater than 0.01 mm, within the geometry limit.");
+    try {
+        BRepReconstruction::Neighborhood local;QString error;
+        if(!BRepReconstruction::neighborhood(source,selected,local,error)) {
+            auto failure=unsupported("Pull / Resize cannot analyze the selected neighborhood: ");failure.message+=error.toStdString();return failure;
+        }
+        if(BRepAdaptor_Surface(local.target).GetType()!=GeomAbs_Cylinder||!manifold(local.solid))
+            return unsupported("Radial Pull needs a cylindrical member face of one manifold solid.");
+        const auto cylinder=BRepAdaptor_Surface(local.target).Cylinder();const auto axis=cylinder.Axis().Direction();
+        const double oldRadius=cylinder.Radius(),tolerance=10*Precision::Confusion();std::vector<double> ends;std::vector<gp_Pln> clips;
+        for(const auto& face:local.neighbors) {
+            const BRepAdaptor_Surface s(face);if(s.GetType()!=GeomAbs_Plane) return unsupported("Radial Pull requires planar cap/support neighbors; blends and curved intersections are unsupported.");
+            if(s.Plane().Axis().Direction().IsParallel(axis,angular)) ends.push_back(coordinate(s.Plane().Location(),axis));
+            else {
+                auto n=s.Plane().Axis().Direction();if(face.Orientation()==TopAbs_REVERSED) n.Reverse();
+                if(std::abs(n.Dot(axis))>angular) return unsupported("Sloped cylindrical trims cannot be resized safely.");
+                clips.emplace_back(s.Plane().Location(),n);
+            }
+        }
+        if(ends.size()!=2||clips.size()>1||oldRadius<=100*tolerance)
+            return unsupported("Radial Pull needs two distinct axial rim planes and at most one planar side cut.");
+        const double low=std::min(ends[0],ends[1]),height=std::abs(ends[0]-ends[1]);
+        if(height<=100*tolerance||height>1.e7) return unsupported("The selected cylinder has no reliable finite axial span.");
+        const auto base=cylinder.Location().Translated(gp_Vec(axis)*(low-coordinate(cylinder.Location(),axis)));
+        bool boss=false;bool first=true;
+        for(const auto& face:local.patch) {
+            const BRepAdaptor_Surface s(face);const double u=(s.FirstUParameter()+s.LastUParameter())/2,v=(s.FirstVParameter()+s.LastVParameter())/2;
+            BRepLProp_SLProps p(s,u,v,1,tolerance);if(!p.IsNormalDefined()) return unsupported("Cylinder material side is undefined.");
+            auto n=p.Normal();if(face.Orientation()==TopAbs_REVERSED) n.Reverse();
+            auto radial=gp_Vec(base,s.Value(u,v));radial-=gp_Vec(axis)*radial.Dot(gp_Vec(axis));
+            const double sign=n.Dot(gp_Dir(radial));
+            if(std::abs(sign)<.99||(!first&&boss!=(sign>0))) return unsupported("Selected cylindrical patches have inconsistent material orientation.");
+            boss=sign>0;first=false;
+        }
+        if(!boss&&!clips.empty()) return unsupported("Radial Pull of an open or partially trimmed hole is not certified; original geometry was kept.");
+        const auto tool=[&](double r){return BRepPrimAPI_MakeCylinder(gp_Ax2(base,axis),r,height).Shape();};
+        const auto clipped=[&](const TopoDS_Shape& c,double r) {
+            if(clips.empty()) return c;
+            const auto& plane=clips.front();const auto n=plane.Axis().Direction();
+            if(gp_Vec(plane.Location(),base).Dot(gp_Vec(n))<=-r) return c;
+            return BooleanGeometry::combine<BRepAlgoAPI_Common>(c,BRepPrimAPI_MakeHalfSpace(BRepBuilderAPI_MakeFace(plane).Face(),plane.Location().Translated(gp_Vec(n)*-std::max(1.,r))).Solid());
+        };
+        const auto oldTool=tool(oldRadius),newTool=tool(radius);
+        const auto oldFeature=boss?clipped(oldTool,oldRadius):oldTool,newFeature=boss?clipped(newTool,radius):newTool;
+        double material=0;if(!BRepReconstruction::validSolid(oldFeature,material)||!BRepReconstruction::validSolid(newFeature,material))
+            return unsupported("The requested radius leaves an empty, degenerate or disconnected feature.");
+        const auto overlap=BooleanGeometry::combine<BRepAlgoAPI_Common>(local.solid,oldTool);
+        if(boss) {
+            if(!BRepReconstruction::equivalent(overlap,oldFeature)) return unsupported("Boss material does not match its current cylinder and planar trims.");
+        } else {
+            GProp_GProps p;BRepGProp::VolumeProperties(overlap,p);
+            if(std::abs(p.Mass())>1.e-8*std::max(1.,pi*oldRadius*oldRadius*height)) return unsupported("The selected hole is not an unambiguous complete void.");
+        }
+        double wall=0;for(const auto& face:local.patch) wall+=faceArea(face);
+        double expectedWall=0;for(TopExp_Explorer it(oldFeature,TopAbs_FACE);it.More();it.Next())
+            if(BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType()==GeomAbs_Cylinder) expectedWall+=faceArea(it.Current());
+        if(std::abs(wall-expectedWall)>1.e-8*std::max(1.,expectedWall)) return unsupported("The selected mantle is incomplete or contains interacting trims.");
+        TopoDS_Shape healed;
+        const auto restored=boss?BooleanGeometry::combine<BRepAlgoAPI_Cut>(local.solid,oldTool):BooleanGeometry::combine<BRepAlgoAPI_Fuse>(local.solid,oldTool);
+        if(!BRepReconstruction::normalize(restored,healed,error,true)) return unsupported("Removing/filling the selected feature did not recover one valid support solid.");
+        const auto original=boss?BooleanGeometry::combine<BRepAlgoAPI_Fuse>(healed,oldFeature):BooleanGeometry::combine<BRepAlgoAPI_Cut>(healed,oldTool);
+        if(!BRepReconstruction::equivalent(original,local.solid)) return unsupported("Feature reconstruction could not certify the original material independently.");
+        if(!boss) for(TopExp_Explorer cap(oldTool,TopAbs_FACE);cap.More();cap.Next()) {
+            const auto f=TopoDS::Face(cap.Current());if(BRepAdaptor_Surface(f).GetType()!=GeomAbs_Plane) continue;
+            double covered=0;
+            for(TopExp_Explorer stock(healed,TopAbs_FACE);stock.More();stock.Next()) {
+                const auto support=TopoDS::Face(stock.Current());
+                if(BRepReconstruction::sameAnalyticSupport(f,support)) covered+=faceArea(BooleanGeometry::combine<BRepAlgoAPI_Common>(f,support));
+            }
+            if(std::abs(covered-faceArea(f))>1.e-8*std::max(1.,faceArea(f))) return unsupported("Only complete through-holes closing on two exterior planes support radial Pull.");
+        }
+        if(boss) {
+            int supported=0;
+            for(TopExp_Explorer cap(newFeature,TopAbs_FACE);cap.More();cap.Next()) {
+                const auto f=TopoDS::Face(cap.Current());const BRepAdaptor_Surface s(f);
+                if(s.GetType()!=GeomAbs_Plane||!s.Plane().Axis().Direction().IsParallel(axis,angular)) continue;
+                double covered=0;
+                for(TopExp_Explorer stock(healed,TopAbs_FACE);stock.More();stock.Next()) {
+                    const auto support=TopoDS::Face(stock.Current());
+                    if(BRepReconstruction::sameAnalyticSupport(TopoDS::Face(f.Reversed()),support)) covered+=faceArea(BooleanGeometry::combine<BRepAlgoAPI_Common>(f,support));
+                }
+                if(covered>tolerance) {
+                    if(std::abs(covered-faceArea(f))>1.e-8*std::max(1.,faceArea(f))) return unsupported("The resized boss footprint crosses an uncertified support boundary or another feature.");
+                    ++supported;
+                }
+            }
+            if(supported!=1) return unsupported("Radial Pull requires one fully supported boss base; overhang/support extensions are unsupported.");
+        }
+        const auto candidate=boss?BooleanGeometry::combine<BRepAlgoAPI_Fuse>(healed,newFeature):BooleanGeometry::combine<BRepAlgoAPI_Cut>(healed,newTool);
+        auto affected=local.patch;affected.insert(affected.end(),local.neighbors.begin(),local.neighbors.end());
+        const auto region=radius>oldRadius?newTool:oldTool;gp_Trsf identity;BRepReconstruction::Result finished;
+        if(!BRepReconstruction::finishLocal(local,candidate,region,affected,{},identity,finished,error)||!manifold(finished.solid)) {
+            auto failure=unsupported("Radial Pull cannot preserve unrelated material or manifold topology: ");failure.message+=error.toStdString();return failure;
+        }
+        auto resized=cylinder;resized.SetRadius(radius);
+        for(TopExp_Explorer it(finished.solid,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(face);
+            bool allowed=s.GetType()==GeomAbs_Cylinder&&sameCylinder(s.Cylinder(),resized,tolerance);
+            for(TopExp_Explorer old(local.solid,TopAbs_FACE);old.More()&&!allowed;old.Next()) {
+                const auto f=TopoDS::Face(old.Current());
+                if(std::none_of(local.patch.begin(),local.patch.end(),[&](const auto& p){return p.IsSame(f);})) allowed=BRepReconstruction::sameAnalyticSupport(f,face);
+            }
+            if(!allowed) return unsupported("Resizing would introduce an unintended transition surface; original geometry was kept.");
+        }
+        Result result;result.status=Status::Success;result.code=std::abs(radius-oldRadius)<=tolerance?Code::Unchanged:Code::Moved;
+        result.shape=finished.solid;result.axis=gp_Ax1(base,axis);result.radius=radius;result.height=height;
+        result.message="Cylinder radius reconstructed from current rims, material and planar trims.";return result;
+    } catch(const Standard_Failure&) {return unsupported("OCCT could not certify this radial reconstruction; original geometry was kept.");}
+      catch(const std::exception&) {return unsupported("Radial material reconstruction failed; original geometry was kept.");}
+}
+
 CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveBoss(
         const TopoDS_Shape& source,const TopoDS_Face& selected,const gp_Vec& delta,BossBoundaryMode policy) {
     const auto result=moveSelected(source,selected,delta,policy);

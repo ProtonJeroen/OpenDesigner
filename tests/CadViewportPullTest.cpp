@@ -1,4 +1,8 @@
 #include "CadViewport.h"
+#include "CylindricalMoveGeometry.h"
+#include "BRepReconstruction.h"
+#include "BooleanGeometry.h"
+#include <QFile>
 #include <QApplication>
 #include <QComboBox>
 #include <QDialog>
@@ -13,7 +17,16 @@
 #include <QKeyEvent>
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepAlgoAPI_Common.hxx>
+#include <BRep_Tool.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
+#include <BRepTools.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <sstream>
 #include <StdSelect_BRepOwner.hxx>
 #include <QLineEdit>
 #include <QLocale>
@@ -447,6 +460,85 @@ struct CadViewportPullTest {
         require(!v.commandSession_->geometryError.isEmpty(),"invalid cylindrical Pull did not explain the failure");
         require(v.boxes_[0].shape.IsSame(originalShape),"invalid cylindrical Pull changed the source shape");
         v.cancelCommandSession();
+    }
+
+    static void runTrimmedBossPull(CadViewport& v,const QString& path) {
+        QString error;NativeDocumentSnapshot snapshot;QByteArray bytes;
+        const auto stock=BRepPrimAPI_MakeBox(163,80,60).Shape();
+        const auto bore=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,36,-10),gp_Dir(0,0,1)),17,80).Shape();
+        const auto boss=[](double x,double r){return BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(x,36,60),gp_Dir(0,0,1)),r,55).Shape();};
+        const auto base=BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,bore);
+        const auto expected=[&](double r) {
+            const auto feature=r<=5?boss(158,r):BooleanGeometry::combine<BRepAlgoAPI_Common>(boss(158,r),BRepPrimAPI_MakeBox(gp_Pnt(0,0,60),163,80,55).Shape());
+            return BooleanGeometry::combine<BRepAlgoAPI_Fuse>(base,feature);
+        };
+        const auto radiusFace=[](const TopoDS_Shape& shape,double r) {
+            for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {
+                const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);
+                if(s.GetType()==GeomAbs_Cylinder&&std::abs(s.Cylinder().Radius()-r)<1.e-6) return f;
+            }return TopoDS_Face();
+        };
+        if(!path.isEmpty()) {
+            QFile file(path);require(file.open(QIODevice::ReadOnly),"Cannot read native trimmed boss file");bytes=file.readAll();file.close();
+            require(NativeDocumentStorage::load(path,snapshot,error),qPrintable(error));
+            require(snapshot.parts.size()==1&&BRepReconstruction::equivalent(snapshot.parts[0].shape,expected(18)),"Native document differs from actual post-Trim geometry");
+        } else {
+            NativePartState p;p.id="trimmed-boss-pull";p.name="Post Trim Pull";p.shape=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(base,boss(121,18));snapshot.parts={p};
+        }
+        require(v.importDocumentSnapshot(snapshot,error),qPrintable(error));v.fitAll();QApplication::processEvents();
+        if(path.isEmpty()) {
+            require(v.startMoveFace(0,radiusFace(v.boxes_[0].shape,18)),"Boss Move Face activation failed");
+            v.cylinderMoveDirection_->setCurrentIndex(1);v.cylinderBossBoundary_->setCurrentIndex(1);
+            v.dragDimension_->setText("37");QMetaObject::invokeMethod(v.dragDimension_,"textEdited",Qt::DirectConnection,Q_ARG(QString,QString("37")));
+            require(v.commandSession_->valid,"Boss Trim preview failed");v.commandButtons_->button(QDialogButtonBox::Ok)->click();
+            require(!v.commandSession_&&BRepReconstruction::equivalent(v.boxes_[0].shape,expected(18)),"Boss Trim was not confirmed");
+        }
+        const auto before=v.boxes_[0];const auto source=before.shape;const auto history=v.undoStack_.size();const auto mantle=radiusFace(source,18);
+        GProp_GProps wall;BRepGProp::SurfaceProperties(mantle,wall);
+        require(wall.Mass()<2*std::acos(-1.)*18*55,"Regression must use a partial cylindrical mantle");
+        double volume=0;require(BRepReconstruction::validSolid(source,volume),"Invalid post-Trim B-Rep");
+        // Original edges/p-curves are valid. The coredump's bad edge is created
+        // later inside OCCT offset intersections, not stored in this input.
+        for(TopExp_Explorer f(source,TopAbs_FACE);f.More();f.Next()) for(TopExp_Explorer e(f.Current(),TopAbs_EDGE);e.More();e.Next()) {
+            double first=0,last=0;const auto curve=BRep_Tool::CurveOnSurface(TopoDS::Edge(e.Current()),TopoDS::Face(f.Current()),first,last);
+            require(!curve.IsNull()&&std::isfinite(first)&&std::isfinite(last),"Post-Trim edge has no valid p-curve");
+        }
+        std::ostringstream stream;BRepTools::Write(source,stream);const auto stamp=stream.str();
+        const auto start=[&](double radius) {
+            v.context_->ClearSelected(Standard_False);
+            v.context_->AddOrRemoveSelected(new StdSelect_BRepOwner(radiusFace(v.boxes_[0].shape,radius),v.boxes_[0].presentation,5,Standard_True),Standard_False);
+            std::unique_ptr<QMenu> menu(v.createSelectionMenu(QPoint(400,300)));auto* resize=menu->findChild<QAction*>("context.resize");
+            require(resize,"Trimmed boss has no Pull / Resize action");resize->trigger();
+            require(v.pullMode_&&v.cylindricalFacePull_&&v.arrowVisible_,"Trimmed boss Pull activation failed");
+            const auto grab=project(v,v.primitiveArrowOrigin_.Translated(gp_Vec(v.primitiveArrowDirection_)*15));
+            require(v.beginArrowDrag(grab),"Trimmed boss radial arrow cannot be grabbed");return grab;
+        };
+        const auto grab=start(18);std::cout<<"Post-Trim radial Pull drag starts (R18 -> about R23)"<<std::endl;
+        dragBy(v,grab,5);require(v.commandSession_->valid,"Trimmed boss drag preview failed");
+        require(BRepReconstruction::equivalent(v.boxes_[0].shape,expected(v.cylindricalPullRadius_)),"Trimmed boss drag changed unrelated material");
+        v.cancelCommandSession();require(v.boxes_[0].shape.IsSame(source)&&v.undoStack_.size()==history,"Radial Cancel changed source/history");
+        start(18);require(v.previewCommand(2),"Trimmed boss R20 preview failed");
+        require(BRepReconstruction::equivalent(v.boxes_[0].shape,expected(20)),"Radial preview changed stock, boss height or hole");
+        const auto valid=v.boxes_[0].shape;require(!v.previewCommand(22)&&!v.commandSession_->geometryError.isEmpty(),"Uncertified support crossing accepted without diagnostic");
+        require(BRepReconstruction::equivalent(v.boxes_[0].shape,valid),"Invalid preview corrupted last valid result");
+        require(v.previewCommand(2),"Pull could not recover after invalid radius");exact(v,40,true);
+        require(!v.commandSession_,"Numeric trimmed-boss diameter did not confirm");
+        const auto committed=v.boxes_[0].shape;require(v.undoStack_.size()==history+1&&BRepReconstruction::equivalent(committed,expected(20)),"Radial commit failed");
+        require(v.boxes_[0].persistentId==before.persistentId&&v.boxes_[0].presentation==before.presentation,"Pull changed Part identity");
+        v.undoPull();require(v.boxes_[0].shape.IsSame(source),"Radial Undo failed");v.redoPull();require(v.boxes_[0].shape.IsSame(committed),"Radial Redo failed");
+        start(20);require(v.previewCommand(-1)&&BRepReconstruction::equivalent(v.boxes_[0].shape,expected(19)),"Repeated partial-mantle Pull failed");v.cancelCommandSession();
+        // Unsupported neighborhoods refuse at activation, with a diagnostic,
+        // without starting a drag or altering the presented Part/history.
+        auto unsupported=v.boxes_[0];unsupported.shape=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(base,boss(166,18));v.applyFaceState(0,unsupported);
+        v.context_->ClearSelected(Standard_False);v.context_->AddOrRemoveSelected(new StdSelect_BRepOwner(radiusFace(unsupported.shape,18),unsupported.presentation,5,Standard_True),Standard_False);
+        QString diagnostic;const auto connection=QObject::connect(&v,&CadViewport::statusMessage,&v,[&](const QString& text){diagnostic=text;});
+        std::unique_ptr<QMenu> unsupportedMenu(v.createSelectionMenu(QPoint(400,300)));auto* resize=unsupportedMenu->findChild<QAction*>("context.resize");
+        require(resize,"Unsupported solid should explain its radius refusal on activation");resize->trigger();
+        require(!v.commandSession_&&!v.pullMode_&&!v.arrowVisible_&&!diagnostic.isEmpty()&&v.boxes_[0].shape.IsSame(unsupported.shape)&&v.undoStack_.size()==history+1,"Unsupported Pull activation changed document or lost diagnostic");
+        QObject::disconnect(connection);
+        std::ostringstream after;BRepTools::Write(source,after);require(after.str()==stamp,"Radial Pull mutated original source");
+        if(!path.isEmpty()) {QFile file(path);require(file.open(QIODevice::ReadOnly)&&file.readAll()==bytes,"Native document changed");}
+        std::cout<<"Post-Trim radial Pull geometry, p-curves, drag, refusal, Cancel and Undo/Redo passed\n";
     }
 
     using ConeTarget = CadViewport::ConePullTarget;
@@ -1242,7 +1334,10 @@ int main(int argc, char** argv) {
     viewport.show();
     app.processEvents();
     try {
-        if (app.arguments().contains(QStringLiteral("--native-pull"))) {
+        if(app.arguments().contains("--trimmed-boss-pull")) {
+            const int arg=app.arguments().indexOf("--trimmed-boss-pull");CadViewportPullTest::runTrimmedBossPull(viewport,app.arguments().value(arg+1));
+        }
+        else if (app.arguments().contains(QStringLiteral("--native-pull"))) {
             const int arg=app.arguments().indexOf(QStringLiteral("--native-pull"));
             CadViewportPullTest::runNativePull(viewport,app.arguments().value(arg+1));
         }

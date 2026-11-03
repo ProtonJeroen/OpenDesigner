@@ -40,12 +40,11 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
-#include <BRepBuilderAPI_MakeSolid.hxx>
+#include "CylindricalMoveGeometry.h"
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <TopExp_Explorer.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
-#include <BRepOffset_MakeOffset.hxx>
 #include <gp_Circ.hxx>
 #include <ElCLib.hxx>
 #include <BRep_Builder.hxx>
@@ -2085,37 +2084,14 @@ bool CadViewport::applyCylindricalFacePull(double distance) {
         return false;
     }
     try {
-        const double offsetDistance = cylindricalPullFace_.Orientation()==TopAbs_REVERSED ? -distance : distance;
-        BRepOffset_MakeOffset offset;
-        // Isolate kernel work from the source snapshot, including tolerances
-        // and surface data. Every preview starts from the original geometry.
-        BRepBuilderAPI_Copy isolated(primitivePullBefore_.beforeShape,true,false);
-        const auto target=TopoDS::Face(isolated.ModifiedShape(cylindricalPullFace_));
-        offset.Initialize(isolated.Shape(),0.0,1.0e-7,
-                          BRepOffset_Skin,true,false,GeomAbs_Intersection);
-        offset.SetOffsetOnFace(target,offsetDistance);
-        offset.MakeOffsetShape();
-        double volume=0.0;
-        TopoDS_Shape candidate = offset.Shape();
-        // MakeOffset returns a closed shell for some cut solids.  Promote that
-        // single closed shell to a solid; no new faces or volumes are created.
-        if (offset.IsDone()) {
-            int solids=0, shells=0;
-            TopoDS_Shell shell;
-            for (TopExp_Explorer e(candidate,TopAbs_SOLID);e.More();e.Next()) ++solids;
-            for (TopExp_Explorer e(candidate,TopAbs_SHELL);e.More();e.Next()) {
-                ++shells; shell=TopoDS::Shell(e.Current());
-            }
-            if (solids==0 && shells==1 && BRep_Tool::IsClosed(shell)) {
-                BRepBuilderAPI_MakeSolid makeSolid;
-                makeSolid.Add(shell);
-                if (makeSolid.IsDone()) candidate=makeSolid.Solid();
-            }
-        }
-        if (!offset.IsDone() || !BRepReconstruction::validSolid(candidate,volume)) {
-            if (commandSession_) commandSession_->geometryError = tr("The cylindrical face could not be resized while preserving a closed solid.");
+        // A cylindrical surface may be only a partial boss mantle. Reconstruct
+        // its actual capped/trimmed material; never send it to global offset.
+        const auto resized=CylindricalMoveGeometry::resizeRadius(primitivePullBefore_.beforeShape,cylindricalPullFace_,radius);
+        if(!resized) {
+            if(commandSession_) commandSession_->geometryError=QString::fromStdString(resized.message);
             return false;
         }
+        const auto candidate=resized.shape;
         auto& part=boxes_[dragIndex_];
         part.shape=candidate;
         part.geometryKind=CadPart::GeometryKind::GeneralBRep;

@@ -42,6 +42,11 @@ Result moveThroughHole(const TopoDS_Shape& source, const TopoDS_Face& mantle,
 // overhang. No invented bridges or support pedestals. Policy is always explicit.
 Result moveBoss(const TopoDS_Shape& source, const TopoDS_Face& mantle,
                 const gp_Vec& displacement, BossBoundaryMode policy);
+// Radial Pull on current geometry: complete through-holes, fully supported
+// bosses, and a boss cut by one radial plane. Axial/cut supports stay fixed.
+// No offset-kernel fallback; unsupported neighborhoods return diagnostics.
+Result resizeRadius(const TopoDS_Shape& source, const TopoDS_Face& mantle,
+                    double radius);
 // Certified paths before global offset: preserve exterior features during a
 // side-plane edit, or reconstruct an outward planar cut through one boss.
 // Uses actual rim/cap planes and material, not primitive history or a stock crop.

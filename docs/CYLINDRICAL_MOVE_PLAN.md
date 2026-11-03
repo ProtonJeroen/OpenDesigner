@@ -745,6 +745,32 @@ geometry/session regressions passed. Exact-file replay in an isolated GDB proces
 also passed with an assertion that the unsafe offset routine was never entered.
 The original native file remains unchanged and untracked. No full CTest suite ran.
 
+## 9D.6B — Pull/Resize after a boss Trim
+
+See [newest coredump, radial reconstruction and limits](PULL_AFTER_BOSS_TRIM.md).
+The newest crash is in `applyCylindricalFacePull` during drag preview, independently
+of planar Move Face dispatch. A valid-solid/surface-type check had admitted a
+partial trimmed mantle to OCCT's global offset intersections, which SIGSEGV.
+
+Add current-B-Rep radial reconstruction using existing neighborhood and material
+certificates. Keep actual axial/cut planes fixed, preserve unrelated surfaces,
+require supported boss footprints or complete exterior hole rims, and validate
+the final manifold solid. Certify capability at activation; every preview starts
+from the immutable source. No offset fallback or feature-history inference is
+permitted. Radius/diameter editing is added for the certified classes; general
+height Pull and unprovable support extensions remain outside this hotfix.
+
+The focused headless radial tests and isolated post-Trim Pull session cover
+material occupancy/volume, p-curves, topology changes, repeated edits, safe
+refusal, source identity, Cancel and cached Undo/Redo. Native replay also checks
+that the original document is unchanged and the unsafe offset routine is absent
+from the executed path. Supplied binary documents remain private/untracked.
+
+Verification: incremental application and affected geometry/session builds and
+all seven focused regressions passed. Final numeric confirmation and native-file
+GDB replay passed; the unsafe offset routine was never entered. Original file
+hashes are unchanged. No full CTest suite was run.
+
 ## 9E — transactions, persistence and acceptance
 
 Confirm once into the same Part slot with one cached Undo/Redo step. Preserve

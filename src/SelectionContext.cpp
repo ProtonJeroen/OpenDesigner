@@ -2,6 +2,7 @@
 #include <QIcon>
 #include "MoveFaceGeometry.h"
 #include "BRepReconstruction.h"
+#include "CylindricalMoveGeometry.h"
 #include <QMenu>
 #include <QLineEdit>
 #include <QDialogButtonBox>
@@ -360,6 +361,13 @@ void CadViewport::startPrimitivePull() {
     if(!supportsResize(selection)) {
         emit statusMessage(tr("Pull / Resize: select supported primitive faces first. No command started."));
         return;
+    }
+    if(selection.faces.size()==1&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Cylinder) {
+        const auto& selected=selection.faces.front();auto probe=boxes_[selected.partIndex];
+        if(!recognizePullPrimitive(probe)) {
+            const auto capability=CylindricalMoveGeometry::resizeRadius(probe.shape,selected.face,BRepAdaptor_Surface(selected.face).Cylinder().Radius());
+            if(!capability) {emit statusMessage(QString::fromStdString(capability.message));return;}
+        }
     }
     pullMode_=true;
     for (const auto index:selection.parts) {
