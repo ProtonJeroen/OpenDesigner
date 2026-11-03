@@ -196,6 +196,28 @@ duplicated.
   iPadOS/Android tablet targets; keep conventional desktop controls available.
 - [ ] **3D copilot/local AI** as a later, separately scoped milestone.
 
+## Planned — Move Face direction from geometric references
+
+- [ ] Extend **3D Modeling > Move Face** with an explicit **Direction** reference
+  selector. Preserve the current face-normal/manipulator direction as the default.
+- [ ] Allow direction from a selected **Face** (its normal, with explicit
+  orientation), a straight **Edge** (tangent/axis), or a **Sketch line**
+  (line direction), independent of how the target Part was created.
+- [ ] Allow **Point-to-Point** direction from two picked Sketch points;
+  calculate the signed 3D vector from the first point to the second. Support
+  construction points and snapped Sketch points where their positions are
+  unambiguous.
+- [ ] Support **Reverse Direction**, signed exact distance, and live arrow/blue
+  preview. Keep the **target Face** separate from the **direction reference**;
+  references may belong to another Part or Workplane without editing them.
+- [ ] Resolve references in world coordinates, respecting Part and Workplane
+  transforms; avoid reliance on primitive metadata or feature history.
+  Reject zero-length vectors, ambiguous curved-face normals/curved-edge tangents
+  and unsupported reconstruction with clear diagnostics.
+- [ ] Preserve existing OK/Cancel, Undo/Redo, Part identity and native Save/Open;
+  test transformed geometry, all reference types, reverse/signed input,
+  reference independence and safe refusal. Roll out in focused stages.
+
 ## Planned after Workplanes & Sketches — Move cylindrical faces (holes & bosses, Issue #51)
 
 - [ ] **Move Cylindrical Face:** extend direct face editing beyond existing
