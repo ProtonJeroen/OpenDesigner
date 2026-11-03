@@ -1,5 +1,6 @@
 #include "MoveFaceGeometry.h"
 #include "BRepReconstruction.h"
+#include "CylindricalMoveGeometry.h"
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
@@ -110,7 +111,10 @@ static TopoDS_Shape offsetMove(const TopoDS_Shape& source, const TopoDS_Face& so
         // Intersection mode is essential here: the neighboring face supports
         // stay fixed while their trimming curves are recomputed against the
         // translated target plane.
-        offset.Initialize(copy.Shape(),0,tolerance,BRepOffset_Skin,true,false,GeomAbs_Intersection);
+        // Boolean edits may wrap their single solid in a compound. The offset
+        // builder requires the certified solid, not its presentation container.
+        TopExp_Explorer solidInput(copy.Shape(),TopAbs_SOLID);
+        offset.Initialize(solidInput.Current(),0,tolerance,BRepOffset_Skin,true,false,GeomAbs_Intersection);
         offset.SetOffsetOnFace(copiedFace,distance);
         offset.MakeOffsetShape();
         const auto fail=[&](const QString& reason) -> TopoDS_Shape {
@@ -167,6 +171,8 @@ TopoDS_Shape MoveFaceGeometry::move(const TopoDS_Shape& source,const TopoDS_Face
     if(!offset.IsNull()) return offset;
     gp_Pnt center;gp_Dir normal;
     if(!std::isfinite(distance)||!reference(source,face,center,normal,error)) return {};
+    const auto preserved=CylindricalMoveGeometry::movePlanarPreservingExterior(source,face,distance);
+    if(preserved) {error.clear();return preserved.shape;}
     auto expected=BRepAdaptor_Surface(face).Plane();expected.Translate(gp_Vec(normal)*distance);
     BRepReconstruction::Result rebuilt;
     if(!BRepReconstruction::rebuildPlanar(source,face,expected,rebuilt,error)) return {};

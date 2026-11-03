@@ -33,6 +33,12 @@ session. Support excludes blind holes, blends, intersecting/touching feature
 footprints, nonparallel feature axes, nonrectangular stock and already truncated/
 overhanging source features. Moving into an unselected feature is refused.
 Geometry calculation remains synchronous. See the [phase plan](CYLINDRICAL_MOVE_PLAN.md).
+After a boss crosses the stock boundary, its new topology may be refused as a
+newly selected boss. A separated complete through-hole remains editable: the
+actual exterior boss material is preserved without re-recognizing it as an
+interior boss. Unaffected stock side planes can also move when a through-hole's
+physical rim planes certify the stock slab and the edit stays clear of exterior
+material. Interface planes and interacting edits remain conditional/refused.
 Automated session checks cover normal/HiDPI; manual Fedora KDE acceptance and
 phase 9E lifecycle/persistence coverage remain pending.
 

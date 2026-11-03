@@ -1,5 +1,6 @@
 #include "CylindricalMoveGeometry.h"
 #include "BRepReconstruction.h"
+#include "MoveFaceGeometry.h"
 #include "BooleanGeometry.h"
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
@@ -328,9 +329,65 @@ void independentFeatureTests() {
     const auto refusedMove=moveThroughHole(interacting,selected(interacting,17),gp_Vec(-8,0,0));
     require(!refusedMove&&refusedMove.shape.IsNull()&&serialized(interacting)==before,"Interacting source geometry was accepted or mutated");
 }
+void boundaryFollowUpTests() {
+    const auto stock=BRepPrimAPI_MakeBox(gp_Pnt(-8,0,0),171,80,60).Shape();
+    const auto bore=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,48,0),gp_Dir(0,0,1)),17,60).Shape();
+    const auto boss=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(98,36,60),gp_Dir(0,0,1)),18,55).Shape();
+    const auto source=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,bore),boss);
+    const auto findRadius=[](const TopoDS_Shape& shape,double radius) {
+        for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {
+            const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);
+            if(s.GetType()==GeomAbs_Cylinder&&std::abs(s.Cylinder().Radius()-radius)<1.e-7) return f;
+        }
+        return TopoDS_Face();
+    };
+    for(auto policy:{BossBoundaryMode::Trim,BossBoundaryMode::Extend}) {
+        const auto crossed=moveBoss(source,findRadius(source,18),gp_Vec(0,-29,0),policy);
+        require(bool(crossed),"Boundary source setup failed: "+crossed.message);
+        const auto before=serialized(crossed.shape);const auto hole=findRadius(crossed.shape,17);
+        auto exterior=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(98,7,60),gp_Dir(0,0,1)),18,55).Shape();
+        if(policy==BossBoundaryMode::Trim) exterior=BooleanGeometry::combine<BRepAlgoAPI_Common>(exterior,
+            BRepPrimAPI_MakeBox(gp_Pnt(-8,0,60),171,80,55).Shape());
+        for(double dx:{3.,-54.,-130.}) {
+            const auto moved=moveThroughHole(crossed.shape,hole,gp_Vec(dx,0,0));
+            require(bool(moved),"Hole poisoned by exterior boss: "+moved.message);
+            const auto tool=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54+dx,48,0),gp_Dir(0,0,1)),17,60).Shape();
+            const auto expected=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,tool),exterior);
+            require(BRepReconstruction::equivalent(moved.shape,expected),"Hole edit changed exterior boss material");certified(moved.shape,volume(expected));
+            for(int x=-15;x<180;x+=9) for(int y=-20;y<90;y+=9) for(double z:{-1.,15.,59.,61.,90.,114.,116.}) {
+                const double px=x+.23,py=y+.31;
+                const bool body=px>-8&&px<163&&py>0&&py<80&&z>0&&z<60&&
+                    (px-54-dx)*(px-54-dx)+(py-48)*(py-48)>17*17;
+                const bool cap=(px-98)*(px-98)+(py-7)*(py-7)<18*18&&z>60&&z<115&&
+                    (policy==BossBoundaryMode::Extend||py>0);
+                BRepClass3d_SolidClassifier c(moved.shape,gp_Pnt(px,py,z),1.e-7);
+                require(c.State()==(body||cap?TopAbs_IN:TopAbs_OUT),"Boundary follow-up occupancy mismatch");
+            }
+            require(serialized(crossed.shape)==before,"Follow-up hole operation mutated source");
+        }
+        const auto collision=moveThroughHole(crossed.shape,hole,gp_Vec(44,-41,0));
+        require(!collision&&collision.shape.IsNull()&&collision.code==Code::InteractingFeatures,"Hole/exterior collision was accepted");
+        TopoDS_Face plane;
+        for(TopExp_Explorer it(crossed.shape,TopAbs_FACE);it.More();it.Next()) {
+            const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);
+            if(s.GetType()==GeomAbs_Plane&&std::abs(s.Plane().Axis().Direction().X())>.99&&s.Plane().Distance(gp_Pnt(163,0,0))<1.e-6) {plane=f;break;}
+        }
+        for(double distance:{2.,-2.}) {
+            QString error;const auto moved=MoveFaceGeometry::move(crossed.shape,plane,distance,error);
+            require(!moved.IsNull(),"Boundary result poisoned ordinary planar Move Face: "+error.toStdString());
+            const auto changedStock=BRepPrimAPI_MakeBox(gp_Pnt(-8,0,0),171+distance,80,60).Shape();
+            const auto expected=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(changedStock,bore),exterior);
+            require(BRepReconstruction::equivalent(moved,expected),"Planar follow-up changed exterior material");certified(moved,volume(expected));
+        }
+        require(serialized(crossed.shape)==before,"Boundary follow-up mutated original geometry");
+    }
+}
 }
 int main(int argc,char** argv) {
     try {
+        if(argc>1&&std::string(argv[1])=="--boundary") {
+            boundaryFollowUpTests();std::cout<<"Boundary follow-up geometry tests passed\n";return 0;
+        }
         if(argc>1&&std::string(argv[1])=="--independent") {
             independentFeatureTests();std::cout<<"Independent cylindrical feature geometry tests passed\n";return 0;
         }

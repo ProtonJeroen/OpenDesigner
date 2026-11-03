@@ -1,10 +1,16 @@
 #include "CylindricalMoveGeometry.h"
 #include "BooleanGeometry.h"
+#include "MoveFaceGeometry.h"
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepPrimAPI_MakeHalfSpace.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepGProp.hxx>
 #include <BRepLProp_SLProps.hxx>
@@ -573,14 +579,185 @@ Result moveSelected(const TopoDS_Shape& source,const TopoDS_Face& selected,
         Result r=refuse(Status::Failure,Code::KernelFailure,"Independent-feature reconstruction failed: ");r.message+=failure.what();return r;
     }
 }
+
+// A boundary-crossing boss need not be recognizable as a NEW selected boss to
+// remain protected while editing a complete through-hole or unaffected stock
+// side plane below it.
+// Isolate only at the selected hole's physical rim planes; the existing engine
+// must still certify all material and stock inside that slab.
+Result moveWithExterior(const TopoDS_Shape& source,const TopoDS_Face& selected,
+                        const gp_Vec& delta,const Result& refused,
+                        const TopoDS_Face& plane={},double distance=0) {
+    if(refused.status!=Status::Unsupported||refused.code==Code::InteractingFeatures) return refused;
+    try {
+        const double tolerance=10*Precision::Confusion();
+        TopTools_IndexedMapOfShape sourceFaces;TopExp::MapShapes(source,TopAbs_FACE,sourceFaces);
+        if(selected.IsNull()||!sourceFaces.Contains(selected)||sourceFaces.Extent()>64||BRepAdaptor_Surface(selected).GetType()!=GeomAbs_Cylinder) return refused;
+        if(!plane.IsNull()&&(!sourceFaces.Contains(plane)||BRepAdaptor_Surface(plane).GetType()!=GeomAbs_Plane||!std::isfinite(distance))) return refused;
+        BRepBuilderAPI_Copy copy(source,true,false);const auto isolated=copy.Shape();
+        double sourceVolume=0;if(!BRepReconstruction::validSolid(isolated,sourceVolume)||!manifold(isolated)) return refused;
+        for(const auto type:{TopAbs_VERTEX,TopAbs_EDGE,TopAbs_FACE}) {
+            TopTools_IndexedMapOfShape shapes;TopExp::MapShapes(isolated,type,shapes);
+            if(type!=TopAbs_FACE&&shapes.Extent()>256) return refused;
+            for(int i=1;i<=shapes.Extent();++i) {
+                const double t=type==TopAbs_VERTEX?BRep_Tool::Tolerance(TopoDS::Vertex(shapes(i))):
+                    type==TopAbs_EDGE?BRep_Tool::Tolerance(TopoDS::Edge(shapes(i))):BRep_Tool::Tolerance(TopoDS::Face(shapes(i)));
+                if(!std::isfinite(t)||t>tolerance) return refused;
+            }
+        }
+        auto target=TopoDS::Face(copy.ModifiedShape(selected));target.Orientation(selected.Orientation());
+        const auto cylinder=BRepAdaptor_Surface(target).Cylinder();
+        const auto axis=cylinder.Axis().Direction();const double radius=cylinder.Radius();
+        TopTools_IndexedDataMapOfShapeListOfShape adjacency;
+        TopExp::MapShapesAndAncestors(isolated,TopAbs_EDGE,TopAbs_FACE,adjacency);
+        TopTools_IndexedMapOfShape mantle;mantle.Add(target);
+        for(int i=1;i<=mantle.Extent();++i) {
+            const auto face=TopoDS::Face(mantle(i));BRepAdaptor_Surface s(face);
+            BRepLProp_SLProps p(s,(s.FirstUParameter()+s.LastUParameter())/2,(s.FirstVParameter()+s.LastVParameter())/2,1,tolerance);
+            if(!p.IsNormalDefined()) return refused;
+            auto normal=p.Normal();if(face.Orientation()==TopAbs_REVERSED) normal.Reverse();
+            auto radial=gp_Vec(cylinder.Location(),s.Value((s.FirstUParameter()+s.LastUParameter())/2,(s.FirstVParameter()+s.LastVParameter())/2));
+            radial-=gp_Vec(axis)*radial.Dot(gp_Vec(axis));
+            if(normal.Dot(gp_Dir(radial))>-.99) return refused;
+            for(TopExp_Explorer edge(face,TopAbs_EDGE);edge.More();edge.Next())
+                for(TopTools_ListIteratorOfListOfShape it(adjacency.FindFromKey(edge.Current()));it.More();it.Next()) {
+                    const auto next=TopoDS::Face(it.Value());const BRepAdaptor_Surface n(next);
+                    if(n.GetType()==GeomAbs_Cylinder&&sameCylinder(cylinder,n.Cylinder(),tolerance)) mantle.Add(next);
+                }
+        }
+        std::vector<double> ends;std::array<double,2> lengths{};
+        for(int i=1;i<=adjacency.Extent();++i) {
+            TopTools_IndexedMapOfShape inside,outside;
+            for(TopTools_ListIteratorOfListOfShape it(adjacency.FindFromIndex(i));it.More();it.Next())
+                (mantle.Contains(it.Value())?inside:outside).Add(it.Value());
+            if(inside.IsEmpty()||outside.IsEmpty()) continue;
+            if(inside.Extent()!=1||outside.Extent()!=1) return refused;
+            const BRepAdaptor_Surface neighbor(TopoDS::Face(outside(1)));
+            const BRepAdaptor_Curve curve(TopoDS::Edge(adjacency.FindKey(i)));
+            if(neighbor.GetType()!=GeomAbs_Plane||!neighbor.Plane().Axis().Direction().IsParallel(axis,angular)||curve.GetType()!=GeomAbs_Circle) return refused;
+            const auto circle=curve.Circle();
+            if(std::abs(circle.Radius()-radius)>tolerance||gp_Lin(cylinder.Axis()).Distance(circle.Location())>tolerance) return refused;
+            const double end=coordinate(circle.Location(),axis);
+            size_t n=0;while(n<ends.size()&&std::abs(ends[n]-end)>tolerance) ++n;
+            if(n==ends.size()) ends.push_back(end);
+            if(n>=2) return refused;
+            GProp_GProps p;BRepGProp::LinearProperties(adjacency.FindKey(i),p);lengths[n]+=p.Mass();
+        }
+        if(ends.size()!=2) return refused;
+        const double low=std::min(ends[0],ends[1]),high=std::max(ends[0],ends[1]),height=high-low;
+        double area=0;for(int i=1;i<=mantle.Extent();++i) area+=faceArea(mantle(i));
+        if(height<=100*tolerance||std::abs(area-2*pi*radius*height)>tolerance*std::max(1.,radius*height)) return refused;
+        for(double length:lengths) if(std::abs(length-2*pi*radius)>tolerance*std::max(1.,radius)) return refused;
+        for(TopExp_Explorer it(isolated,TopAbs_FACE);it.More();it.Next()) {
+            const auto type=BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType();
+            if(type!=GeomAbs_Plane&&type!=GeomAbs_Cylinder) return refused;
+        }
+        const auto base=cylinder.Location().Translated(gp_Vec(axis)*(low-coordinate(cylinder.Location(),axis)));
+        const auto top=base.Translated(gp_Vec(axis)*height);
+        const auto lower=BRepPrimAPI_MakeHalfSpace(BRepBuilderAPI_MakeFace(gp_Pln(base,axis)).Face(),base.Translated(gp_Vec(axis)*-height)).Solid();
+        const auto upper=BRepPrimAPI_MakeHalfSpace(BRepBuilderAPI_MakeFace(gp_Pln(top,axis)).Face(),top.Translated(gp_Vec(axis)*height)).Solid();
+        const auto slab=BooleanGeometry::combine<BRepAlgoAPI_Cut>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(isolated,lower),upper);
+        const auto exterior=BooleanGeometry::combine<BRepAlgoAPI_Cut>(isolated,slab);
+        double volume=0;size_t count=0;bool exteriorCylinder=false;
+        for(TopExp_Explorer it(exterior,TopAbs_FACE);it.More();it.Next())
+            exteriorCylinder=exteriorCylinder||BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType()==GeomAbs_Cylinder;
+        if(!exteriorCylinder||!BRepReconstruction::validSolid(slab,volume)||!BooleanGeometry::certifiedSolid(exterior,volume,count)||
+           !BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Fuse>(slab,exterior),isolated)) return refused;
+        const double margin=std::max(1.,height);
+        const auto tool=[&](const gp_Vec& shift) {return BRepPrimAPI_MakeCylinder(gp_Ax2(base.Translated(shift-gp_Vec(axis)*margin),axis),radius,height+2*margin).Shape();};
+        const auto oldTool=tool(gp_Vec(0,0,0)),newTool=tool(delta);
+        const BRepExtrema_DistShapeShape oldClearance(oldTool,exterior),newClearance(newTool,exterior);
+        if(!oldClearance.IsDone()||oldClearance.Value()<=100*tolerance) return refused;
+        if(!newClearance.IsDone()||newClearance.Value()<=100*tolerance)
+            return refuse(Status::Failure,Code::InteractingFeatures,"Translated hole touches or intersects preserved exterior feature material.");
+        auto editFace=plane.IsNull()?target:TopoDS::Face(copy.ModifiedShape(plane));
+        if(!plane.IsNull()) editFace.Orientation(plane.Orientation());
+        if(!plane.IsNull()) {
+            const auto support=BRepAdaptor_Surface(editFace).Plane();auto outward=support.Axis().Direction();
+            if(editFace.Orientation()==TopAbs_REVERSED) outward.Reverse();
+            if(std::abs(outward.Dot(axis))>angular) return refused;
+            for(TopExp_Explorer it(editFace,TopAbs_VERTEX);it.More();it.Next()) {
+                const double d=coordinate(BRep_Tool::Pnt(TopoDS::Vertex(it.Current())),axis);
+                if(d<low-tolerance||d>high+tolerance) return refused;
+            }
+            // Clearance only: conservative analytic bounds include cylinder
+            // extrema absent from the seam vertices. These never crop geometry.
+            Bnd_Box bounds;BRepBndLib::AddOptimal(exterior,bounds,false,false);
+            double x0,y0,z0,x1,y1,z1;bounds.Get(x0,y0,z0,x1,y1,z1);
+            const auto origin=support.Location();
+            const double d=std::max((x0-origin.X())*outward.X(),(x1-origin.X())*outward.X())+
+                std::max((y0-origin.Y())*outward.Y(),(y1-origin.Y())*outward.Y())+
+                std::max((z0-origin.Z())*outward.Z(),(z1-origin.Z())*outward.Z());
+            if(d>=-100*tolerance||d-distance>=-100*tolerance) return refused;
+        }
+        TopoDS_Face slabFace;
+        for(TopExp_Explorer it(slab,TopAbs_FACE);it.More();it.Next()) {
+            const auto f=TopoDS::Face(it.Current());
+            if(BRepReconstruction::sameAnalyticSupport(editFace,f)) {slabFace=f;break;}
+        }
+        Result answer;
+        if(plane.IsNull()) answer=moveSelected(slab,slabFace,delta,std::nullopt);
+        else {
+            // The original plane patch must survive isolation unchanged.
+            if(slabFace.IsNull()||std::abs(faceArea(slabFace)-faceArea(editFace))>1.e-8*std::max(1.,faceArea(editFace))||
+               std::abs(faceArea(BooleanGeometry::combine<BRepAlgoAPI_Common>(slabFace,editFace))-faceArea(editFace))>1.e-8*std::max(1.,faceArea(editFace))) return refused;
+            QString reason;answer.shape=MoveFaceGeometry::move(slab,slabFace,distance,reason);
+            if(answer.shape.IsNull()) return refused;
+            answer.status=Status::Success;answer.code=std::abs(distance)<tolerance?Code::Unchanged:Code::Moved;
+            answer.message="Stock plane moved with exterior features preserved.";
+        }
+        if(!answer) return answer;
+        TopoDS_Shape local;
+        if(plane.IsNull()) {
+            const auto originalVolume=BRepPrimAPI_MakeCylinder(gp_Ax2(base,axis),radius,height).Shape();
+            local=BooleanGeometry::combine<BRepAlgoAPI_Cut>(BooleanGeometry::combine<BRepAlgoAPI_Fuse>(isolated,originalVolume),newTool);
+        } else if(std::abs(distance)<tolerance) local=isolated;
+        else if(distance>0) local=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(isolated,BooleanGeometry::combine<BRepAlgoAPI_Cut>(answer.shape,slab));
+        else local=BooleanGeometry::combine<BRepAlgoAPI_Cut>(isolated,BooleanGeometry::combine<BRepAlgoAPI_Cut>(slab,answer.shape));
+        const auto expected=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(answer.shape,exterior);
+        TopoDS_Shape result;QString error;
+        if(!BRepReconstruction::normalize(local,result,error)||!manifold(result)||!BRepReconstruction::equivalent(result,expected)||
+           !BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Common>(result,exterior),exterior))
+            return refuse(Status::Failure,Code::InvalidResult,"Reconstruction changed preserved exterior material or invalidated the solid.");
+        for(TopExp_Explorer it(exterior,TopAbs_FACE);it.More();it.Next()) {
+            const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);
+            if(s.GetType()==GeomAbs_Plane&&s.Plane().Axis().Direction().IsParallel(axis,angular)) {
+                const double d=coordinate(s.Plane().Location(),axis);
+                if(std::abs(d-low)<=tolerance||std::abs(d-high)<=tolerance) continue; // partition interface, not exterior support
+            }
+            double covered=0;
+            for(TopExp_Explorer next(result,TopAbs_FACE);next.More();next.Next()) {
+                const auto candidate=TopoDS::Face(next.Current());
+                if(BRepReconstruction::sameAnalyticSupport(f,candidate)) covered+=faceArea(BooleanGeometry::combine<BRepAlgoAPI_Common>(f,candidate));
+            }
+            if(std::abs(covered-faceArea(f))>1.e-8*std::max(1.,faceArea(f)))
+                return refuse(Status::Failure,Code::InvalidResult,"A preserved exterior feature's trimmed surface changed.");
+        }
+        answer.shape=result;return answer;
+    } catch(const Standard_Failure&) {return refused;}
+      catch(const std::exception&) {return refused;}
+}
 }
 
 CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
         const TopoDS_Shape& source,const TopoDS_Face& selected,const gp_Vec& delta) {
-    return moveSelected(source,selected,delta,std::nullopt);
+    const auto result=moveSelected(source,selected,delta,std::nullopt);
+    return result?result:moveWithExterior(source,selected,delta,result);
 }
 
 CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveBoss(
         const TopoDS_Shape& source,const TopoDS_Face& selected,const gp_Vec& delta,BossBoundaryMode policy) {
     return moveSelected(source,selected,delta,policy);
+}
+
+CylindricalMoveGeometry::Result CylindricalMoveGeometry::movePlanarPreservingExterior(
+        const TopoDS_Shape& source,const TopoDS_Face& plane,double distance) {
+    const auto refused=refuse(Status::Unsupported,Code::UnsupportedStock,"No certified unaffected stock slab with exterior features was found.");
+    for(TopExp_Explorer it(source,TopAbs_FACE);it.More();it.Next()) {
+        const auto face=TopoDS::Face(it.Current());
+        if(BRepAdaptor_Surface(face).GetType()!=GeomAbs_Cylinder) continue;
+        const auto moved=moveWithExterior(source,face,gp_Vec(0,0,0),refused,plane,distance);
+        if(moved) return moved;
+    }
+    return refused;
 }

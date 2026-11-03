@@ -2,6 +2,8 @@
 #include "MainWindow.h"
 #include "CylindricalMoveGeometry.h"
 #include "BRepReconstruction.h"
+#include "MoveFaceGeometry.h"
+#include "BooleanGeometry.h"
 #include "CommandPanelPositioner.h"
 #include <QApplication>
 #include <QAction>
@@ -30,6 +32,10 @@
 #include <gp_Cylinder.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <SelectMgr_Selection.hxx>
+#include <SelectMgr_SensitiveEntity.hxx>
 #include <TopoDS.hxx>
 #include <Image_PixMap.hxx>
 #include <Prs3d_Drawer.hxx>
@@ -63,6 +69,113 @@ void events() {
 }
 
 struct CylindricalMoveFaceSessionTest {
+    static void currentOwners(CadViewport& v,size_t index) {
+        TopTools_IndexedMapOfShape faces;TopExp::MapShapes(v.boxes_[index].shape,TopAbs_FACE,faces);
+        const auto selection=v.boxes_[index].presentation->Selection(AIS_Shape::SelectionMode(TopAbs_FACE));
+        int current=0,stale=0;
+        for(const auto& entity:selection->Entities()) {
+            const auto owner=Handle(StdSelect_BRepOwner)::DownCast(entity->BaseSensitive()->OwnerId());
+            if(owner.IsNull()||owner->Shape().ShapeType()!=TopAbs_FACE) continue;
+            if(faces.Contains(owner->Shape())) ++current;else ++stale;
+        }
+        std::cout<<"Post-replacement face owners: current="<<current<<" stale="<<stale<<std::endl;
+        check(current>0&&stale==0,"AIS selection contains face owners from replaced geometry");
+    }
+    static TopoDS_Face radiusFace(const TopoDS_Shape& shape,double radius) {
+        for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(face);
+            if(s.GetType()==GeomAbs_Cylinder&&std::abs(s.Cylinder().Radius()-radius)<1.e-7) return face;
+        }
+        return {};
+    }
+    static void afterBoundary(const QString& path) {
+        NativeDocumentSnapshot snapshot;QString error;QByteArray bytes;
+        const auto stock=BRepPrimAPI_MakeBox(gp_Pnt(-8,0,0),171,80,60).Shape();
+        const auto bore=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,48,0),gp_Dir(0,0,1)),17,60).Shape();
+        const auto outside=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(98,7,60),gp_Dir(0,0,1)),18,55).Shape();
+        const auto originalBoss=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(98,36,60),gp_Dir(0,0,1)),18,55).Shape();
+        const auto stockWithHole=BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,bore);
+        if(!path.isEmpty()) {
+            QFile file(path);check(file.open(QIODevice::ReadOnly),"Cannot read boundary bug document");bytes=file.readAll();file.close();
+            check(NativeDocumentStorage::load(path,snapshot,error),qPrintable(error));
+            check(snapshot.parts.size()==2&&BRepReconstruction::equivalent(snapshot.parts[0].shape,BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stockWithHole,outside)),
+                "Boundary document differs from independent oracle");
+        } else {
+            NativePartState first;first.id="boundary-part";first.name="Unite 5";
+            first.shape=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stockWithHole,outside);
+            NativePartState second;second.id="other-part";second.name="Part 6";second.shape=BRepPrimAPI_MakeBox(100,80,60).Shape();
+            second.transform.SetTranslation(gp_Vec(223,0,0));snapshot.parts={first,second};snapshot.activePartId=second.id;
+        }
+        MainWindow window;window.resize(1200,900);window.show();events();auto& v=*window.findChild<CadViewport*>();
+        QAction* action=nullptr;for(auto* a:window.findChildren<QAction*>()) if(a->text()=="Move Face") action=a;
+        check(action,"Move Face command missing");
+        // Loaded result is valid and all its planes are eligible independently
+        // of cylindrical capability. No saved session state is involved.
+        for(TopExp_Explorer it(snapshot.parts[0].shape,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());if(BRepAdaptor_Surface(face).GetType()!=GeomAbs_Plane) continue;
+            gp_Pnt p;gp_Dir n;check(MoveFaceGeometry::reference(snapshot.parts[0].shape,face,p,n,error),"Native boundary result disables planar recognition");
+        }
+        const auto saved=snapshot.parts[0].shape;
+        for(bool trim:{false,true}) {
+            // Replay an actual OK from an interior boss using the exact saved
+            // document's supporting stock/hole, preserving its Part ID/placement.
+            snapshot.parts[0].shape=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(saved,outside),originalBoss);
+            check(v.importDocumentSnapshot(snapshot,error),qPrintable(error));v.view_->SetProj(V3d_XposYnegZpos);v.fitSelection({0});events();
+            const auto before=v.boxes_[0];const auto stamp=serialized(before.shape);
+            select(v,0,radiusFace(before.shape,18));action->trigger();
+            check(v.commandSession_.has_value(),"Interior boss session failed");
+            v.cylinderMoveDirection_->setCurrentIndex(2);v.cylinderBossBoundary_->setCurrentIndex(trim?1:0);input(v,"-29");
+            check(v.commandSession_->valid,"Boundary crossing preview failed");
+            const auto candidate=v.commandSession_->candidate;
+            if(!trim) check(BRepReconstruction::equivalent(candidate,saved),"Exact saved Extend result was not reproduced");
+            v.commandButtons_->button(QDialogButtonBox::Ok)->click();events();
+            check(!v.commandSession_&&v.boxes_[0].persistentId==before.persistentId&&v.boxes_[0].presentation==before.presentation,"OK replaced Part identity or left session active");
+            check(BRepReconstruction::equivalent(candidate,v.boxes_[0].shape),"Committed boundary result differs from preview");
+            check(v.boxes_[0].presentation->Shape().IsSame(v.boxes_[0].shape),"AIS presentation has old B-Rep");
+            currentOwners(v,0);
+            // Fresh real viewport picking must resolve an unchanged planar face
+            // to a member of the new B-Rep, not an obsolete face owner.
+            TopoDS_Face planar;
+            for(TopExp_Explorer it(v.boxes_[0].shape,TopAbs_FACE);it.More();it.Next()) {
+                const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);
+                if(s.GetType()==GeomAbs_Plane&&std::abs(s.Plane().Axis().Direction().X())>.99&&s.Plane().Distance(gp_Pnt(163,0,0))<1.e-6) {planar=f;break;}
+            }
+            check(!planar.IsNull(),"Unchanged side plane disappeared");
+            v.selectParts({});GProp_GProps p;BRepGProp::SurfaceProperties(planar,p);const auto point=project(v,p.CentreOfMass().Transformed(v.boxes_[0].orientation));
+            v.context_->MoveTo(point.x(),point.y(),v.view_,Standard_False);check(v.context_->HasDetected(),"Committed planar face is not pickable");
+            v.context_->SelectDetected(AIS_SelectionScheme_Replace);
+            check(v.selectionContext().kind==CadViewport::SelectionContext::Kind::Faces,"Fresh planar pick resolves stale topology");
+            const auto picked=v.selectionContext().faces.front();
+            check(picked.partIndex==0&&picked.face.IsSame(planar),"Planar test ray did not hit the intended unchanged plane");
+            action->trigger();check(v.commandSession_&&v.commandSession_->moveFeature==CadViewport::MoveFaceFeature::Planar,"Planar Move Face activation rejected after boss commit");
+            input(v,"2");check(v.commandSession_->valid,"Planar Move Face preview failed after boss commit");v.cancelCommandSession();
+            select(v,0,radiusFace(v.boxes_[0].shape,18));action->trigger();
+            check(!v.commandSession_,"Boundary boss incorrectly bypassed its unsupported source-topology rules");
+            const auto startHole=[&] {
+                select(v,0,radiusFace(v.boxes_[0].shape,17));action->trigger();
+                check(v.commandSession_&&v.commandSession_->moveFeature==CadViewport::MoveFaceFeature::ThroughHole,"Unaffected hole disabled by unsupported boundary boss");
+                v.cylinderMoveDirection_->setCurrentIndex(1);input(v,"3");
+                check(v.commandSession_->valid,"Unaffected hole cannot preview after boundary crossing");
+            };
+            startHole();v.cancelCommandSession();check(BRepReconstruction::equivalent(v.boxes_[0].shape,candidate),"Hole Cancel changed boundary result");
+            startHole();const auto holeCandidate=v.commandSession_->candidate;
+            v.commandButtons_->button(QDialogButtonBox::Ok)->click();currentOwners(v,0);
+            check(BRepReconstruction::equivalent(v.boxes_[0].shape,holeCandidate),"Hole commit differs from preview");
+            startHole();v.cancelCommandSession(); // repeated supported edits stay available
+            v.undoPull();check(BRepReconstruction::equivalent(v.boxes_[0].shape,candidate),"Hole Undo did not preserve boundary boss");
+            v.undoPull();check(v.boxes_[0].shape.IsSame(before.shape)&&serialized(before.shape)==stamp,"Undo failed after boundary commit");currentOwners(v,0);
+            v.redoPull();check(BRepReconstruction::equivalent(v.boxes_[0].shape,candidate),"Redo lost boundary result");currentOwners(v,0);
+            v.redoPull();check(BRepReconstruction::equivalent(v.boxes_[0].shape,holeCandidate),"Hole Redo lost cached geometry");currentOwners(v,0);
+            check(v.boxes_[0].persistentId==before.persistentId,"Undo/Redo changed UUID");
+            for(int r=1;r<=3;++r) for(int c=1;c<=4;++c)
+                near(v.boxes_[0].orientation.Value(r,c),before.orientation.Value(r,c),"Boundary edit changed Part placement");
+            // Another Part remains editable through the same dispatch.
+            TopExp_Explorer other(v.boxes_[1].shape,TopAbs_FACE);select(v,1,TopoDS::Face(other.Current()));action->trigger();
+            check(v.commandSession_&&v.commandSession_->moveFeature==CadViewport::MoveFaceFeature::Planar,"Other Part disabled by first Part edit");v.cancelCommandSession();
+        }
+        if(!path.isEmpty()) {QFile file(path);check(file.open(QIODevice::ReadOnly)&&file.readAll()==bytes,"Boundary bug document was modified");}
+        std::cout<<"Committed boundary topology/selection regression passed\n";
+    }
     static void documentRegression(const QString& path) {
         NativeDocumentSnapshot snapshot;QString error;QByteArray originalBytes;
         const auto stock=BRepPrimAPI_MakeBox(163,80,60).Shape();
@@ -326,3 +439,4 @@ struct CylindricalMoveFaceSessionTest {
 };
 void runCylindricalMoveFaceSessionTests() {CylindricalMoveFaceSessionTest::run();}
 void runCylindricalMoveDocumentTest(const QString& path) {CylindricalMoveFaceSessionTest::documentRegression(path);}
+void runCylindricalMoveBoundaryTest(const QString& path) {CylindricalMoveFaceSessionTest::afterBoundary(path);}

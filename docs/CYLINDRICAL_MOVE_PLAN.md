@@ -557,6 +557,88 @@ including Trim/Extend and interaction refusal, with the original SHA-256 intact.
 `git diff --check` passed. No full suite was run; the supplied binary stays
 untracked and unchanged.
 
+## 9D.3 — edits after a confirmed boss boundary crossing
+
+The exact supplied `moveCylinderBug.odc` (SHA-256
+`a2033d919c2f962e2e95248d4d0c22b6bb2c77da49dd943b39729015103f9ac6`)
+loads through the native reader. Unite 5 is one valid closed solid, 10 faces,
+identity placement, persistent ID `slot-4`, volume 822307.964473723 mm³. Its stock spans
+`(-8,0,0)..(163,80,60)`, its R17 hole is at `(54,48)` over z=0..60, and its full
+R18 boss is at `(98,7)` over z=60..115, overhanging y=0 by 11 mm. Part 6 is a
+separate valid box (Active Part), translated -402 in X; it remains independent.
+
+Investigation distinguishes capability from lifecycle:
+
+- Every actual planar face passes `MoveFaceGeometry::reference` independently
+  of cylindrical recognition. The 3D Modeling action and typed face selection
+  remain available. Real picks are checked against the intended current face;
+  a screen ray occluded by the boss must not be mistaken for a planar pick.
+- After actual OK for Extend and Trim, the stable Part presentation contains the
+  new B-Rep. Every computed face owner is a member of that new shape; there are
+  no obsolete owners. UUID, placement and presentation identity are preserved.
+  Undo/Redo also expose only current faces. No capability cache or stale session
+  was found; no AIS/session refresh workaround is introduced.
+- Geometry is the failure point. The multi-feature recognizer requires every
+  cylinder to meet the original complete, interior-footprint certificates, so
+  an unselected boundary boss poisons recognition of an unchanged complete hole.
+  Separately, OCCT's global intersection-offset builder returns no candidate for
+  the valid saved overhang configuration. The all-planar cell fallback cannot
+  accept its cylinders. Thus planar activation is valid but nonzero previews
+  fail; this is not a broken planar-selection eligibility check.
+
+The correction isolates only the unaffected stock edit using a complete inward
+cylindrical hole's two physical rim planes. Its connected mantle, full circular
+rims, oriented material side and actual planar neighbors are certified first.
+Cuts with those exact planes partition the source into a stock slab and exterior
+material. The slab must pass the original geometry operation's complete stock/
+feature/material rules. The exterior must contain cylindrical geometry, bound
+valid positive solids and recompose with the slab to the exact source material.
+No bounding-box crop, arbitrary bridge or selected-boss recognition bypass is
+used. Original input validity, tolerance and complexity limits still apply.
+
+For a hole edit, both original and translated through-tools must have certified
+positive clearance from all exterior material. Only the old hole is filled and
+the new tool subtracted from the original Part. For a planar edit, the original
+patch must survive isolation unchanged; only a stock side plane perpendicular
+to the slab axis is accepted, with all exterior material strictly inside both
+old and requested plane halfspaces. Conservative analytic bounds certify this
+clearance, including curved extrema absent from B-Rep seam vertices; the bounds
+never define/crop geometry. The unchanged planar operation rebuilds the slab,
+then its signed added/removed material is applied locally to the original Part.
+The offset builder receives the certified single solid inside any Boolean
+compound wrapper.
+
+Both paths require final normalization, BRepCheck, one closed manifold solid,
+self-interference checks and equivalence to the independently recomposed edited
+slab plus original exterior. Common verifies all exterior material is retained;
+unpartitioned exterior face regions must survive on their original supports.
+Collision/tangency, lost connections, ambiguous partitions and changed protected
+surfaces fail atomically. An unsupported moved boss remains a feature-level
+refusal; it does not disable a separated hole or certified unaffected side plane.
+This fallback requires a complete through-hole to establish the physical stock
+slab. Editing interface/feature-touching planes, repeated movement of partial/
+overhanging bosses and unrestricted freeform reconstruction remain unsupported.
+
+Focused regressions reproduce actual OK for both modes, then real planar picks,
+nonzero planar/hole previews, repeated supported edits, explicit boss refusal,
+Cancel, cached Undo/Redo, face-owner membership, stable UUID/presentation/placement
+and another Part's activation. The optional `--cylindrical-boundary /path/to/file`
+path uses the supplied native document without saving it. Portable equivalent
+geometry is registered as `cylindrical-move-face-boundary`; headless
+`cylindrical-boundary-follow-up-geometry` checks independent material/occupancy,
+both planar signs, hole boundary crossing/exit, preserved exterior geometry and
+safe collision refusal. No supplied binary is committed.
+
+Verification: incremental builds of `OpenDesigner`, `OpenDesignerMoveFaceTests`
+and `OpenDesignerCylindricalMoveTests` passed. Seven targeted CTests passed:
+`cylindrical-move-geometry`, `cylindrical-independent-features`,
+`cylindrical-boundary-follow-up-geometry`, `move-face`,
+`cylindrical-move-face-sessions`, `cylindrical-move-face-recognition` and
+`cylindrical-move-face-boundary`. The exact native bug-document replay also
+passed for both confirmations and subsequent edits, with zero stale face owners
+and the original SHA-256 unchanged. `git diff --check` passed. No full suite or
+unrelated tests were run.
+
 ## 9E — transactions, persistence and acceptance
 
 Confirm once into the same Part slot with one cached Undo/Redo step. Preserve

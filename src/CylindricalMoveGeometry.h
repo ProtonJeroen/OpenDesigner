@@ -28,6 +28,8 @@ struct Result {
 // Independent parallel holes/bosses in the same Part are preserved. Boundary
 // crossings and complete exit are allowed; interacting, disconnected or
 // nonmanifold results are refused. Does not mutate source, even on failure.
+// Separated exterior bosses, including unsupported truncated/overhanging source
+// bosses, can remain protected while the selected complete stock hole is moved.
 Result moveThroughHole(const TopoDS_Shape& source, const TopoDS_Face& mantle,
                        const gp_Vec& displacement);
 // One complete boss on rectangular stock, preserving independent parallel
@@ -36,4 +38,9 @@ Result moveThroughHole(const TopoDS_Shape& source, const TopoDS_Face& mantle,
 // overhang. No invented bridges or support pedestals. Policy is always explicit.
 Result moveBoss(const TopoDS_Shape& source, const TopoDS_Face& mantle,
                 const gp_Vec& displacement, BossBoundaryMode policy);
+// Narrow fallback for an unchanged stock side plane when exterior bosses make
+// the global offset builder fail. Uses physical through-hole rim planes to
+// isolate the stock; keeps separated exterior geometry fixed and certified.
+Result movePlanarPreservingExterior(const TopoDS_Shape& source,
+                                    const TopoDS_Face& plane, double distance);
 }
