@@ -34,6 +34,10 @@ bool finishLocal(const Neighborhood& source, const TopoDS_Shape& candidate,
                  const TopoDS_Shape& editRegion, const std::vector<TopoDS_Face>& affected,
                  const std::vector<TopoDS_Face>& moved, const gp_Trsf& displacement,
                  Result& result, QString& error);
+// Constant-section planar motion along invariant adjacent supports. No stock
+// reconstruction: sweep the current trimmed face and certify the local change.
+bool movePlanarLocal(const TopoDS_Shape& source, const TopoDS_Face& target,
+                     double distance, Result& result, QString& error);
 bool finish(const TopoDS_Shape& source, const TopoDS_Shape& candidate,
             const TopoDS_Face& target, const gp_Pln& expected, Result& result, QString& error);
 bool rebuildPlanar(const TopoDS_Shape& source, const TopoDS_Face& target,
@@ -43,7 +47,10 @@ bool prepare(const TopoDS_Shape& source, const TopoDS_Face& target,
              Prepared& result, QString& error);
 bool validSolid(const TopoDS_Shape& shape, double& volume);
 // Common final cleanup; callers still enforce their operation's material policy.
-bool normalize(const TopoDS_Shape& candidate, TopoDS_Shape& result, QString& error);
+// Local reconstruction may retain certified split faces if optional same-domain
+// merging fails. The unmerged result must pass the SAME solid/material checks.
+bool normalize(const TopoDS_Shape& candidate, TopoDS_Shape& result, QString& error,
+               bool allowValidSplits = false);
 bool sameAnalyticSupport(const TopoDS_Face& a, const TopoDS_Face& b);
 bool supports(const TopoDS_Shape& source, const TopoDS_Shape& result,
               const TopoDS_Face& target, const gp_Pln& expected, QString& error);

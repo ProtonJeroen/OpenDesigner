@@ -17,6 +17,7 @@
 #include <QMenu>
 #include <QStandardItemModel>
 #include <QThread>
+#include <QTreeWidget>
 #include <QFile>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
@@ -90,15 +91,17 @@ struct CylindricalMoveFaceSessionTest {
     }
     static void afterBoundary(const QString& path) {
         NativeDocumentSnapshot snapshot;QString error;QByteArray bytes;
-        const auto stock=BRepPrimAPI_MakeBox(gp_Pnt(-8,0,0),171,80,60).Shape();
-        const auto bore=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,48,0),gp_Dir(0,0,1)),17,60).Shape();
-        const auto outside=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(98,7,60),gp_Dir(0,0,1)),18,55).Shape();
-        const auto originalBoss=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(98,36,60),gp_Dir(0,0,1)),18,55).Shape();
+        const bool originalDocument=path.endsWith("moveCylinder.odc");
+        const double left=originalDocument?0:-8,bossX=originalDocument?121:98,holeY=originalDocument?36:48;
+        const auto stock=BRepPrimAPI_MakeBox(gp_Pnt(left,0,0),163-left,80,60).Shape();
+        const auto bore=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,holeY,0),gp_Dir(0,0,1)),17,60).Shape();
+        const auto outside=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(bossX,7,60),gp_Dir(0,0,1)),18,55).Shape();
+        const auto originalBoss=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(bossX,36,60),gp_Dir(0,0,1)),18,55).Shape();
         const auto stockWithHole=BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,bore);
         if(!path.isEmpty()) {
             QFile file(path);check(file.open(QIODevice::ReadOnly),"Cannot read boundary bug document");bytes=file.readAll();file.close();
             check(NativeDocumentStorage::load(path,snapshot,error),qPrintable(error));
-            check(snapshot.parts.size()==2&&BRepReconstruction::equivalent(snapshot.parts[0].shape,BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stockWithHole,outside)),
+            check(snapshot.parts.size()==2&&BRepReconstruction::equivalent(snapshot.parts[0].shape,BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stockWithHole,originalDocument?originalBoss:outside)),
                 "Boundary document differs from independent oracle");
         } else {
             NativePartState first;first.id="boundary-part";first.name="Unite 5";
@@ -115,13 +118,15 @@ struct CylindricalMoveFaceSessionTest {
             const auto face=TopoDS::Face(it.Current());if(BRepAdaptor_Surface(face).GetType()!=GeomAbs_Plane) continue;
             gp_Pnt p;gp_Dir n;check(MoveFaceGeometry::reference(snapshot.parts[0].shape,face,p,n,error),"Native boundary result disables planar recognition");
         }
-        const auto saved=snapshot.parts[0].shape;
+        const auto saved=originalDocument?BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stockWithHole,outside):snapshot.parts[0].shape;
+        const auto interior=originalDocument?snapshot.parts[0].shape: BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(saved,outside),originalBoss);
         for(bool trim:{false,true}) {
             // Replay an actual OK from an interior boss using the exact saved
             // document's supporting stock/hole, preserving its Part ID/placement.
-            snapshot.parts[0].shape=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(saved,outside),originalBoss);
+            snapshot.parts[0].shape=interior;
             check(v.importDocumentSnapshot(snapshot,error),qPrintable(error));v.view_->SetProj(V3d_XposYnegZpos);v.fitSelection({0});events();
             const auto before=v.boxes_[0];const auto stamp=serialized(before.shape);
+            auto* tree=window.findChild<QTreeWidget*>();auto* row=tree->topLevelItem(0)->child(0);
             select(v,0,radiusFace(before.shape,18));action->trigger();
             check(v.commandSession_.has_value(),"Interior boss session failed");
             v.cylinderMoveDirection_->setCurrentIndex(2);v.cylinderBossBoundary_->setCurrentIndex(trim?1:0);input(v,"-29");
@@ -133,6 +138,39 @@ struct CylindricalMoveFaceSessionTest {
             check(BRepReconstruction::equivalent(candidate,v.boxes_[0].shape),"Committed boundary result differs from preview");
             check(v.boxes_[0].presentation->Shape().IsSame(v.boxes_[0].shape),"AIS presentation has old B-Rep");
             currentOwners(v,0);
+            const auto boundaryStamp=serialized(v.boxes_[0].shape);
+            for(TopExp_Explorer it(v.boxes_[0].shape,TopAbs_FACE);it.More();it.Next()) {
+                const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);
+                if(s.GetType()!=GeomAbs_Plane) continue;
+                gp_Pnt center;gp_Dir normal;QString reason;
+                check(MoveFaceGeometry::reference(v.boxes_[0].shape,f,center,normal,reason),qPrintable(reason));
+                select(v,0,f);std::unique_ptr<QMenu> menu(v.createSelectionMenu(QPoint()));
+                auto* move=menu->findChild<QAction*>("context.move_face");
+                check(move&&move->isEnabled(),"One boundary boss disabled another plane's context action");
+                // These axial faces failed the old global offset + planar-cell
+                // paths. Exercise both signed previews, not just recognition.
+                if(std::abs(normal.Z())>.99) {
+                    move->trigger();check(v.commandSession_.has_value(),"Post-boundary planar context activation failed");
+                    for(const auto value:{"2","-2"}) {input(v,value);check(v.commandSession_->valid,qPrintable(QString("Plane z=%1 offset=%2 Trim=%3: %4").arg(s.Plane().Location().Z()).arg(value).arg(trim).arg(v.commandSession_->geometryError)));}
+                    v.cancelCommandSession();
+                }
+            }
+            check(serialized(v.boxes_[0].shape)==boundaryStamp,"Per-face preview/Cancel changed boundary geometry");
+            // Commit a formerly failing bottom-face edit, then test cached
+            // Undo/Redo and repeated activation on the newly reconstructed B-Rep.
+            const auto bottom=[&] {
+                for(TopExp_Explorer it(v.boxes_[0].shape,TopAbs_FACE);it.More();it.Next()) {
+                    const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);
+                    if(s.GetType()==GeomAbs_Plane&&s.Plane().Axis().Direction().IsParallel(gp_Dir(0,0,1),1.e-8)&&s.Plane().Location().Z()<1) return f;
+                }return TopoDS_Face();
+            };
+            select(v,0,bottom());action->trigger();input(v,"2");check(v.commandSession_->valid,"Bottom preview failed");
+            const auto bottomResult=v.commandSession_->candidate;v.commandButtons_->button(QDialogButtonBox::Ok)->click();currentOwners(v,0);
+            select(v,0,bottom());action->trigger();input(v,"1");check(v.commandSession_->valid,"Repeated bottom edit failed");v.cancelCommandSession();
+            v.undoPull();check(BRepReconstruction::equivalent(v.boxes_[0].shape,candidate),"Planar Undo lost boss result");
+            v.redoPull();check(BRepReconstruction::equivalent(v.boxes_[0].shape,bottomResult),"Planar Redo lost result");
+            select(v,0,bottom());action->trigger();check(v.commandSession_.has_value(),"Planar activation failed after Redo");v.cancelCommandSession();
+            v.undoPull();
             // Fresh real viewport picking must resolve an unchanged planar face
             // to a member of the new B-Rep, not an obsolete face owner.
             TopoDS_Face planar;
@@ -167,6 +205,9 @@ struct CylindricalMoveFaceSessionTest {
             v.redoPull();check(BRepReconstruction::equivalent(v.boxes_[0].shape,candidate),"Redo lost boundary result");currentOwners(v,0);
             v.redoPull();check(BRepReconstruction::equivalent(v.boxes_[0].shape,holeCandidate),"Hole Redo lost cached geometry");currentOwners(v,0);
             check(v.boxes_[0].persistentId==before.persistentId,"Undo/Redo changed UUID");
+            check(v.boxes_[0].presentation==before.presentation&&v.boxes_[0].name==before.name&&
+                v.boxes_[0].color==before.color&&v.boxes_[0].visible==before.visible&&tree->topLevelItem(0)->child(0)==row,
+                "Boundary/planar edits changed appearance or browser identity");
             for(int r=1;r<=3;++r) for(int c=1;c<=4;++c)
                 near(v.boxes_[0].orientation.Value(r,c),before.orientation.Value(r,c),"Boundary edit changed Part placement");
             // Another Part remains editable through the same dispatch.

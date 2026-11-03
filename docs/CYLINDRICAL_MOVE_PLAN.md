@@ -694,6 +694,31 @@ focused Move Face/cylindrical tests passed. The final complete-wall/cap survival
 guard was rechecked with the local neighborhood test and native-reader replay of
 both supplied documents. No full CTest suite was run.
 
+## 9D.5 — post-boss boundary reconstruction
+
+See [diagnosis, local certificates and exact limitations](BOSS_BOUNDARY_FOLLOW_UP.md).
+Native replay did not reproduce a whole-Part action disable: all planes recognize,
+the right side and unchanged hole already edit, and AIS owners are current. The
+expanded regression reproduced axial planar preview failures after both policies:
+the primary OCCT offset returns no shape, while existing fallbacks require a
+recoverable rectangular slab or an entirely planar Part. Earlier tests checked
+only the right-hand side plane, hiding this reconstruction gap.
+
+Add local constant-section planar reconstruction from the actual trimmed face,
+and a complete-hole local fill/cut certificate where a later planar edit makes
+the old rectangular hole-rim slab assumption fail. Both reuse neighborhood copy
+mapping, protected-material/face checks, non-destructive Booleans and strict solid
+certification. Recognize cylinder supports independently of parameter-axis sign;
+retain certified split faces if optional same-domain unification fails. Preserve
+explicit boss policy semantics and refuse non-invariant curved intersections or
+unsupported selected partial/overhanging bosses per face. No stock engine or
+feature-history dependency is added.
+
+Verification: incremental application, geometry/session and shared face-transform
+builds passed; all nine focused regressions passed. Separate native-reader replay
+of both supplied documents passed both policies and post-confirmation edits.
+Binary files remain unchanged/untracked. No full CTest suite was run.
+
 ## 9E — transactions, persistence and acceptance
 
 Confirm once into the same Part slot with one cached Undo/Redo step. Preserve

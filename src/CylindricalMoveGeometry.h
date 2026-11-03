@@ -30,6 +30,8 @@ struct Result {
 // nonmanifold results are refused. Does not mutate source, even on failure.
 // Separated exterior bosses, including unsupported truncated/overhanging source
 // bosses, can remain protected while the selected complete stock hole is moved.
+// A local rim/material certificate also handles nonrectangular neighborhoods;
+// unrelated faces and material must survive independently of any stock pattern.
 Result moveThroughHole(const TopoDS_Shape& source, const TopoDS_Face& mantle,
                        const gp_Vec& displacement);
 // One complete boss on a certified planar support. The local interior path

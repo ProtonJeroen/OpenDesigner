@@ -169,13 +169,18 @@ TopoDS_Shape MoveFaceGeometry::move(const TopoDS_Shape& source,const TopoDS_Face
                                   double distance,QString& error) {
     const auto offset=offsetMove(source,face,distance,error);
     if(!offset.IsNull()) return offset;
+    const QString offsetError=error;
     gp_Pnt center;gp_Dir normal;
     if(!std::isfinite(distance)||!reference(source,face,center,normal,error)) return {};
+    BRepReconstruction::Result local;QString localError;
+    if(BRepReconstruction::movePlanarLocal(source,face,distance,local,localError)) {error.clear();return local.solid;}
     const auto preserved=CylindricalMoveGeometry::movePlanarPreservingExterior(source,face,distance);
     if(preserved) {error.clear();return preserved.shape;}
     auto expected=BRepAdaptor_Surface(face).Plane();expected.Translate(gp_Vec(normal)*distance);
     BRepReconstruction::Result rebuilt;
-    if(!BRepReconstruction::rebuildPlanar(source,face,expected,rebuilt,error)) return {};
+    if(!BRepReconstruction::rebuildPlanar(source,face,expected,rebuilt,error)) {
+        error=QStringLiteral("%1 Local route: %2 Planar-cell route: %3").arg(offsetError,localError,error);return {};
+    }
     GProp_GProps before,after;BRepGProp::VolumeProperties(source,before);BRepGProp::VolumeProperties(rebuilt.solid,after);
     if((after.Mass()-before.Mass())*distance<=0) {
         error=QStringLiteral("Reconstructed volume did not change in the requested direction.");return {};

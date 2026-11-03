@@ -330,6 +330,13 @@ void independentFeatureTests() {
     require(!refusedMove&&refusedMove.shape.IsNull()&&serialized(interacting)==before,"Interacting source geometry was accepted or mutated");
 }
 void boundaryFollowUpTests() {
+    const auto forward=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(10,20,0),gp_Dir(0,0,1)),7,15).Shape();
+    const auto reversed=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(10,20,15),gp_Dir(0,0,-1)),7,15).Shape();
+    const auto wrongRadius=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(10,20,0),gp_Dir(0,0,1)),8,15).Shape();
+    const auto wrongAxis=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(11,20,0),gp_Dir(0,0,1)),7,15).Shape();
+    require(BRepReconstruction::sameAnalyticSupport(mantle(forward),mantle(reversed)),"Cylinder parameter-axis reversal changed support identity");
+    require(!BRepReconstruction::sameAnalyticSupport(mantle(forward),mantle(wrongRadius))&&
+            !BRepReconstruction::sameAnalyticSupport(mantle(forward),mantle(wrongAxis)),"Different cylindrical geometry matched as a support");
     const auto stock=BRepPrimAPI_MakeBox(gp_Pnt(-8,0,0),171,80,60).Shape();
     const auto bore=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,48,0),gp_Dir(0,0,1)),17,60).Shape();
     const auto boss=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(98,36,60),gp_Dir(0,0,1)),18,55).Shape();
@@ -379,6 +386,89 @@ void boundaryFollowUpTests() {
             const auto expected=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(changedStock,bore),exterior);
             require(BRepReconstruction::equivalent(moved,expected),"Planar follow-up changed exterior material");certified(moved,volume(expected));
         }
+        // Axial faces were recognized but could not reconstruct after either
+        // boundary policy. Independent box/cylinder oracles verify actual
+        // material, rather than accepting the local algorithm's own sweep.
+        for(int which=0;which<3;++which) for(double distance:{2.,-2.}) {
+            TopoDS_Face axial;
+            const double z=which==0?0:which==1?60:115;
+            for(TopExp_Explorer it(crossed.shape,TopAbs_FACE);it.More();it.Next()) {
+                const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);
+                if(s.GetType()!=GeomAbs_Plane||!s.Plane().Axis().Direction().IsParallel(gp_Dir(0,0,1),1.e-8)||std::abs(s.Plane().Location().Z()-z)>1.e-7) continue;
+                gp_Pnt center;gp_Dir n;QString error;require(MoveFaceGeometry::reference(crossed.shape,f,center,n,error),"Axial reference failed");
+                if(which!=1||n.Z()>0) {axial=f;break;}
+            }
+            require(!axial.IsNull(),"Missing axial follow-up target");
+            const double bottom=which==0?-distance:0,top=which==1?60+distance:60,cap=which==2?115+distance:115;
+            const auto newStock=BRepPrimAPI_MakeBox(gp_Pnt(-8,0,bottom),171,80,top-bottom).Shape();
+            const auto newBore=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,48,bottom),gp_Dir(0,0,1)),17,top-bottom).Shape();
+            auto newBoss=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(98,7,60),gp_Dir(0,0,1)),18,cap-60).Shape();
+            if(policy==BossBoundaryMode::Trim) newBoss=BooleanGeometry::combine<BRepAlgoAPI_Common>(newBoss,
+                BRepPrimAPI_MakeBox(gp_Pnt(-8,0,60),171,80,cap-60).Shape());
+            auto expected=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(newStock,newBore),newBoss);
+            // Lowering the support exposes the boss cylinder down to the new
+            // support only over the original attached footprint.
+            if(which==1&&distance<0) {
+                auto extension=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(98,7,top),gp_Dir(0,0,1)),18,-distance).Shape();
+                extension=BooleanGeometry::combine<BRepAlgoAPI_Common>(extension,BRepPrimAPI_MakeBox(gp_Pnt(-8,0,top),171,80,-distance).Shape());
+                expected=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(expected,extension);
+            }
+            QString error;const auto moved=MoveFaceGeometry::move(crossed.shape,axial,distance,error);
+            require(!moved.IsNull(),"Axial follow-up failed (policy "+std::to_string(int(policy))+", face "+std::to_string(which)+", offset "+std::to_string(distance)+"): "+error.toStdString());
+            require(BRepReconstruction::equivalent(moved,expected),"Axial follow-up differs from independent material oracle");certified(moved,volume(expected));
+            const auto nextHole=moveThroughHole(moved,findRadius(moved,17),gp_Vec(2,0,0));
+            require(bool(nextHole),"Planar reconstruction disabled unchanged hole (policy "+std::to_string(int(policy))+", face "+std::to_string(which)+", offset "+std::to_string(distance)+"): "+nextHole.message);
+            const auto shiftedBore=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(56,48,bottom),gp_Dir(0,0,1)),17,top-bottom).Shape();
+            const auto holeOracle=BooleanGeometry::combine<BRepAlgoAPI_Cut>(BooleanGeometry::combine<BRepAlgoAPI_Fuse>(expected,newBore),shiftedBore);
+            require(BRepReconstruction::equivalent(nextHole.shape,holeOracle),"Subsequent hole move changed boss/planar material");
+            if(which==0&&distance==2) {
+                gp_Trsf rotated;rotated.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.47);rotated.SetTranslationPart(gp_Vec(201,-75,42));
+                const auto placed=BRepBuilderAPI_Transform(crossed.shape,rotated,true).Shape();
+                const auto placedTarget=TopoDS::Face(BRepBuilderAPI_Transform(axial,rotated,true).Shape());
+                // Resolve actual membership geometrically, never pass the
+                // separately transformed face as though it were a subshape.
+                TopoDS_Face member;
+                for(TopExp_Explorer it(placed,TopAbs_FACE);it.More();it.Next())
+                    if(BRepReconstruction::sameAnalyticSupport(placedTarget,TopoDS::Face(it.Current()))) {member=TopoDS::Face(it.Current());break;}
+                BRepReconstruction::Result local;
+                require(BRepReconstruction::movePlanarLocal(placed,member,distance,local,error),"Rotated local planar move failed: "+error.toStdString());
+                require(BRepReconstruction::equivalent(local.solid,BRepBuilderAPI_Transform(expected,rotated,true).Shape()),"Rotated local material changed");
+                require(!BRepReconstruction::movePlanarLocal(crossed.shape,axial,-100,local,error)&&local.solid.IsNull(),"Sweep through opposite material boundary accepted");
+            }
+            if(which==1&&distance==2) {
+                BRepReconstruction::Result local;
+                require(!BRepReconstruction::movePlanarLocal(crossed.shape,axial,100,local,error)&&local.solid.IsNull(),"Sweep past boss cap invented a reversed cylindrical cavity");
+            }
+            for(const auto p:{gp_Pnt(10,10,-1),gp_Pnt(10,10,61),gp_Pnt(98,-5,80),gp_Pnt(54,48,20),gp_Pnt(98,7,116)}) {
+                BRepClass3d_SolidClassifier actual(moved,p,1.e-7),oracle(expected,p,1.e-7);
+                require(actual.State()==oracle.State(),"Axial follow-up occupancy mismatch");
+            }
+        }
+        BRepReconstruction::Result rejected;QString reason;
+        // Trim's merged front cut plane meets a curved wall across its movement
+        // direction. Extend's stock front is still an invariant rectangular patch.
+        for(TopExp_Explorer it(crossed.shape,TopAbs_FACE);it.More();it.Next()) {
+            const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);
+            if(s.GetType()==GeomAbs_Plane&&s.Plane().Axis().Direction().IsParallel(gp_Dir(0,1,0),1.e-8)&&s.Plane().Distance(gp_Pnt())<1.e-7) {
+                const bool accepted=BRepReconstruction::movePlanarLocal(crossed.shape,f,2,rejected,reason);
+                if(policy==BossBoundaryMode::Trim)
+                    require(!accepted&&rejected.solid.IsNull()&&!reason.isEmpty(),"Unsupported transverse intersection accepted");
+                else {
+                    const auto expanded=BRepPrimAPI_MakeBox(gp_Pnt(-8,-2,0),171,82,60).Shape();
+                    const auto expected=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(expanded,bore),exterior);
+                    require(accepted&&BRepReconstruction::equivalent(rejected.solid,expected),"Extend front plane failed independent material check");
+                }
+            }
+        }
+        const auto secondBoss=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(20,20,60),gp_Dir(0,0,1)),6,15).Shape();
+        const auto multiple=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(crossed.shape,secondBoss);
+        const auto multipleStamp=serialized(multiple);
+        const auto independent=moveBoss(multiple,findRadius(multiple,6),gp_Vec(5,0,0),policy);
+        require(bool(independent),"Boundary boss disabled an independent boss: "+independent.message);
+        const auto expectedMultiple=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(crossed.shape,
+            BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(25,20,60),gp_Dir(0,0,1)),6,15).Shape());
+        require(BRepReconstruction::equivalent(independent.shape,expectedMultiple),"Independent boss move changed boundary feature");
+        certified(independent.shape,volume(expectedMultiple));require(serialized(multiple)==multipleStamp,"Independent boss move mutated its source");
         require(serialized(crossed.shape)==before,"Boundary follow-up mutated original geometry");
     }
 }
