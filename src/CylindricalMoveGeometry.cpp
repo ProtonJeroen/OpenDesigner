@@ -40,6 +40,7 @@
 #include <limits>
 #include <numbers>
 #include <optional>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -834,6 +835,122 @@ Result moveLocalHole(const TopoDS_Shape& source,const TopoDS_Face& selected,
       catch(const std::exception&) {return refused;}
 }
 
+// Planar rim supports can intersect a cylinder in circles, ellipses or trimmed
+// curves. Infer the missing material from those actual planes, not edge types
+// or a stock pattern. The same certificate serves lateral Move and radial Pull.
+Result reconstructPlanarRimHole(const TopoDS_Shape& source,const TopoDS_Face& selected,
+                               const gp_Vec& delta,double newRadius,const Result& refused) {
+    if(refused.status!=Status::Unsupported) return refused;
+    const auto unsupported=[](const char* message){return refuse(Status::Unsupported,Code::UnsupportedFeature,message);};
+    try {
+        BRepReconstruction::Neighborhood local;QString error;
+        if(!BRepReconstruction::neighborhood(source,selected,local,error)) {
+            auto failure=unsupported("Cylinder recognized, but its current neighborhood cannot be certified: ");failure.message+=error.toStdString();return failure;
+        }
+        const BRepAdaptor_Surface surface(local.target);if(surface.GetType()!=GeomAbs_Cylinder||!manifold(local.solid)) return refused;
+        const auto cylinder=surface.Cylinder();const auto axis=cylinder.Axis().Direction();const double radius=cylinder.Radius(),tolerance=10*Precision::Confusion();
+        if(!std::isfinite(delta.X())||!std::isfinite(delta.Y())||!std::isfinite(delta.Z())||std::abs(delta.Dot(gp_Vec(axis)))>tolerance)
+            return refuse(Status::InvalidInput,Code::InvalidDisplacement,"Hole movement must be finite and perpendicular to its cylinder axis.");
+        if(!std::isfinite(newRadius)||newRadius<=100*tolerance||newRadius>1.e7||radius<=100*tolerance||radius>1.e7) return refused;
+        std::vector<gp_Pln> planes;double wall=0;
+        for(const auto& face:local.patch) {
+            const BRepAdaptor_Surface s(face);const double u=(s.FirstUParameter()+s.LastUParameter())/2,v=(s.FirstVParameter()+s.LastVParameter())/2;
+            BRepLProp_SLProps p(s,u,v,1,tolerance);if(!p.IsNormalDefined()) return unsupported("Cylindrical wall material normal is undefined.");
+            auto normal=p.Normal();if(face.Orientation()==TopAbs_REVERSED) normal.Reverse();
+            auto radial=gp_Vec(cylinder.Location(),s.Value(u,v));radial-=gp_Vec(axis)*radial.Dot(gp_Vec(axis));
+            const double sign=normal.Dot(gp_Dir(radial));if(sign>.99) return refused; // Keep the boss certificate's diagnostic.
+            if(sign>-.99) return unsupported("The current cylindrical patch has an ambiguous material normal.");
+            wall+=faceArea(face);
+        }
+        for(const auto& face:local.neighbors) {
+            const BRepAdaptor_Surface s(face);if(s.GetType()!=GeomAbs_Plane) return unsupported("Cylindrical hole reconstruction needs planar rim supports; a curved intersection needs another material certificate.");
+            auto n=s.Plane().Axis().Direction();if(face.Orientation()==TopAbs_REVERSED) n.Reverse();
+            const gp_Pln plane(s.Plane().Location(),n);
+            if(std::none_of(planes.begin(),planes.end(),[&](const auto& p){return p.Axis().Direction().IsEqual(n,angular)&&p.Distance(plane.Location())<=tolerance;})) planes.push_back(plane);
+        }
+        if(!std::any_of(planes.begin(),planes.end(),[&](const auto& p){return p.Axis().Direction().Dot(axis)>angular;})||
+           !std::any_of(planes.begin(),planes.end(),[&](const auto& p){return p.Axis().Direction().Dot(axis)<-angular;}))
+            return unsupported("Current rim supports do not bound the cylindrical void in both axial directions.");
+        const auto tool=[&](const gp_Pnt& origin,double r,double& low,double& high) {
+            low=1.e100;high=-1.e100;
+            for(const auto& plane:planes) {
+                const auto n=plane.Axis().Direction();const double dot=n.Dot(axis);if(std::abs(dot)<=angular) continue;
+                const double center=gp_Vec(origin,plane.Location()).Dot(gp_Vec(n))/dot;
+                const double amplitude=r*std::sqrt(std::max(0.,1-dot*dot))/std::abs(dot);
+                low=std::min(low,center-amplitude);high=std::max(high,center+amplitude);
+            }
+            const double margin=std::max(1.,r);const double height=high-low+2*margin;
+            if(!std::isfinite(height)||height<=100*tolerance||height>1.e7) throw std::runtime_error("Unreliable planar rim span");
+            TopoDS_Shape material=BRepPrimAPI_MakeCylinder(gp_Ax2(origin.Translated(gp_Vec(axis)*(low-margin)),axis),r,height).Shape();
+            for(const auto& plane:planes) material=BooleanGeometry::combine<BRepAlgoAPI_Common>(material,
+                BRepPrimAPI_MakeHalfSpace(BRepBuilderAPI_MakeFace(plane).Face(),plane.Location().Translated(gp_Vec(plane.Axis().Direction())*-margin)).Solid());
+            for(TopExp_Explorer it(material,TopAbs_FACE);it.More();it.Next()) {
+                const BRepAdaptor_Surface s(TopoDS::Face(it.Current()));
+                if(s.GetType()==GeomAbs_Plane&&std::none_of(planes.begin(),planes.end(),[&](const auto& p){return p.Axis().Direction().IsParallel(s.Plane().Axis().Direction(),angular)&&p.Distance(s.Plane().Location())<=tolerance;}))
+                    throw std::runtime_error("Cylinder clipping retained a computational end cap rather than an actual rim support.");
+            }
+            return material;
+        };
+        double oldLow=0,oldHigh=0;const auto missing=tool(cylinder.Location(),radius,oldLow,oldHigh);double mass=0;
+        if(!BRepReconstruction::validSolid(missing,mass)) return unsupported("The rim planes do not bound one finite cylindrical void.");
+        GProp_GProps occupied;BRepGProp::VolumeProperties(BooleanGeometry::combine<BRepAlgoAPI_Common>(local.solid,missing),occupied);
+        if(std::abs(occupied.Mass())>1.e-8*std::max(1.,mass)) return unsupported("The inferred cylindrical void crosses existing material.");
+        double coveredWall=0;for(TopExp_Explorer it(missing,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());if(BRepAdaptor_Surface(face).GetType()!=GeomAbs_Cylinder) continue;
+            coveredWall+=faceArea(face);
+            double covered=0;for(const auto& patch:local.patch) covered+=faceArea(BooleanGeometry::combine<BRepAlgoAPI_Common>(face,patch));
+            if(std::abs(covered-faceArea(face))>1.e-8*std::max(1.,faceArea(face))) return unsupported("Current hole wall does not cover the cylinder bounded by its actual rim planes.");
+        }
+        if(std::abs(wall-coveredWall)>1.e-8*std::max(1.,wall)) return unsupported("The hole has additional cylindrical trims outside its rim supports.");
+        TopoDS_Shape healed;
+        if(!BRepReconstruction::normalize(BooleanGeometry::combine<BRepAlgoAPI_Fuse>(local.solid,missing),healed,error,true)||
+           !BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Cut>(healed,local.solid),missing)||
+           !BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Cut>(healed,missing),local.solid))
+            return unsupported("Filling the planar-rim cylindrical void failed independent material reconstruction.");
+        const auto exteriorEnds=[&](const TopoDS_Shape& material) {
+            for(TopExp_Explorer it(material,TopAbs_FACE);it.More();it.Next()) {
+                const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(face);if(s.GetType()!=GeomAbs_Plane) continue;
+                if(std::none_of(planes.begin(),planes.end(),[&](const auto& p){return p.Axis().Direction().IsParallel(s.Plane().Axis().Direction(),angular)&&p.Distance(s.Plane().Location())<=tolerance;})) continue;
+                double covered=0;for(TopExp_Explorer support(healed,TopAbs_FACE);support.More();support.Next()) {
+                    const auto f=TopoDS::Face(support.Current());if(BRepReconstruction::sameAnalyticSupport(face,f)) covered+=faceArea(BooleanGeometry::combine<BRepAlgoAPI_Common>(face,f));
+                }
+                if(std::abs(covered-faceArea(face))>1.e-8*std::max(1.,faceArea(face))) return false;
+            }return true;
+        };
+        if(!exteriorEnds(missing)) return unsupported("The current cylindrical void does not terminate on exterior rim surfaces; blind/interacting material is preserved.");
+        double low=0,high=0;const auto destination=tool(cylinder.Location().Translated(delta),newRadius,low,high);
+        if(!BRepReconstruction::validSolid(destination,mass)) return unsupported("Requested cylinder and rim planes have no reliable finite intersection.");
+        const auto removed=BooleanGeometry::combine<BRepAlgoAPI_Common>(healed,destination);
+        if(!exteriorEnds(removed)) return unsupported("Requested hole would end inside material beyond its current rim supports.");
+        const auto candidate=BooleanGeometry::combine<BRepAlgoAPI_Cut>(healed,destination);
+        auto affected=local.patch;affected.insert(affected.end(),local.neighbors.begin(),local.neighbors.end());
+        for(TopExp_Explorer it(local.solid,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());
+            if(BRepAdaptor_Surface(face).GetType()==GeomAbs_Plane&&faceArea(BooleanGeometry::combine<BRepAlgoAPI_Common>(face,destination))>tolerance*tolerance&&
+               std::none_of(affected.begin(),affected.end(),[&](const auto& f){return f.IsSame(face);})) affected.push_back(face);
+        }
+        gp_Trsf identity;BRepReconstruction::Result finished;
+        const auto region=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(missing,destination);
+        if(!BRepReconstruction::finishLocal(local,candidate,region,affected,{},identity,finished,error)||!manifold(finished.solid)) {
+            auto failure=unsupported("Cylindrical reconstruction cannot preserve unrelated material or trimmed faces: ");failure.message+=error.toStdString();return failure;
+        }
+        if(!BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Cut>(healed,finished.solid),removed)) return unsupported("Reconstructed hole failed independent removed-material verification.");
+        auto translated=cylinder;translated.Translate(delta);translated.SetRadius(newRadius);bool remains=false;
+        for(TopExp_Explorer it(finished.solid,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(face);
+            bool allowed=s.GetType()==GeomAbs_Cylinder&&sameCylinder(s.Cylinder(),translated,tolerance);remains=remains||allowed;
+            for(TopExp_Explorer old(local.solid,TopAbs_FACE);old.More()&&!allowed;old.Next()) {
+                const auto f=TopoDS::Face(old.Current());if(std::none_of(local.patch.begin(),local.patch.end(),[&](const auto& p){return p.IsSame(f);})) allowed=BRepReconstruction::sameAnalyticSupport(f,face);
+            }
+            if(!allowed) return unsupported("Requested hole introduced an unintended analytic boundary surface.");
+        }
+        Result result;result.status=Status::Success;result.code=delta.Magnitude()<=tolerance&&std::abs(newRadius-radius)<=tolerance?Code::Unchanged:remains?Code::Moved:Code::HoleExited;
+        result.shape=finished.solid;result.radius=newRadius;result.height=high-low;result.axis=gp_Ax1(cylinder.Location().Translated(delta+gp_Vec(axis)*low),axis);
+        result.message="Cylindrical hole reconstructed against its current planar rim supports.";return result;
+    } catch(const Standard_Failure& exception) {auto failure=unsupported("OCCT could not certify the requested cylinder/plane intersection: ");failure.message+=exception.GetMessageString();return failure;}
+      catch(const std::exception& exception) {auto failure=unsupported("Current rim planes could not certify the cylindrical material reconstruction: ");failure.message+=exception.what();return failure;}
+}
+
 // Shared acceptance for the already certified fill/healed body. The selected
 // cylindrical wall resolves the whole feature, including cap/underside patches.
 Result finishCylindricalRemoval(const BRepReconstruction::Neighborhood& local,
@@ -1334,7 +1451,11 @@ CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
     const auto exterior=moveWithExterior(source,selected,delta,result);
     if(exterior) return exterior;
     const auto local=moveLocalHole(source,selected,delta,exterior);
-    return local?local:moveLocalNotch(source,selected,delta,local);
+    if(local) return local;
+    const auto notch=moveLocalNotch(source,selected,delta,local);
+    if(notch) return notch;
+    if(selected.IsNull()||BRepAdaptor_Surface(selected).GetType()!=GeomAbs_Cylinder) return notch;
+    return reconstructPlanarRimHole(source,selected,delta,BRepAdaptor_Surface(selected).Cylinder().Radius(),notch);
 }
 
 bool CylindricalMoveGeometry::removeBoundaryFeature(const TopoDS_Shape& source,const TopoDS_Face& mantle,
@@ -1348,7 +1469,7 @@ bool CylindricalMoveGeometry::removeBoundaryFeature(const TopoDS_Shape& source,c
     result={};error=QStringLiteral("Cylindrical Delete Face: %1 %2").arg(QString::fromStdString(notch.message),QString::fromStdString(boss.message));return false;
 }
 
-CylindricalMoveGeometry::Result CylindricalMoveGeometry::resizeRadius(
+static CylindricalMoveGeometry::Result resizeRadiusCertified(
         const TopoDS_Shape& source,const TopoDS_Face& selected,double radius) {
     const auto unsupported=[](const char* message){return refuse(Status::Unsupported,Code::UnsupportedFeature,message);};
     if(!std::isfinite(radius)||radius<=.01||radius>1.e7)
@@ -1461,6 +1582,12 @@ CylindricalMoveGeometry::Result CylindricalMoveGeometry::resizeRadius(
         result.message="Cylinder radius reconstructed from current rims, material and planar trims.";return result;
     } catch(const Standard_Failure&) {return unsupported("OCCT could not certify this radial reconstruction; original geometry was kept.");}
       catch(const std::exception&) {return unsupported("Radial material reconstruction failed; original geometry was kept.");}
+}
+
+CylindricalMoveGeometry::Result CylindricalMoveGeometry::resizeRadius(
+        const TopoDS_Shape& source,const TopoDS_Face& selected,double radius) {
+    const auto result=resizeRadiusCertified(source,selected,radius);
+    return result?result:reconstructPlanarRimHole(source,selected,gp_Vec(),radius,result);
 }
 
 CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveBoss(

@@ -60,9 +60,18 @@ moved again. Move it farther outward, along the edge, or back inside to restore 
 complete circular hole. Each operation infers its axis, partial rims and current
 material-side boundary from the B-Rep. A restored hole can reopen on another side;
 no original feature position or Trim history is retained. Complete exit heals
-the opening and leaves no cylindrical wall to select. Corner/multiple-side
-notches, blind/sloped trims and interacting features remain unsupported and are
-refused before changing the Part. See [open-notch certificates and tests](OPEN_CYLINDRICAL_NOTCH_MOVE.md).
+the opening and leaves no cylindrical wall to select. The shared planar-rim
+certificate also accepts valid corner/multiple-side
+transitions when the current planes and material prove them. Curved closures,
+blind regions and interacting features still need a valid reconstruction and are
+refused atomically when uncertified. See [open-notch certificates and tests](OPEN_CYLINDRICAL_NOTCH_MOVE.md).
+A rotated top face does not change cylindrical identity. Hole movement and radial
+Pull can reconstruct against oblique planar rims, including an elliptical upper
+opening and circular lower opening. Radius and axis direction remain fixed during
+lateral movement; actual depth and intersection curves follow the unchanged
+surrounding planes. No rectangular-stock, rim-curve-type or cylinder-count rule
+is used by this local certificate. See [exact rotated-rim regression](ROTATED_RIM_CYLINDER.md).
+
 Automated session checks cover normal/HiDPI; manual Fedora KDE acceptance and
 phase 9E lifecycle/persistence coverage remain pending.
 

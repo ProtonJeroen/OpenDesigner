@@ -214,6 +214,8 @@ if(OPENDESIGNER_BUILD_TESTS)
     target_compile_definitions(OpenDesignerMoveFaceTests PRIVATE OPENDESIGNER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     target_link_libraries(OpenDesignerMoveFaceTests PRIVATE ${OPENDESIGNER_LIBRARIES})
     add_test(NAME move-face COMMAND OpenDesignerMoveFaceTests)
+    add_test(NAME cylindrical-rotated-rim COMMAND OpenDesignerMoveFaceTests --rotated-hole)
+    set_tests_properties(cylindrical-rotated-rim PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
     add_test(NAME cylindrical-open-notch-sessions COMMAND OpenDesignerMoveFaceTests --open-notch)
     set_tests_properties(cylindrical-open-notch-sessions PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
     # Dedicated process: an OCCT signal must fail only this regression, not a

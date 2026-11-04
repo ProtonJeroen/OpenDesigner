@@ -25,16 +25,14 @@ struct Result {
     double radius = 0, height = 0;
     explicit operator bool() const { return status == Status::Success; }
 };
-// One selected complete circular through-hole normal to rectangular stock.
-// Independent parallel holes/bosses in the same Part are preserved. Boundary
-// crossings and complete exit are allowed; interacting, disconnected or
-// nonmanifold results are refused. Does not mutate source, even on failure.
-// Separated exterior bosses, including unsupported truncated/overhanging source
-// bosses, can remain protected while the selected complete stock hole is moved.
-// A local rim/material certificate also handles nonrectangular neighborhoods;
-// unrelated faces and material must survive independently of any stock pattern.
-// Open notches on one planar exterior side can be moved repeatedly from their
-// current rims, including back into a complete hole; corners remain unsupported.
+// Analytic cylindrical identity is independent of creation, stock shape, rim
+// curve types and adjacent plane orientation. Reconstruction is certified from
+// current adjacency and material, with specific diagnostics when unavailable.
+// Local hole reconstruction clips the cylinder against actual planar rim
+// supports, including oblique/elliptical and certified open trims. Independent
+// material and unaffected face checks protect unrelated features; no cylinder
+// count or stock pattern is required. Boundary crossings/complete exit can be
+// accepted when certified. Does not mutate source, including on refusal.
 Result moveThroughHole(const TopoDS_Shape& source, const TopoDS_Face& mantle,
                        const gp_Vec& displacement);
 // A complete, trimmed or overhanging boss on a certified planar support.
@@ -53,8 +51,9 @@ Result moveBoss(const TopoDS_Shape& source, const TopoDS_Face& mantle,
 // boss cap/underside regions. Returns immutable source-to-result correspondence.
 bool removeBoundaryFeature(const TopoDS_Shape& source,const TopoDS_Face& mantle,
                            BRepReconstruction::Result& result,QString& error);
-// Radial Pull on current geometry: complete through-holes, fully supported
-// bosses, and a boss cut by one radial plane. Axial/cut supports stay fixed.
+// Radial Pull on current geometry: cylindrical holes bounded by certified
+// planar rims (including oblique/open trims), fully supported bosses, and a boss
+// cut by one radial plane. Actual cap/cut supports stay fixed.
 // No offset-kernel fallback; unsupported neighborhoods return diagnostics.
 Result resizeRadius(const TopoDS_Shape& source, const TopoDS_Face& mantle,
                     double radius);

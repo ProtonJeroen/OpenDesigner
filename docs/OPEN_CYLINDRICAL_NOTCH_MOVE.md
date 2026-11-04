@@ -95,3 +95,11 @@ selection, drag/Cancel, cached Undo/Redo and source-file immutability. The GUI
 replays require access to an X11/OpenGL display. Private ODC files remain
 untracked. No full CTest suite was run. Manual Fedora KDE acceptance and the
 broader phase 9E persistence work remain pending.
+
+## Later planar-rim correction
+
+The [rotated-top correction](ROTATED_RIM_CYLINDER.md) reuses current planar
+material boundaries more generally. Move Face and radial Pull now accept valid
+multi-plane/corner trims when their fill/re-cut and protected-material
+certificates succeed. The original phase 9D.7A fallback remains available, but
+its one-side limitation is not an analytic cylinder-recognition rule.

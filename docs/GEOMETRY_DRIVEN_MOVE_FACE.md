@@ -5,6 +5,20 @@ creation history, Part kind or native/import provenance. This applies equally
 to primitives, sweeps, Booleans, earlier direct edits and imported solids whose
 actual surfaces/topology satisfy an operation's certificate.
 
+## Analytic identity is independent of reconstruction
+
+A cylinder is a cylinder regardless of creator, stock shape, adjacent plane
+orientation, cylinder count, or circular/elliptical/trimmed/intersecting bounds.
+This applies to Move Face, Pull/Resize, Delete Face and future direct operations.
+Recognize the analytic support first; determine material side and requested
+reconstruction from current topology and adjacency. A missing or failed material
+certificate is a refusal of that reconstruction, never evidence that the analytic
+cylinder is unrecognizable. Numerical/topology budgets remain safety limits.
+
+The [rotated-top regression](ROTATED_RIM_CYLINDER.md) adds one shared planar-rim
+material certificate for lateral hole movement and radial Pull. It uses actual
+neighbor planes, without rectangular stock or rim-curve classification.
+
 ## Existing components and limitations
 
 Move Face uses OCCT intersection offsets; Rotate uses DraftAngle and analytic

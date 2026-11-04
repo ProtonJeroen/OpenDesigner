@@ -603,9 +603,14 @@ void openNotchTests() {
             require(bool(movedBoss)&&BRepReconstruction::equivalent(movedBoss.shape,expectedBoss),"Unchanged complete boss lost lateral Move Face or changed the notch");
         }
         const auto stamp=serialized(open);
-        for(const auto destination:{gp_Pnt(0,5,0),gp_Pnt(90,65,0),gp_Pnt(bossX,36,0)}) {
+        const auto corner=moveThroughHole(open,find(open,17),gp_Vec(0,-31,0).Transformed(placement));
+        require(bool(corner)&&BRepReconstruction::equivalent(corner.shape,BRepBuilderAPI_Transform(oracle(0,5),placement,true).Shape()),
+            "Planar-rim corner transition did not preserve the independently clipped cylinder material");
+        const auto cornerReturn=moveThroughHole(corner.shape,find(corner.shape,17),gp_Vec(0,31,0).Transformed(placement));
+        require(bool(cornerReturn)&&BRepReconstruction::equivalent(cornerReturn.shape,open),"Current multi-plane cylindrical trims could not move back from the corner");
+        for(const auto destination:{gp_Pnt(90,65,0),gp_Pnt(bossX,36,0)}) {
             const auto rejected=moveThroughHole(open,find(open,17),gp_Vec(gp_Pnt(0,36,0),destination).Transformed(placement));
-            require(!rejected&&rejected.shape.IsNull()&&!rejected.message.empty()&&serialized(open)==stamp,"Ambiguous corner/feature interaction was accepted or changed input");
+            require(!rejected&&rejected.shape.IsNull()&&!rejected.message.empty()&&serialized(open)==stamp,"Ambiguous feature interaction was accepted or changed input");
         }
         require(!moveThroughHole(open,find(open,17),gp_Vec(0,0,1).Transformed(placement)),"Axial notch movement accepted");
         const auto exited=moveThroughHole(open,find(open,17),gp_Vec(-40,0,0).Transformed(placement));
@@ -755,7 +760,13 @@ void radialPullTests() {
     const auto overhang=moveBoss(original,face(original,18),gp_Vec(45,0,0),BossBoundaryMode::Extend);
     require(bool(overhang)&&!resizeRadius(overhang.shape,face(overhang.shape,18),20),"Uncertified overhang radius extension was accepted");
     const auto notch=moveThroughHole(original,face(original,17),gp_Vec(-54,0,0));
-    require(bool(notch)&&!resizeRadius(notch.shape,face(notch.shape,17),20),"Partial/open hole was treated as a complete cylinder");
+    require(bool(notch),"Cannot construct planar-trim notch for radial reconstruction");
+    const auto notchStamp=serialized(notch.shape);const auto resizedNotch=resizeRadius(notch.shape,face(notch.shape,17),20);
+    const auto expectedNotch=BooleanGeometry::combine<BRepAlgoAPI_Cut>(BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stock,boss(121,18)),
+        BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0,36,-10),gp_Dir(0,0,1)),20,80).Shape());
+    require(bool(resizedNotch)&&BRepReconstruction::equivalent(resizedNotch.shape,expectedNotch)&&serialized(notch.shape)==notchStamp,
+        "Planar-rim notch resize failed to preserve its actual exterior material trim");
+    certified(resizedNotch.shape,163*80*60-pi*20*20*60/2+pi*18*18*55);
     const auto blind=BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,36,20),gp_Dir(0,0,1)),17,40).Shape());
     require(!resizeRadius(blind,face(blind,17),20),"Uncertified blind-hole closure was accepted");
     gp_Trsf rotated;rotated.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.53);rotated.SetTranslationPart(gp_Vec(120,-74,93));

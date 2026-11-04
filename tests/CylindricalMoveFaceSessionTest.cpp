@@ -21,10 +21,14 @@
 #include <QTemporaryDir>
 #include <QFile>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <BRepLProp_SLProps.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
+#include <gp_Lin.hxx>
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
@@ -74,6 +78,88 @@ void events() {
 }
 
 struct CylindricalMoveFaceSessionTest {
+    static void rotatedHole(const QString& suppliedPath) {
+        NativeDocumentSnapshot snapshot;QString error;QTemporaryDir temporary;QString path=suppliedPath;
+        if(path.isEmpty()) {
+            const double angle=std::numbers::pi/12;
+            TopoDS_Shape body=BRepPrimAPI_MakeBox(gp_Pnt(0,0,0),163,80,200).Shape();
+            const gp_Pln top(gp_Pnt(56.4275,36,125.439),gp_Dir(std::sin(angle),0,std::cos(angle)));
+            const gp_Pln right(gp_Pnt(155.654,0,-6.49658),gp_Dir(std::cos(angle),0,std::sin(angle)));
+            for(const auto& plane:{top,right}) body=BooleanGeometry::combine<BRepAlgoAPI_Common>(body,BRepPrimAPI_MakeHalfSpace(BRepBuilderAPI_MakeFace(plane).Face(),plane.Location().Translated(gp_Vec(plane.Axis().Direction())*-100)).Solid());
+            NativePartState p;p.id="rotated-hole";p.name="Rotated rim";p.shape=BooleanGeometry::combine<BRepAlgoAPI_Cut>(body,BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(84,36,-60),gp_Dir(0,0,1)),21,300).Shape());
+            snapshot.parts={p};path=temporary.filePath("hole2-equivalent.odc");check(NativeDocumentStorage::save(path,snapshot,error),qPrintable(error));
+        }
+        QFile file(path);check(file.open(QIODevice::ReadOnly),"Cannot read rotated-hole native document");const auto bytes=file.readAll();file.close();
+        check(NativeDocumentStorage::load(path,snapshot,error),qPrintable(error));check(!snapshot.parts.empty(),"Empty rotated-hole document");
+        const auto source=snapshot.parts[0].shape;const auto selected=radiusFace(source,21);const auto cylinder=BRepAdaptor_Surface(selected).Cylinder();const auto axis=cylinder.Axis().Direction();const auto origin=cylinder.Location();
+        near(origin.X(),84,"Wrong exact-document hole axis");near(origin.Y(),36,"Wrong exact-document hole axis");
+        BRepReconstruction::Neighborhood local;check(BRepReconstruction::neighborhood(source,selected,local,error),qPrintable(error));
+        bool ellipse=false,circle=false;for(const auto& edge:local.boundary) {ellipse|=BRepAdaptor_Curve(edge).GetType()==GeomAbs_Ellipse;circle|=BRepAdaptor_Curve(edge).GetType()==GeomAbs_Circle;}
+        check(ellipse&&circle,"Regression must contain elliptical and circular rims on the same cylinder");
+        std::vector<gp_Pln> planes;TopoDS_Shape stock=BRepPrimAPI_MakeBox(gp_Pnt(-1000,-1000,-1000),2000,2000,2000).Shape();
+        for(TopExp_Explorer it(source,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface surface(face);if(surface.GetType()!=GeomAbs_Plane) continue;
+            auto n=surface.Plane().Axis().Direction();if(face.Orientation()==TopAbs_REVERSED) n.Reverse();const gp_Pln plane(surface.Plane().Location(),n);planes.push_back(plane);
+            stock=BooleanGeometry::combine<BRepAlgoAPI_Common>(stock,BRepPrimAPI_MakeHalfSpace(BRepBuilderAPI_MakeFace(plane).Face(),plane.Location().Translated(gp_Vec(n)*-100)).Solid());
+        }
+        // Independent polyhedral oracle uses ALL retained planes and a long
+        // cutter, rather than the production local fill or its rim-clipped tool.
+        for(TopExp_Explorer it(stock,TopAbs_FACE);it.More();it.Next()) {const BRepAdaptor_Surface s(TopoDS::Face(it.Current()));check(s.GetType()==GeomAbs_Plane&&std::any_of(planes.begin(),planes.end(),[&](const auto& p){return p.Axis().Direction().IsParallel(s.Plane().Axis().Direction(),1.e-8)&&p.Distance(s.Plane().Location())<1.e-6;}),"Oracle retained a computational seed support");}
+        const auto tool=[&](const gp_Pnt& p,double r){return BRepPrimAPI_MakeCylinder(gp_Ax2(p.Translated(gp_Vec(axis)*-1000),axis),r,2000).Shape();};
+        const auto oracle=[&](const gp_Pnt& p,double r){return BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,tool(p,r));};
+        check(BRepReconstruction::equivalent(source,oracle(origin,21)),"Exact native source differs from retained-plane material oracle");
+        const auto verify=[&](const TopoDS_Shape& shape,const gp_Pnt& p,double radius) {
+            double mass=0;check(BRepReconstruction::validSolid(shape,mass),"Rotated-rim result is not a valid closed solid");
+            check(BRepReconstruction::equivalent(shape,oracle(p,radius)),"Rotated-rim reconstruction changed independent material");
+            double lower=0,upper=0;for(const auto& face:local.neighbors) {const BRepAdaptor_Surface s(face);auto n=s.Plane().Axis().Direction();if(face.Orientation()==TopAbs_REVERSED) n.Reverse();const double t=gp_Vec(p,s.Plane().Location()).Dot(gp_Vec(n))/n.Dot(axis);if(n.Dot(axis)>0) upper=t;else lower=t;}
+            // The axial height is affine over the disk, so its integral is
+            // exactly disk area times the height at the cylinder's axis.
+            near(mass,volume(stock)-std::numbers::pi*radius*radius*(upper-lower),"Rotated-rim analytic volume mismatch");
+            const auto wall=radiusFace(shape,radius);const auto resultCylinder=BRepAdaptor_Surface(wall).Cylinder();
+            near(gp_Lin(resultCylinder.Axis()).Distance(p),0,"Hole axis drifted");check(resultCylinder.Axis().Direction().IsParallel(axis,1.e-8),"Hole axis direction changed");
+            for(int x=-3;x<180;x+=13) for(int y=-3;y<85;y+=13) for(double z:{-.31,15.37,59.37,90.37,115.37,125.37,140.37}) {
+                const gp_Pnt point(x+.27,y+.41,z);const bool body=std::all_of(planes.begin(),planes.end(),[&](const auto& plane){return gp_Vec(plane.Location(),point).Dot(gp_Vec(plane.Axis().Direction()))<0;});
+                BRepClass3d_SolidClassifier c(shape,point,1.e-7);check(c.State()==(body&&gp_Lin(gp_Ax1(p,axis)).Distance(point)>radius?TopAbs_IN:TopAbs_OUT),"Rotated-rim analytic occupancy mismatch");
+            }
+            TopTools_IndexedMapOfShape edges;TopExp::MapShapes(shape,TopAbs_EDGE,edges);
+            for(int i=1;i<=edges.Extent();++i) {int uses=0;for(TopExp_Explorer f(shape,TopAbs_FACE);f.More();f.Next()) for(TopExp_Explorer e(f.Current(),TopAbs_EDGE);e.More();e.Next()) if(e.Current().IsSame(edges(i))) ++uses;check(uses==2,"Rotated-rim result has nonmanifold edge uses");}
+            for(TopExp_Explorer it(source,TopAbs_FACE);it.More();it.Next()) {const auto face=TopoDS::Face(it.Current());if(face.IsSame(selected)||std::any_of(local.neighbors.begin(),local.neighbors.end(),[&](const auto& n){return BRepReconstruction::sameAnalyticSupport(n,face);})) continue;GProp_GProps original,covered;BRepGProp::SurfaceProperties(face,original);double overlap=0;for(TopExp_Explorer f(shape,TopAbs_FACE);f.More();f.Next()) if(BRepReconstruction::sameAnalyticSupport(face,TopoDS::Face(f.Current()))) {BRepGProp::SurfaceProperties(BooleanGeometry::combine<BRepAlgoAPI_Common>(face,f.Current()),covered);overlap+=covered.Mass();}near(overlap,original.Mass(),"Unrelated trimmed face region changed");}
+        };
+        const auto stamp=serialized(source);auto current=source;auto point=origin;
+        for(const auto delta:{gp_Vec(5,0,0),gp_Vec(0,5,0),gp_Vec(-8,0,0),gp_Vec(3,-5,0)}) {
+            const auto moved=CylindricalMoveGeometry::moveThroughHole(current,radiusFace(current,21),delta);check(bool(moved),moved.message.c_str());point.Translate(delta);verify(moved.shape,point,21);current=moved.shape;
+        }
+        gp_Trsf rotated;rotated.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.43);rotated.SetTranslationPart(gp_Vec(170,-55,32));
+        const auto placed=BRepBuilderAPI_Transform(source,rotated,true).Shape();const auto placedMove=CylindricalMoveGeometry::moveThroughHole(placed,radiusFace(placed,21),gp_Vec(5,0,0).Transformed(rotated));
+        check(bool(placedMove)&&BRepReconstruction::equivalent(placedMove.shape,BRepBuilderAPI_Transform(oracle(origin.Translated(gp_Vec(5,0,0)),21),rotated,true).Shape()),"Cylinder reconstruction depends on world/Part plane orientation");
+        const auto resized=CylindricalMoveGeometry::resizeRadius(source,selected,22);check(bool(resized),resized.message.c_str());verify(resized.shape,origin,22);
+        const auto restored=CylindricalMoveGeometry::resizeRadius(resized.shape,radiusFace(resized.shape,22),21);check(bool(restored),restored.message.c_str());verify(restored.shape,origin,21);
+        const auto axial=CylindricalMoveGeometry::moveThroughHole(source,selected,gp_Vec(axis));check(!axial&&axial.shape.IsNull()&&!axial.message.empty(),"Axial request was accepted without a reconstruction certificate");
+        const auto obstaclePoint=origin.Translated(gp_Vec(-50,15,0));const auto interacting=BooleanGeometry::combine<BRepAlgoAPI_Cut>(source,tool(obstaclePoint,3));const auto interactionStamp=serialized(interacting);
+        const auto separated=CylindricalMoveGeometry::moveThroughHole(interacting,radiusFace(interacting,21),gp_Vec(5,0,0));
+        check(bool(separated)&&BRepReconstruction::equivalent(separated.shape,BooleanGeometry::combine<BRepAlgoAPI_Cut>(oracle(origin.Translated(gp_Vec(5,0,0)),21),tool(obstaclePoint,3))),"Moving an oblique-rim hole changed an unrelated cylindrical feature");
+        const auto rejected=CylindricalMoveGeometry::moveThroughHole(interacting,radiusFace(interacting,21),gp_Vec(origin,obstaclePoint));check(!rejected&&rejected.shape.IsNull()&&!rejected.message.empty()&&serialized(interacting)==interactionStamp,"Interacting hole reconstruction was accepted or mutated its source");
+        check(serialized(source)==stamp,"Rotated-rim geometry edits mutated original native B-Rep");
+        if(snapshot.parts.size()==1) {NativePartState other;other.id="rotated-rim-other";other.name="Other Part";other.shape=BRepPrimAPI_MakeBox(10,10,10).Shape();other.transform.SetTranslation(gp_Vec(300,0,0));snapshot.parts.push_back(other);}
+        MainWindow window;window.resize(1200,900);window.show();events();auto& v=*window.findChild<CadViewport*>();check(v.importDocumentSnapshot(snapshot,error),qPrintable(error));v.fitSelection({0});
+        const auto before=v.boxes_[0];const auto other=v.boxes_[1].shape;const auto history=v.undoStack_.size();auto* tree=window.findChild<QTreeWidget*>();auto* row=tree->topLevelItem(0)->child(0);const double scale=std::abs(before.orientation.ScaleFactor());
+        const auto start=[&](int direction) {select(v,0,radiusFace(v.boxes_[0].shape,21));check(v.startMoveFace(0,radiusFace(v.boxes_[0].shape,21)),"Rotated-rim Move Face activation failed");v.cylinderMoveDirection_->setCurrentIndex(direction);};
+        start(1);input(v,QLocale().toString(5.5*scale,'g',15));check(v.commandSession_->valid,qPrintable(v.commandSession_->geometryError));preview(v,volume(oracle(origin.Translated(gp_Vec(5.5,0,0)),21)));verify(v.commandSession_->candidate,origin.Translated(gp_Vec(5.5,0,0)),21);
+        const auto shown=v.commandSession_->preview;QKeyEvent escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier);QApplication::sendEvent(v.dragDimension_,&escape);
+        check(!v.commandSession_&&v.boxes_[0].shape.IsSame(source)&&v.undoStack_.size()==history&&v.context_->DisplayStatus(shown)==PrsMgr_DisplayStatus_None,"Rotated-rim Escape changed geometry/history or leaked preview");
+        std::vector<TopoDS_Shape> states{source};point=origin;
+        for(const auto step:{std::pair<int,double>{1,5},{2,5},{1,-8}}) {start(step.first);input(v,QLocale().toString(step.second*scale,'g',15));check(v.commandSession_->valid,qPrintable(v.commandSession_->geometryError));point.Translate(step.first==1?gp_Vec(step.second,0,0):gp_Vec(0,step.second,0));verify(v.commandSession_->candidate,point,21);const auto cached=v.commandSession_->candidate;v.commandButtons_->button(QDialogButtonBox::Ok)->click();check(BRepReconstruction::equivalent(v.boxes_[0].shape,cached),"Rotated-rim OK differs from preview");states.push_back(v.boxes_[0].shape);currentOwners(v,0);}
+        for(size_t i=states.size()-1;i>0;--i) {v.undoPull();check(v.boxes_[0].shape.IsSame(states[i-1]),"Rotated-rim Undo lost exact source");}
+        for(size_t i=1;i<states.size();++i) {v.redoPull();check(v.boxes_[0].shape.IsSame(states[i]),"Rotated-rim Redo rebuilt geometry");}
+        for(size_t i=states.size()-1;i>0;--i) v.undoPull();
+        select(v,0,radiusFace(v.boxes_[0].shape,21));std::unique_ptr<QMenu> menu(v.createSelectionMenu(QPoint()));auto* pull=menu->findChild<QAction*>("context.resize");check(pull&&pull->isEnabled(),"Analytic cylinder has no Pull / Resize capability");pull->trigger();check(v.pullMode_&&v.cylindricalFacePull_&&v.arrowVisible_,"Rotated-rim Pull recognition failed");
+        const auto grab=project(v,v.primitiveArrowOrigin_.Translated(gp_Vec(v.primitiveArrowDirection_)*15));check(v.beginArrowDrag(grab),"Rotated-rim Pull arrow cannot start a session");check(v.previewCommand(1),"Rotated-rim radial preview failed");verify(v.boxes_[0].shape,origin,22);v.cancelCommandSession();check(v.boxes_[0].shape.IsSame(source)&&v.undoStack_.size()==history,"Radial Cancel changed source/history");
+        check(v.boxes_[0].persistentId==before.persistentId&&v.boxes_[0].presentation==before.presentation&&v.boxes_[0].name==before.name&&v.boxes_[0].color==before.color&&v.boxes_[0].visible==before.visible&&tree->topLevelItem(0)->child(0)==row&&v.boxes_[1].shape.IsSame(other),"Rotated-rim editing changed Part/browser identity or another Part");
+        for(int r=1;r<=3;++r) for(int c=1;c<=4;++c) near(v.boxes_[0].orientation.Value(r,c),before.orientation.Value(r,c),"Rotated-rim editing changed placement");
+        verify(source,origin,21); // Rendering may populate triangulation caches; analytic material must remain exact.
+        check(file.open(QIODevice::ReadOnly)&&file.readAll()==bytes,"Rotated-rim sessions modified the original native document");
+        std::cout<<"Rotated-rim exact/native geometry, independent material, Move sessions and radial Pull passed\n";
+    }
     static void crashPreview(const QString& path,const QString& displacement) {
         const auto fullBoss=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(158,36,60),gp_Dir(0,0,1)),18,55).Shape();
         const auto hole=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,36,-10),gp_Dir(0,0,1)),17,80).Shape();
@@ -776,3 +862,5 @@ void runCylindricalMoveDocumentTest(const QString& path) {CylindricalMoveFaceSes
 void runCylindricalMoveBoundaryTest(const QString& path) {CylindricalMoveFaceSessionTest::afterBoundary(path);}
 void runCrashPlanarTest(const QString& path,const QString& displacement) {CylindricalMoveFaceSessionTest::crashPreview(path,displacement);}
 void runOpenNotchSessionTest(const QString& path) {CylindricalMoveFaceSessionTest::openNotchSession(path);}
+
+void runRotatedHoleTest(const QString& path) {CylindricalMoveFaceSessionTest::rotatedHole(path);}

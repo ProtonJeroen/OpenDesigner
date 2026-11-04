@@ -71,7 +71,7 @@ bool CadViewport::moveFaceReference(const TopoDS_Shape& shape,const TopoDS_Face&
         if(!reference) {
             const auto bossError=QString::fromStdString(reference.message);
             error=holeError==bossError ? tr("Move Face unavailable: %1").arg(holeError)
-                : tr("Unsupported cylinder. Through-hole: %1 Boss: %2").arg(holeError,bossError);
+                : tr("Cylindrical surface recognized; Move Face reconstruction unavailable. Hole: %1 Boss: %2").arg(holeError,bossError);
             return false;
         }
         feature=MoveFaceFeature::Boss;
