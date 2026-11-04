@@ -1,6 +1,6 @@
 # General Move Face (v0.3.6)
 
-## Cylindrical features (v0.4.9, phases 9D–9D.7A)
+## Cylindrical features (v0.4.9, phases 9D–9D.7B)
 
 The existing **3D Modeling → Move Face** command also accepts the cylindrical
 wall of one selected complete circular through-hole, supported open cylindrical
@@ -33,11 +33,18 @@ solid. Invalid geometry restores the source display and disables OK. Correct the
 parameters or cancel with Esc/Cancel; Enter/OK confirms through the existing
 session. Blind selected holes, blends and interacting/touching edits remain
 unsupported. Existing boundary paths have rectangular-stock/parallel-feature
-limits; partial or overhanging selected bosses remain conditional/refused.
+limits; a local fallback supports repeated movement of a trimmed or overhanging
+boss across one planar side boundary.
 Moving into an unselected feature is refused.
 Geometry calculation remains synchronous. See the [phase plan](CYLINDRICAL_MOVE_PLAN.md).
-After a boss crosses the stock boundary, its new topology may be refused as a
-newly selected boss. A separated complete through-hole remains editable: the
+After a boss crosses one planar side boundary, select its current cylindrical
+wall to move it farther outward, along the boundary, or back inward to restore a
+fully supported boss. Trim clips the cylinder against the current healed planar
+support; Extend retains the full cylinder with a certified attachment. Each move
+reads the current B-Rep, including split walls, without remembered feature state.
+Corners, multiple side boundaries, sloped/curved trims, blends and interacting
+features remain outside this fallback. See [repeated boss reconstruction](REPEATED_BOUNDARY_BOSS_MOVE.md).
+A separated complete through-hole remains editable: the
 actual exterior boss material is preserved without re-recognizing it as an
 interior boss. Unaffected stock side planes can also move when a through-hole's
 physical rim planes certify the stock slab and the edit stays clear of exterior

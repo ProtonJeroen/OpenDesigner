@@ -794,6 +794,36 @@ regressions cover repeated directions, imported/split topology, rotated/scaled
 placements, unaffected features, numeric input, dragging and Escape. Native
 replays use the supplied documents read-only. No offset fallback is introduced.
 
+## 9D.7B — repeated boundary boss Move Face
+
+See [current-B-Rep boss reconstruction and limits](REPEATED_BOUNDARY_BOSS_MOVE.md).
+Add a local fallback after the existing certified boss paths. Infer the finite
+cylinder and material side from the selected connected patch, cap/support planes
+and actual material. Remove only that cylinder's current boss volume and certify
+one healed solid plus independent reassembly of the source. Extrude the actual
+healed planar support through the unchanged boss height. Current material must
+be either the full cylinder or its exact support trim.
+
+Trim uses the translated cylinder intersected with this physical support prism;
+Extend retains the complete translated cylinder with a reliable support overlap.
+Limit the fallback to one planar side shared by the source/destination footprints.
+Certify manifold topology, added material, outside-region material and protected
+trimmed surfaces with existing reconstruction utilities. No offset, primitive
+metadata, feature history or saved boundary mode is used. Zero-displacement
+recognition preserves current material under either policy.
+
+Focused geometry and boundary-session tests cover repeated outward/inward moves,
+full restoration, policy changes, imported/split mantles, reversed/rotated axes,
+nonrectangular support, nearby holes/bosses, numeric input, drag/Escape, cached
+Undo/Redo, Part identity and native-document replay. Corners/multiple sides,
+curved/sloped boundaries, detached/tangent bosses and feature interactions remain
+atomic diagnostic refusals in the new fallback.
+
+Verification: application and affected geometry/session targets built. Both new
+boss geometry modes, local/boundary/independent geometry checks, expanded portable
+boundary sessions and both native-document replays passed. Native file hashes
+are unchanged; all supplied ODC files remain untracked. No full CTest suite ran.
+
 ## 9E — transactions, persistence and acceptance
 
 Confirm once into the same Part slot with one cached Undo/Redo step. Preserve

@@ -36,11 +36,14 @@ struct Result {
 // current rims, including back into a complete hole; corners remain unsupported.
 Result moveThroughHole(const TopoDS_Shape& source, const TopoDS_Face& mantle,
                        const gp_Vec& displacement);
-// One complete boss on a certified planar support. The local interior path
+// A complete, trimmed or overhanging boss on a certified planar support.
+// The boundary fallback supports repeated moves across one planar side using
+// the current healed support; corners and interacting features are refused.
+// The local interior path
 // preserves unrelated geometry without a rectangular-stock/cylinder-count rule.
 // Existing boundary paths preserve independent parallel cylindrical features.
-// Trim clips against the original lateral
-// stock supports; Extend retains the full cylinder, including a connected
+// Trim clips against certified lateral support boundaries; the local fallback
+// uses the healed current planar support. Extend retains the full cylinder, including a connected
 // overhang. No invented bridges or support pedestals. Policy is always explicit.
 Result moveBoss(const TopoDS_Shape& source, const TopoDS_Face& mantle,
                 const gp_Vec& displacement, BossBoundaryMode policy);

@@ -67,7 +67,8 @@ No full CTest suite was run.
 
 ## Later topology classes
 
-Partial or overhanging selected bosses, contact-changing planar support edits,
+Repeated partial/overhanging boss movement across one planar side is now covered
+by [phase 9D.7B](REPEATED_BOUNDARY_BOSS_MOVE.md). Contact-changing planar support edits,
 local Trim/Extend across general curved/concave support boundaries, blind or
 cross-drilled holes, blends and freeform reconstruction need additional local
 material/trim certificates. Existing numerical and complexity budgets remain

@@ -293,19 +293,37 @@ struct CylindricalMoveFaceSessionTest {
     }
     static void afterBoundary(const QString& path) {
         NativeDocumentSnapshot snapshot;QString error;QByteArray bytes;
-        const bool originalDocument=path.endsWith("moveCylinder.odc");
-        const double left=originalDocument?0:-8,bossX=originalDocument?121:98,holeY=originalDocument?36:48;
-        const auto stock=BRepPrimAPI_MakeBox(gp_Pnt(left,0,0),163-left,80,60).Shape();
+        double left=-8,right=163,bossX=98,holeY=48;TopoDS_Shape nativeSource;double nativeX=0,nativeY=0;
+        if(!path.isEmpty()) {
+            QFile file(path);check(file.open(QIODevice::ReadOnly),"Cannot read boundary document");bytes=file.readAll();file.close();
+            check(NativeDocumentStorage::load(path,snapshot,error),qPrintable(error));check(!snapshot.parts.empty(),"Empty native boundary document");
+            nativeSource=snapshot.parts[0].shape;const auto boss=radiusFace(nativeSource,18),hole=radiusFace(nativeSource,17);
+            check(!boss.IsNull()&&!hole.IsNull(),"Native replay requires R18 boss and R17 hole");
+            const auto cylinder=BRepAdaptor_Surface(boss).Cylinder();nativeX=cylinder.Location().X();nativeY=cylinder.Location().Y();
+            holeY=BRepAdaptor_Surface(hole).Cylinder().Location().Y();bossX=std::min(nativeX,121.);left=1.e100;right=-1.e100;
+            for(TopExp_Explorer it(nativeSource,TopAbs_FACE);it.More();it.Next()) {
+                const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface surface(f);if(surface.GetType()!=GeomAbs_Plane) continue;
+                auto n=surface.Plane().Axis().Direction();if(f.Orientation()==TopAbs_REVERSED) n.Reverse();
+                if(n.X()<-.99) left=std::min(left,surface.Plane().Location().X());
+                if(n.X()>.99) right=std::max(right,surface.Plane().Location().X());
+            }
+            check(std::isfinite(left)&&left<bossX,"Cannot identify native left exterior plane");
+            if(snapshot.parts.size()==1) {
+                NativePartState other;other.id="replay-other";other.name="Replay other Part";other.shape=BRepPrimAPI_MakeBox(100,80,60).Shape();
+                other.transform.SetTranslation(gp_Vec(223,0,0));snapshot.parts.push_back(other);
+            }
+        }
+        const auto stock=BRepPrimAPI_MakeBox(gp_Pnt(left,0,0),right-left,80,60).Shape();
         const auto bore=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,holeY,0),gp_Dir(0,0,1)),17,60).Shape();
         const auto outside=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(bossX,7,60),gp_Dir(0,0,1)),18,55).Shape();
         const auto originalBoss=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(bossX,36,60),gp_Dir(0,0,1)),18,55).Shape();
         const auto stockWithHole=BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,bore);
-        if(!path.isEmpty()) {
-            QFile file(path);check(file.open(QIODevice::ReadOnly),"Cannot read boundary bug document");bytes=file.readAll();file.close();
-            check(NativeDocumentStorage::load(path,snapshot,error),qPrintable(error));
-            check(snapshot.parts.size()==2&&BRepReconstruction::equivalent(snapshot.parts[0].shape,BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stockWithHole,originalDocument?originalBoss:outside)),
-                "Boundary document differs from independent oracle");
-        } else {
+        if(!nativeSource.IsNull()) {
+            const auto tool=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(nativeX,nativeY,60),gp_Dir(0,0,1)),18,55).Shape();
+            check(BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Cut>(nativeSource,tool),stockWithHole),"Native healed support differs from independent box/hole oracle");
+            std::cout<<"Native boss replay: x="<<nativeX<<" y="<<nativeY<<" support x=["<<left<<","<<right<<"]"<<std::endl;
+        }
+        if(path.isEmpty()) {
             NativePartState first;first.id="boundary-part";first.name="Unite 5";
             first.shape=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stockWithHole,outside);
             NativePartState second;second.id="other-part";second.name="Part 6";second.shape=BRepPrimAPI_MakeBox(100,80,60).Shape();
@@ -320,8 +338,19 @@ struct CylindricalMoveFaceSessionTest {
             const auto face=TopoDS::Face(it.Current());if(BRepAdaptor_Surface(face).GetType()!=GeomAbs_Plane) continue;
             gp_Pnt p;gp_Dir n;check(MoveFaceGeometry::reference(snapshot.parts[0].shape,face,p,n,error),"Native boundary result disables planar recognition");
         }
-        const auto saved=originalDocument?BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stockWithHole,outside):snapshot.parts[0].shape;
-        const auto interior=originalDocument?snapshot.parts[0].shape: BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(saved,outside),originalBoss);
+        const auto saved=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stockWithHole,outside);
+        const auto interior=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stockWithHole,originalBoss);
+        if(!nativeSource.IsNull()) {
+            // Exercise the actual loaded mantle first, with no assumed Part
+            // count, former axis or saved primitive position. Cancel is read-only.
+            check(v.importDocumentSnapshot(snapshot,error),qPrintable(error));
+            select(v,0,radiusFace(nativeSource,18));action->trigger();check(v.commandSession_.has_value(),"Actual native boundary boss cannot activate Move Face");
+            v.cylinderMoveDirection_->setCurrentIndex(1);input(v,QLocale().toString((bossX-nativeX)*std::abs(v.boxes_[0].orientation.ScaleFactor()),'g',15));
+            check(v.commandSession_->valid,qPrintable(v.commandSession_->geometryError));
+            auto feature=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(bossX,nativeY,60),gp_Dir(0,0,1)),18,55).Shape();
+            check(BRepReconstruction::equivalent(v.commandSession_->candidate,BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stockWithHole,feature)),"Native boss preview differs from independent material oracle");
+            v.cancelCommandSession();check(v.boxes_[0].shape.IsSame(nativeSource),"Native boss Cancel changed source");
+        }
         for(bool trim:{false,true}) {
             // Replay an actual OK from an interior boss using the exact saved
             // document's supporting stock/hole, preserving its Part ID/placement.
@@ -378,22 +407,56 @@ struct CylindricalMoveFaceSessionTest {
             TopoDS_Face planar;
             for(TopExp_Explorer it(v.boxes_[0].shape,TopAbs_FACE);it.More();it.Next()) {
                 const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);
-                if(s.GetType()==GeomAbs_Plane&&std::abs(s.Plane().Axis().Direction().X())>.99&&s.Plane().Distance(gp_Pnt(163,0,0))<1.e-6) {planar=f;break;}
+                if(s.GetType()==GeomAbs_Plane&&std::abs(s.Plane().Axis().Direction().X())>.99&&s.Plane().Distance(gp_Pnt(right,0,0))<1.e-6) {planar=f;break;}
             }
             check(!planar.IsNull(),"Unchanged side plane disappeared");
-            v.selectParts({});GProp_GProps p;BRepGProp::SurfaceProperties(planar,p);const auto point=project(v,p.CentreOfMass().Transformed(v.boxes_[0].orientation));
-            v.context_->MoveTo(point.x(),point.y(),v.view_,Standard_False);check(v.context_->HasDetected(),"Committed planar face is not pickable");
-            v.context_->SelectDetected(AIS_SelectionScheme_Replace);
+            v.selectParts({});bool pickedPlane=false;const BRepAdaptor_Surface planeSurface(planar);
+            for(double u:{.5,.2,.8}) for(double w:{.5,.2,.8}) {
+                const auto p=planeSurface.Value(planeSurface.FirstUParameter()+u*(planeSurface.LastUParameter()-planeSurface.FirstUParameter()),
+                    planeSurface.FirstVParameter()+w*(planeSurface.LastVParameter()-planeSurface.FirstVParameter()));
+                const auto point=project(v,p.Transformed(v.boxes_[0].orientation));v.context_->MoveTo(point.x(),point.y(),v.view_,Standard_False);
+                if(!v.context_->HasDetected()) continue;const auto owner=Handle(StdSelect_BRepOwner)::DownCast(v.context_->DetectedOwner());
+                if(!owner.IsNull()&&owner->Shape().IsSame(planar)) {v.context_->SelectDetected(AIS_SelectionScheme_Replace);pickedPlane=true;break;}
+            }
+            check(pickedPlane,"Committed planar face is not pickable through current owners");
             check(v.selectionContext().kind==CadViewport::SelectionContext::Kind::Faces,"Fresh planar pick resolves stale topology");
             const auto picked=v.selectionContext().faces.front();
             check(picked.partIndex==0&&picked.face.IsSame(planar),"Planar test ray did not hit the intended unchanged plane");
             action->trigger();check(v.commandSession_&&v.commandSession_->moveFeature==CadViewport::MoveFaceFeature::Planar,"Planar Move Face activation rejected after boss commit");
             input(v,"2");check(v.commandSession_->valid,"Planar Move Face preview failed after boss commit");v.cancelCommandSession();
             select(v,0,radiusFace(v.boxes_[0].shape,18));action->trigger();
-            check(!v.commandSession_,"Boundary boss incorrectly bypassed its unsupported source-topology rules");
+            check(v.commandSession_&&v.commandSession_->moveFeature==CadViewport::MoveFaceFeature::Boss,"Boundary boss cannot activate repeated Move Face");
+            v.cylinderBossBoundary_->setCurrentIndex(trim?1:0);v.cylinderMoveDirection_->setCurrentIndex(2);
+            const auto grab=project(v,v.commandSession_->pivot.Translated(gp_Vec(v.commandSession_->direction)*15));
+            QMouseEvent press(QEvent::MouseButtonPress,QPointF(grab),QPointF(grab),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);v.mousePressEvent(&press);
+            check(v.draggingFace_,"Repeated boss lateral arrow did not grab");
+            const auto end=grab-QPoint(qRound(v.dragScreenX_*3/v.dragMmPerPixel_),qRound(v.dragScreenY_*3/v.dragMmPerPixel_));
+            QMouseEvent drag(QEvent::MouseMove,QPointF(end),QPointF(end),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);v.mouseMoveEvent(&drag);
+            check(v.commandSession_->valid&&!v.commandSession_->preview.IsNull(),"Repeated boss drag has no certified preview");
+            QKeyEvent escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier);QApplication::sendEvent(v.dragDimension_,&escape);
+            check(!v.commandSession_&&BRepReconstruction::equivalent(v.boxes_[0].shape,candidate),"Repeated boss Escape changed geometry");
+            std::vector<TopoDS_Shape> bossStates{v.boxes_[0].shape};double bossY=7;
+            const auto bossOracle=[&](double y) {
+                auto boss=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(bossX,y,60),gp_Dir(0,0,1)),18,55).Shape();
+                if(trim) boss=BooleanGeometry::combine<BRepAlgoAPI_Common>(boss,BRepPrimAPI_MakeBox(gp_Pnt(left,0,60),right-left,80,55).Shape());
+                return BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stockWithHole,boss);
+            };
+            for(double destination:{3.,-5.,7.,36.,7.}) {
+                select(v,0,radiusFace(v.boxes_[0].shape,18));action->trigger();check(v.commandSession_.has_value(),"Repeated boss lost activation");
+                v.cylinderBossBoundary_->setCurrentIndex(trim?1:0);v.cylinderMoveDirection_->setCurrentIndex(2);
+                input(v,QLocale().toString(destination-bossY,'g',15));
+                check(v.commandSession_->valid,qPrintable(v.commandSession_->geometryError));
+                check(BRepReconstruction::equivalent(v.commandSession_->candidate,bossOracle(destination)),"Repeated boss preview changed hole or support");
+                v.commandButtons_->button(QDialogButtonBox::Ok)->click();currentOwners(v,0);
+                bossStates.push_back(v.boxes_[0].shape);bossY=destination;
+            }
+            for(size_t i=bossStates.size()-1;i>0;--i) {v.undoPull();check(v.boxes_[0].shape.IsSame(bossStates[i-1]),"Repeated boss Undo lost cached source");}
+            for(size_t i=1;i<bossStates.size();++i) {v.redoPull();check(v.boxes_[0].shape.IsSame(bossStates[i]),"Repeated boss Redo rebuilt geometry");}
+            for(size_t i=bossStates.size()-1;i>0;--i) v.undoPull();
+            check(v.boxes_[1].shape.IsSame(snapshot.parts[1].shape),"Repeated boss changed another Part");
             const auto startHole=[&] {
                 select(v,0,radiusFace(v.boxes_[0].shape,17));action->trigger();
-                check(v.commandSession_&&v.commandSession_->moveFeature==CadViewport::MoveFaceFeature::ThroughHole,"Unaffected hole disabled by unsupported boundary boss");
+                check(v.commandSession_&&v.commandSession_->moveFeature==CadViewport::MoveFaceFeature::ThroughHole,"Unaffected hole disabled by boundary boss");
                 v.cylinderMoveDirection_->setCurrentIndex(1);input(v,"3");
                 check(v.commandSession_->valid,"Unaffected hole cannot preview after boundary crossing");
             };
