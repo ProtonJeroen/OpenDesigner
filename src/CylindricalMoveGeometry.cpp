@@ -834,10 +834,33 @@ Result moveLocalHole(const TopoDS_Shape& source,const TopoDS_Face& selected,
       catch(const std::exception&) {return refused;}
 }
 
+// Shared acceptance for the already certified fill/healed body. The selected
+// cylindrical wall resolves the whole feature, including cap/underside patches.
+Result finishCylindricalRemoval(const BRepReconstruction::Neighborhood& local,
+                               const TopoDS_Shape& healed,const TopoDS_Shape& region,
+                               BRepReconstruction::Result& removal) {
+    auto affected=local.patch;affected.insert(affected.end(),local.neighbors.begin(),local.neighbors.end());
+    QString error;gp_Trsf identity;BRepReconstruction::Result finished;
+    if(!BRepReconstruction::finishLocal(local,healed,region,affected,{},identity,finished,error)||!manifold(finished.solid)) {
+        auto failure=refuse(Status::Unsupported,Code::InvalidResult,"Delete Face cannot preserve the surrounding material and manifold topology: ");failure.message+=error.toStdString();return failure;
+    }
+    for(const auto& patch:local.patch) for(TopExp_Explorer it(finished.solid,TopAbs_FACE);it.More();it.Next()) {
+        const auto face=TopoDS::Face(it.Current());
+        if(BRepReconstruction::sameAnalyticSupport(patch,face)&&faceArea(BooleanGeometry::combine<BRepAlgoAPI_Common>(patch,face))>1.e-8)
+            return refuse(Status::Unsupported,Code::InvalidResult,"Delete Face retained part of the selected cylindrical feature.");
+    }
+    for(TopExp_Explorer it(finished.solid,TopAbs_FACE);it.More();it.Next()) {
+        bool mapped=false;for(const auto& mapping:finished.history) for(const auto& face:mapping.modified) if(face.IsSame(it.Current())) mapped=true;
+        if(!mapped) return refuse(Status::Unsupported,Code::InvalidResult,"Delete Face introduced an uncertified closing surface.");
+    }
+    removal=std::move(finished);Result result;result.status=Status::Success;result.shape=removal.solid;
+    result.message="Cylindrical feature removed from its certified current material neighborhood.";return result;
+}
+
 // Recover only the cylinder material on the actual exterior plane's material
 // side. The current notch rims define everything; no former stock is retained.
 Result moveLocalNotch(const TopoDS_Shape& source,const TopoDS_Face& selected,
-                      const gp_Vec& delta,const Result& refused) {
+                      const gp_Vec& delta,const Result& refused,BRepReconstruction::Result* removal=nullptr) {
     if(refused.status!=Status::Unsupported) return refused;
     const auto unsupported=[](const char* message){return refuse(Status::Unsupported,Code::UnsupportedFeature,message);};
     try {
@@ -929,6 +952,7 @@ Result moveLocalNotch(const TopoDS_Shape& source,const TopoDS_Face& selected,
         double expectedWall=0;for(TopExp_Explorer it(missing,TopAbs_FACE);it.More();it.Next())
             if(BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType()==GeomAbs_Cylinder) expectedWall+=faceArea(it.Current());
         if(std::abs(expectedWall-wallArea)>1.e-8*std::max(1.,wallArea)) return unsupported("The partial mantle differs from the inferred exterior-boundary trim.");
+        if(removal) return finishCylindricalRemoval(local,healed,missing,*removal);
         const auto tool=BRepPrimAPI_MakeCylinder(gp_Ax2(base.Translated(delta),axis),radius,height).Shape();
         const auto removed=BooleanGeometry::combine<BRepAlgoAPI_Common>(healed,tool);
         if(!closedOnExterior(removed,true)) return refuse(Status::Unsupported,Code::InteractingFeatures,"Translated notch would enter a blind region or intersect another feature's support.");
@@ -984,7 +1008,7 @@ Result moveLocalNotch(const TopoDS_Shape& source,const TopoDS_Face& selected,
 // Boundary follow-up uses only the current cylinder and the healed support.
 // Extruding an actual trimmed support face retains its holes and side boundaries.
 Result moveBoundaryBoss(const TopoDS_Shape& source,const TopoDS_Face& selected,
-                        const gp_Vec& delta,BossBoundaryMode policy,const Result& refused) {
+                        const gp_Vec& delta,BossBoundaryMode policy,const Result& refused,BRepReconstruction::Result* removal=nullptr) {
     if(refused.status!=Status::Unsupported) return refused;
     const auto unsupported=[](const char* message){return refuse(Status::Unsupported,Code::UnsupportedFeature,message);};
     try {
@@ -1063,6 +1087,12 @@ Result moveBoundaryBoss(const TopoDS_Shape& source,const TopoDS_Face& selected,
             if(std::abs(n.Dot(axis))>angular||(side&&(!side->Axis().Direction().IsEqual(n,angular)||side->Distance(s.Plane().Location())>tolerance)))
                 return unsupported("Repeated boss movement across corners or multiple side supports is unsupported.");
             side=gp_Pln(s.Plane().Location(),n);
+        }
+        if(removal) {
+            if(!side) return unsupported("Select the cap with an interior boss wall; automatic whole-boss deletion requires a certified boundary crossing.");
+            if(!BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Cut>(local.solid,healed),oldFeature))
+                return unsupported("Delete Face could not independently certify the removed boss material.");
+            return finishCylindricalRemoval(local,healed,oldFeature,*removal);
         }
         const auto feature=delta.Magnitude()<=tolerance?oldFeature:policy==BossBoundaryMode::Trim?clipped:newTool;
         const auto candidate=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(healed,feature);
@@ -1305,6 +1335,17 @@ CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
     if(exterior) return exterior;
     const auto local=moveLocalHole(source,selected,delta,exterior);
     return local?local:moveLocalNotch(source,selected,delta,local);
+}
+
+bool CylindricalMoveGeometry::removeBoundaryFeature(const TopoDS_Shape& source,const TopoDS_Face& mantle,
+        BRepReconstruction::Result& result,QString& error) {
+    result={};error.clear();
+    const auto refused=refuse(Status::Unsupported,Code::UnsupportedFeature,"Selected cylindrical wall has no certified boundary-feature closure.");
+    const auto notch=moveLocalNotch(source,mantle,gp_Vec(),refused,&result);
+    if(notch) return true;
+    const auto boss=moveBoundaryBoss(source,mantle,gp_Vec(),BossBoundaryMode::Extend,refused,&result);
+    if(boss) return true;
+    result={};error=QStringLiteral("Cylindrical Delete Face: %1 %2").arg(QString::fromStdString(notch.message),QString::fromStdString(boss.message));return false;
 }
 
 CylindricalMoveGeometry::Result CylindricalMoveGeometry::resizeRadius(

@@ -78,5 +78,6 @@ disconnected/degenerate support overlap, and geometry outside existing numerical
 or topology budgets. Existing earlier paths retain their established scope.
 There is no reconstruction of vanished boundaries from history. Moving the
 selected boss axially or changing its radius/height is a separate operation;
-radial Pull limitations are unchanged. Manual desktop acceptance and broader
-phase 9E Save/Open lifecycle checks remain pending.
+radial Pull limitations are unchanged. The user reported manual desktop
+acceptance of Phase 9D.7B: 8/8 passed. Broader phase 9E Save/Open lifecycle checks
+remain pending.

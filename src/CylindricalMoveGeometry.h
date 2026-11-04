@@ -1,4 +1,5 @@
 #pragma once
+#include "BRepReconstruction.h"
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Face.hxx>
 #include <gp_Ax1.hxx>
@@ -47,6 +48,11 @@ Result moveThroughHole(const TopoDS_Shape& source, const TopoDS_Face& mantle,
 // overhang. No invented bridges or support pedestals. Policy is always explicit.
 Result moveBoss(const TopoDS_Shape& source, const TopoDS_Face& mantle,
                 const gp_Vec& displacement, BossBoundaryMode policy);
+// Whole-feature deletion from one current notch/boundary-boss wall. Reuses the
+// same material certificates as movement; includes connected split mantles and
+// boss cap/underside regions. Returns immutable source-to-result correspondence.
+bool removeBoundaryFeature(const TopoDS_Shape& source,const TopoDS_Face& mantle,
+                           BRepReconstruction::Result& result,QString& error);
 // Radial Pull on current geometry: complete through-holes, fully supported
 // bosses, and a boss cut by one radial plane. Axial/cut supports stay fixed.
 // No offset-kernel fallback; unsupported neighborhoods return diagnostics.

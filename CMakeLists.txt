@@ -73,6 +73,7 @@ target_include_directories(OpenDesignerCylindricalMoveGeometry PUBLIC src ${Open
 target_link_libraries(OpenDesignerCylindricalMoveGeometry PUBLIC
     Qt6::Core TKBRep TKPrim TKTopAlgo TKBO TKBool TKGeomBase TKGeomAlgo
     TKShHealing TKOffset TKFeat TKG3d TKG2d TKMath TKernel)
+target_link_libraries(OpenDesignerDeleteFaceGeometry PUBLIC OpenDesignerCylindricalMoveGeometry)
 add_library(OpenDesignerDebug STATIC src/DebugModel.cpp src/DebugModel.h)
 target_include_directories(OpenDesignerDebug PUBLIC src ${OpenCASCADE_INCLUDE_DIR})
 target_link_libraries(OpenDesignerDebug PUBLIC ${OPENDESIGNER_LIBRARIES} LibArchive::LibArchive)
@@ -310,6 +311,10 @@ if(OPENDESIGNER_BUILD_TESTS)
     target_include_directories(OpenDesignerDeleteFaceTests PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
     target_compile_definitions(OpenDesignerDeleteFaceTests PRIVATE OPENDESIGNER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     target_link_libraries(OpenDesignerDeleteFaceTests PRIVATE ${OPENDESIGNER_LIBRARIES})
+    add_test(NAME delete-boundary-cylindrical-geometry COMMAND OpenDesignerDeleteFaceTests --boundary-geometry)
+    add_test(NAME delete-boundary-cylindrical-session COMMAND OpenDesignerDeleteFaceTests --boundary-session)
+    set_tests_properties(delete-boundary-cylindrical-geometry delete-boundary-cylindrical-session PROPERTIES TIMEOUT 180)
+    set_tests_properties(delete-boundary-cylindrical-session PROPERTIES RUN_SERIAL TRUE)
     add_test(NAME delete-face-geometry COMMAND OpenDesignerDeleteFaceTests --geometry)
     add_test(NAME delete-face-session COMMAND OpenDesignerDeleteFaceTests)
     set_tests_properties(delete-face-geometry delete-face-session PROPERTIES TIMEOUT 120)

@@ -1,4 +1,5 @@
 #include "DeleteFaceGeometry.h"
+#include "CylindricalMoveGeometry.h"
 #include "PlanarFaceDeletion.h"
 #include <BRepAlgoAPI_Defeaturing.hxx>
 #include <BRepAlgoAPI_Common.hxx>
@@ -232,9 +233,14 @@ static bool removeNative(const TopoDS_Shape& source,const std::vector<TopoDS_Fac
 
 bool DeleteFaceGeometry::remove(const TopoDS_Shape& source,const std::vector<TopoDS_Face>& faces,
         BRepReconstruction::Result& result,QString& error) {
+    result={};error.clear();
+    QString cylindricalError;
+    if(faces.size()==1&&!faces.front().IsNull()&&BRepAdaptor_Surface(faces.front()).GetType()==GeomAbs_Cylinder&&
+       CylindricalMoveGeometry::removeBoundaryFeature(source,faces.front(),result,cylindricalError)) return true;
     if(removeNative(source,faces,result,error)) return true;
     QString planarError;
     if(PlanarFaceDeletion::rebuild(source,faces,result,planarError)) {error.clear();return true;}
     if(!planarError.isEmpty()) error+=QStringLiteral(" ")+planarError;
+    if(!cylindricalError.isEmpty()) error=cylindricalError+QStringLiteral(" ")+error;
     return false;
 }

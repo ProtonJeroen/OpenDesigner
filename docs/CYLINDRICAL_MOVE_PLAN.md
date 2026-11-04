@@ -3,7 +3,8 @@
 This supplements Issue #51 and the existing [Move Face](MOVE_FACE.md) contract.
 Phase 9A records the architecture; the 9B and 9C sections describe the headless
 through-hole and boss operations. Phase 9D integrates them into Move Face;
-manual Fedora KDE acceptance and phase 9E remain outstanding.
+Manual desktop acceptance of Phase 9D.7B was reported as 8/8 passed; phase 9E
+remains outstanding.
 Phase 9D.1 below expands recognition to independent parallel features in one Part.
 
 ## 9A — completed architecture analysis
@@ -823,6 +824,32 @@ Verification: application and affected geometry/session targets built. Both new
 boss geometry modes, local/boundary/independent geometry checks, expanded portable
 boundary sessions and both native-document replays passed. Native file hashes
 are unchanged; all supplied ODC files remain untracked. No full CTest suite ran.
+
+## 9D.7C — Delete Face on boundary cylindrical features
+
+Manual desktop acceptance of 9D.7B: user reports 8/8 passed.
+
+Select one current cylindrical wall to remove a connected one-sided through-notch,
+a boundary-trimmed boss or a complete overhanging boss. Reuse the 9D.7A notch
+fill and 9D.7B boss removal/support certificates before their translated-feature
+reconstruction steps. The Delete Face adapter returns their already certified
+healed material with shared local normalization, manifold validation, protected
+surface/material checks and source-to-result correspondence. Connected split
+mantles resolve as one feature; boss caps/undersides are removed automatically.
+Legacy OCCT defeaturing and planar reconstruction remain available for their
+existing explicit selections. No primitive metadata or modeling history is read.
+
+See [boundary Delete Face recognition, tests and limits](DELETE_FACE.md#boundary-cylindrical-features-phase-9d7c).
+Validation: new boundary geometry/session tests, existing Delete Face geometry,
+and the two directly affected notch/imported-boss Move Face regressions passed.
+Application and affected targets built. Native replays of the boundary-boss and
+clipped-boss crash documents passed; the current R21/R23 `moveCylinder.odc` falls
+outside the replay fixture's box oracle. Original files are unchanged/untracked.
+No full CTest suite was run.
+
+Focused tests cover all three feature classes, rotated/split B-Reps, unaffected
+features, independent analytic volume/occupancy, atomic refusal, blue preview,
+Cancel/OK, cached Undo/Redo, selection cleanup, identity and native replay.
 
 ## 9E — transactions, persistence and acceptance
 

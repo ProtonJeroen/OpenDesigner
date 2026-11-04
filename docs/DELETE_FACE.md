@@ -18,8 +18,9 @@ with the Delete Face panel focused. Ordinary Cancel restores original owners.
 ## Geometry and acceptance
 
 `DeleteFaceGeometry` is geometry-only and operates on deep copies in the canonical
-B-Rep frame. It uses OCCT `BRepAlgoAPI_Defeaturing` to extend and trim neighboring
-surfaces. It explicitly checks face membership (OCCT would ignore foreign faces),
+B-Rep frame. Boundary cylindrical features use the certified local reconstruction
+described below. Explicit selections use OCCT `BRepAlgoAPI_Defeaturing` to extend
+and trim neighboring surfaces. It explicitly checks face membership (OCCT would ignore foreign faces),
 deduplicates selection and requires history to report every selected face deleted.
 An OCCT warning/error rejects its entire native candidate, even if some regions
 succeeded. A separately certified planar step reconstruction may still succeed;
@@ -88,6 +89,83 @@ and after cleanup. The usual BRepCheck, single closed solid/shell, positive fini
 volume, no loose topology and self-interference checks apply. The complete solid
 must tessellate before the source presentation is hidden. Multiple Part previews
 use the same blue shaded rendering helper as Move/Rotate/Align Face.
+
+## Boundary cylindrical features (phase 9D.7C)
+
+Select one cylindrical wall of a through-notch on one planar exterior side, a
+Trim boss, or a complete Extend boss with a partial support footprint. Delete
+Face resolves the entire connected cylindrical feature, including split mantle
+patches and the boss cap/underside; separate cap selection is unnecessary for
+these boundary classes. Nearby holes, bosses and planar faces remain protected.
+The blue preview, Cancel, cached Undo/Redo and stable Part identity use the
+existing session. Confirmation removes deleted face selection and selects the
+edited Part; Undo/Redo clear selection as before.
+
+Previously, native defeaturing and its material oracle required the explicitly
+selected region to have closed planar rim loops while preserving every
+unselected patch. An open notch has partial circular rims and opening edges
+across different planes. A trimmed/overhanging boss also has side or underside
+intersections, and selecting its wall alone leaves its cap unselected. These
+cases could not meet that certificate.
+
+`CylindricalMoveGeometry::removeBoundaryFeature` reuses current-B-Rep recognition
+and material reconstruction from phases 9D.7A/B. For a notch, infer the finite
+missing cylinder segment on the material side of the actual exterior plane.
+Certify its added material, independent re-cut to the source, axial/side exterior
+closure and mantle area. For a boss, remove the current finite cylinder material,
+certify the healed support and reassembled source, then verify the old boss is
+either the complete cylinder or its exact trim by the healed planar support
+prism. This is actual trimmed support geometry, not a stock bounding box.
+
+Return the certified fill/healed body rather than rebuilding a translated
+feature. Shared `finishLocal` preserves material outside this minimal removed or
+filled volume and unaffected trimmed patches. Require a manifold solid, complete
+selected-wall disappearance and mapping of every final face onto an existing
+oriented source support. Only the resolved feature and its immediate neighbors
+may change. Splitting/merging is allowed. No offset path, creation flags,
+primitive dimensions or feature history are used. The existing OCCT defeaturing
+and planar-section adapters remain unchanged for their previous selections.
+
+The new automatic resolution takes one cylindrical face per Part. Selecting one
+piece of a split mantle resolves the connected patch. General multi-face or
+multi-feature selections continue through the legacy adapters and are not
+expanded automatically. Interior full bosses still require their cap in the
+explicit selection. Corners/multiple exterior sides, blind/depth-varying notches,
+sloped/curved rims, blends, interacting or incomplete boss trims, ambiguous
+support and geometry outside existing numerical/topology budgets are refused.
+No extinct side boundary is inferred from history. Each edited Part must remain
+one closed manifold solid; all Parts must succeed before any preview is shown.
+
+Focused commands (native input remains read-only):
+
+```sh
+build/OpenDesignerDeleteFaceTests --boundary-geometry
+build/OpenDesignerDeleteFaceTests --boundary-session
+build/OpenDesignerDeleteFaceTests --boundary-session /absolute/path/document.odc
+```
+
+The geometry regression covers imported current geometry, split mantles with
+rotated axes, independent analytic volume and occupancy, unrelated features and
+atomic corner/blind/interacting/foreign-face refusals. The session regression
+checks context activation, blue non-selectable preview, Cancel/OK, cached
+Undo/Redo, Part UUID/placement/appearance/browser identity, selection cleanup,
+follow-up Move/Delete on remaining features and multi-Part atomic refusal.
+Native replay uses the current support/cylinder geometry and independent stock
+oracles, with all feature changes confined to the in-memory snapshot. Manual
+9D.7B desktop acceptance was reported as 8/8 passed; broader 9E persistence and
+manual 9D.7C acceptance remain separate.
+
+Validation: the new boundary geometry and portable session regressions passed,
+as did the existing Delete Face geometry regression. The directly affected
+Move Face `--notch` and `--repeated-boss-detail` regressions passed after sharing
+the removal certificates. Incremental application and affected test builds
+passed. Native session replays of `moveCylinderBug.odc` and `crash03112026.odc`
+passed all three removal classes and source-file immutability. The current
+`moveCylinder.odc` (R21/R23) does not satisfy the native test harness's bounded
+axis-aligned box oracle; it returns a fixture diagnostic before Delete Face,
+and no passing replay is claimed for that file. Rotated/split geometry is covered
+by the portable independent-oracle regression. All three ODC hashes are unchanged
+from the start of this phase and remain untracked. No full CTest suite was run.
 
 ## Supported scope and failures
 
