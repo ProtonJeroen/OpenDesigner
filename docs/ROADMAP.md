@@ -2,6 +2,40 @@
 
 Versioned sections below are ordered by development history, from early foundations to v0.4.8. The older `v0.20` milestone names are retained as originally recorded. Planned and in-progress items follow separately; proposed milestone numbers and order are not release commitments.
 
+## Cross-cutting principle — Geometry-first, history-independent B-Rep editing
+
+This is a **project-wide architectural requirement**, not only a cylindrical
+Move Face feature or a promise limited to primitive shapes.
+
+- [ ] Model and edit solids as their **current boundary representation**:
+  faces/surfaces, edges, vertices, shells, topology and material occupancy.
+  A box is a closed six-face solid; a simple cylinder consists of its cylindrical
+  lateral surface and planar caps. Creation commands may be conveniences,
+  but stored primitive labels, Extrude/Revolve history or imported provenance
+  must never determine whether a current face is eligible for direct modeling.
+- [ ] Support **independent and combined selection/manipulation** of faces
+  (including planar and curved faces), and where mathematically meaningful
+  edges or face groups, for Move/Rotate/Pull/Resize/Delete/Align. A single
+  selected face may reshape adjacent boundaries; groups must be transformed
+  coherently, without assuming the entire Part is rigid.
+- [ ] Infer direction, axes, constraints and the necessary local geometric
+  neighborhood from current B-Rep analytic supports and adjacency. Preserve
+  unselected material whenever intended, and reconstruct neighboring
+  surfaces/edges and topology when faces split, merge or disappear.
+- [ ] Treat a rotated plane, intersected cylinder, Boolean result, arbitrary
+  trims or imported STEP solid according to the same geometric rules.
+  Surface recognition must be independent of how the geometry arose, while
+  operation-specific feasibility is decided by certified result geometry.
+- [ ] Preserve Part identity, selections as appropriate, preview, Cancel,
+  Undo/Redo and document persistence; check solid validity, connectivity,
+  tolerances and material occupancy. Unsupported or ambiguous operations
+  must refuse **that operation** with a precise reason, without crashing or
+  disabling unrelated editable geometry.
+- [ ] Implement the capability incrementally with shared geometric-neighborhood
+  and reconstruction utilities and focused regressions. Do not claim that all
+  arbitrary B-Reps are already editable; advanced blends, interacting trims,
+  multi-face transitions and freeform surfaces require separate validation.
+
 ## v0.1 — foundation
 - Qt 6 native desktop application
 - Open CASCADE 3D viewport
