@@ -184,6 +184,113 @@ struct CylindricalMoveFaceSessionTest {
         }
         return {};
     }
+    static void openNotchSession(const QString& path) {
+        NativeDocumentSnapshot snapshot;QString error;QByteArray bytes;
+        if(!path.isEmpty()) {
+            QFile file(path);check(file.open(QIODevice::ReadOnly),"Cannot read native notch replay document");bytes=file.readAll();file.close();
+            check(NativeDocumentStorage::load(path,snapshot,error),qPrintable(error));
+        } else {
+            const auto stock=BRepPrimAPI_MakeBox(163,80,60).Shape();
+            const auto hole=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,36,0),gp_Dir(0,0,1)),17,60).Shape();
+            const auto boss=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(121,36,60),gp_Dir(0,0,1)),18,55).Shape();
+            NativePartState p;p.id="open-notch-part";p.name="Notch replay";p.shape=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,hole),boss);
+            p.transform.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.3);p.transform.SetScaleFactor(1.5);p.transform.SetTranslationPart(gp_Vec(40,-30,25));
+            snapshot.parts={p};
+        }
+        check(!snapshot.parts.empty(),"No Part in notch document");
+        const auto initial=snapshot.parts[0].shape;const auto holeFace=radiusFace(initial,17);check(!holeFace.IsNull(),"No native R17 hole");
+        const auto cylinder=BRepAdaptor_Surface(holeFace).Cylinder();const double oldX=cylinder.Location().X(),oldY=cylinder.Location().Y();
+        check(cylinder.Axis().Direction().IsParallel(gp_Dir(0,0,1),1.e-8),"Unexpected native hole axis");
+        double left=1.e100;
+        for(TopExp_Explorer it(initial,TopAbs_FACE);it.More();it.Next()) {
+            const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);if(s.GetType()!=GeomAbs_Plane) continue;
+            auto n=s.Plane().Axis().Direction();if(f.Orientation()==TopAbs_REVERSED) n.Reverse();
+            if(n.X()<-.99) left=std::min(left,s.Plane().Location().X());
+        }
+        check(std::isfinite(left)&&left<oldX,"Cannot identify native exterior side");
+        const auto oldTool=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(oldX,oldY,0),gp_Dir(0,0,1)),17,60).Shape();
+        TopoDS_Shape body;check(BRepReconstruction::normalize(BooleanGeometry::combine<BRepAlgoAPI_Fuse>(initial,oldTool),body,error,true),qPrintable(error));
+        const auto oracle=[&](double x,double y){return BooleanGeometry::combine<BRepAlgoAPI_Cut>(body,BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(x,y,0),gp_Dir(0,0,1)),17,60).Shape());};
+        check(BRepReconstruction::equivalent(initial,oracle(oldX,oldY)),"Native original hole is not the expected complete through-void");
+        const auto verify=[&](const TopoDS_Shape& shape,double x,double y) {
+            double mass=0;check(BRepReconstruction::validSolid(shape,mass),"Notch preview is not a certified solid");
+            check(BRepReconstruction::equivalent(shape,oracle(x,y)),"Notch preview changed native boss or other material");
+            const double d=std::clamp(x-left,-17.,17.);const double area=17*17*(std::numbers::pi/2+std::asin(d/17))+d*std::sqrt(std::max(0.,17*17-d*d));
+            near(mass,volume(body)-area*60,"Wrong analytic notch volume");
+            for(int i=-15;i<185;i+=17) for(int j=-4;j<85;j+=17) for(double z:{-1.,15.,59.,61.,90.,114.,116.}) {
+                const gp_Pnt p(i+.27,j+.41,z);BRepClass3d_SolidClassifier b(body,p,1.e-7),result(shape,p,1.e-7);
+                const bool expected=b.State()==TopAbs_IN&&!(z>0&&z<60&&std::hypot(p.X()-x,p.Y()-y)<17);
+                check(result.State()==(expected?TopAbs_IN:TopAbs_OUT),"Native notch occupancy mismatch");
+            }
+        };
+        MainWindow window;window.resize(1200,900);window.show();events();auto& v=*window.findChild<CadViewport*>();
+        check(v.importDocumentSnapshot(snapshot,error),qPrintable(error));v.view_->SetProj(V3d_XnegYnegZpos);v.fitSelection({0});events();
+        const auto before=v.boxes_[0];const auto stamp=serialized(before.shape);const auto history=v.undoStack_.size();
+        auto* tree=window.findChild<QTreeWidget*>();auto* row=tree->topLevelItem(0)->child(0);const double scale=std::abs(before.orientation.ScaleFactor());
+        const auto other=v.boxes_.size()>1?v.boxes_[1].shape:TopoDS_Shape();
+        QAction* action=nullptr;for(auto* a:window.findChildren<QAction*>()) if(a->text()=="Move Face") action=a;
+        check(action,"Move Face action missing");std::vector<TopoDS_Shape> states{before.shape};double x=oldX,y=oldY;
+        const auto start=[&](int direction) {
+            select(v,0,radiusFace(v.boxes_[0].shape,17));action->trigger();
+            check(v.commandSession_&&v.commandSession_->moveFeature==CadViewport::MoveFaceFeature::ThroughHole&&v.commandSession_->changes.front().partIndex==0,"Current notch cannot activate Move Face");
+            check(!v.cylinderBossBoundary_->isVisible(),"Notch incorrectly exposes boss Trim/Extend");v.cylinderMoveDirection_->setCurrentIndex(direction);
+        };
+        const auto commit=[&](int direction,double displacement) {
+            start(direction);input(v,QLocale().toString(displacement*scale,'g',15));
+            check(v.commandSession_->valid,qPrintable(v.commandSession_->geometryError));
+            if(direction==1) x+=displacement;else y+=displacement;verify(v.commandSession_->candidate,x,y);
+            v.commandButtons_->button(QDialogButtonBox::Ok)->click();check(!v.commandSession_,"Notch OK did not close command");
+            verify(v.boxes_[0].shape,x,y);states.push_back(v.boxes_[0].shape);currentOwners(v,0);
+        };
+        commit(1,left-oldX);const auto open=v.boxes_[0].shape;
+        // Pick a current sensitive entity in the viewport, then activate from
+        // its context menu. Neither an old face nor a fabricated owner is used.
+        v.selectParts({});bool picked=false;
+        for(TopExp_Explorer it(open,TopAbs_FACE);it.More()&&!picked;it.Next()) {
+            const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(face);
+            if(s.GetType()!=GeomAbs_Cylinder||std::abs(s.Cylinder().Radius()-17)>1.e-7) continue;
+            for(double fraction:{.98,.85,.5}) for(int u=0;u<40&&!picked;++u) {
+                const auto point=s.Value(s.FirstUParameter()+(u+.37)/40*(s.LastUParameter()-s.FirstUParameter()),s.FirstVParameter()+fraction*(s.LastVParameter()-s.FirstVParameter())).Transformed(before.orientation);
+                const auto screen=project(v,point);v.context_->MoveTo(screen.x(),screen.y(),v.view_,Standard_False);
+                if(!v.context_->HasDetected()) continue;const auto owner=Handle(StdSelect_BRepOwner)::DownCast(v.context_->DetectedOwner());
+                if(!owner.IsNull()&&owner->Shape().IsSame(face)) {v.context_->SelectDetected(AIS_SelectionScheme_Replace);picked=true;}
+            }
+        }
+        check(picked&&v.selectionContext().kind==CadViewport::SelectionContext::Kind::Faces,"Current open notch is not selectable in viewport");
+        std::unique_ptr<QMenu> menu(v.createSelectionMenu(QPoint()));auto* move=menu->findChild<QAction*>("context.move_face");
+        check(move&&move->isEnabled(),"Open-notch context Move Face is unavailable");move->trigger();check(v.commandSession_.has_value(),"Viewport notch activation failed");
+        v.cylinderMoveDirection_->setCurrentIndex(1);
+        const auto grab=project(v,v.commandSession_->pivot.Translated(gp_Vec(v.commandSession_->direction)*15));
+        QMouseEvent press(QEvent::MouseButtonPress,QPointF(grab),QPointF(grab),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);v.mousePressEvent(&press);check(v.draggingFace_,"Notch lateral arrow did not grab");
+        const auto end=grab-QPoint(qRound(v.dragScreenX_*5/v.dragMmPerPixel_),qRound(v.dragScreenY_*5/v.dragMmPerPixel_));
+        QMouseEvent drag(QEvent::MouseMove,QPointF(end),QPointF(end),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);v.mouseMoveEvent(&drag);
+        check(v.commandSession_->valid&&v.commandSession_->value<0&&!v.commandSession_->preview.IsNull(),"Open notch drag has no reconstructed live preview");
+        verify(v.commandSession_->candidate,left+v.commandSession_->value/scale,y);
+        QKeyEvent escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier);QApplication::sendEvent(v.dragDimension_,&escape);
+        check(!v.commandSession_&&v.boxes_[0].shape.IsSame(open)&&v.undoStack_.size()==history+1,"Notch drag/Escape changed document or history");
+        commit(1,-5);commit(2,7);commit(1,28-x);commit(1,left-x);commit(2,-4);
+        // An unchanged complete boss can still move laterally. Existing partial
+        // or overhanging bosses retain their supported planar cap edit instead.
+        const auto current=v.boxes_[0].shape;const auto boss=radiusFace(current,18);check(!boss.IsNull(),"Unrelated boss disappeared");
+        if(path.isEmpty()||path.endsWith("moveCylinder.odc")) {
+            select(v,0,boss);action->trigger();check(v.commandSession_&&v.commandSession_->moveFeature==CadViewport::MoveFaceFeature::Boss,"Unchanged boss lost Move Face");
+            v.cylinderMoveDirection_->setCurrentIndex(1);input(v,QLocale().toString(-2*scale,'g',15));check(v.commandSession_->valid,"Unchanged boss preview failed after repeated notch edits");v.cancelCommandSession();
+        }
+        TopoDS_Face cap;for(TopExp_Explorer it(current,TopAbs_FACE);it.More();it.Next()) {
+            const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);
+            if(s.GetType()==GeomAbs_Plane&&s.Plane().Axis().Direction().IsParallel(gp_Dir(0,0,1),1.e-8)&&std::abs(s.Plane().Location().Z()-115)<1.e-6) {cap=f;break;}
+        }
+        select(v,0,cap);action->trigger();check(v.commandSession_.has_value(),"Unchanged boss cap lost Move Face");input(v,QLocale().toString(scale,'g',15));check(v.commandSession_->valid,"Boss cap cannot preview after notch edits");v.cancelCommandSession();
+        for(size_t i=states.size()-1;i>0;--i) {v.undoPull();check(v.boxes_[0].shape.IsSame(states[i-1]),"Repeated notch Undo did not restore cached source");}
+        check(serialized(before.shape)==stamp,"Notch operations mutated original Part");currentOwners(v,0);
+        for(size_t i=1;i<states.size();++i) {v.redoPull();check(v.boxes_[0].shape.IsSame(states[i]),"Repeated notch Redo rebuilt or lost cached geometry");}
+        currentOwners(v,0);start(1);v.cancelCommandSession();
+        check(v.boxes_[0].persistentId==before.persistentId&&v.boxes_[0].presentation==before.presentation&&v.boxes_[0].name==before.name&&v.boxes_[0].color==before.color&&tree->topLevelItem(0)->child(0)==row,"Notch edits changed Part/browser identity or appearance");
+        for(int r=1;r<=3;++r) for(int c=1;c<=4;++c) near(v.boxes_[0].orientation.Value(r,c),before.orientation.Value(r,c),"Notch edit changed placement");
+        if(!other.IsNull()) check(v.boxes_[1].shape.IsSame(other),"Notch operation changed another Part");
+        if(!path.isEmpty()) {QFile file(path);check(file.open(QIODevice::ReadOnly)&&file.readAll()==bytes,"Original native document was modified");}
+        std::cout<<"Repeated open-notch viewport, drag, numeric input, Cancel and cached Undo/Redo passed\n";
+    }
     static void afterBoundary(const QString& path) {
         NativeDocumentSnapshot snapshot;QString error;QByteArray bytes;
         const bool originalDocument=path.endsWith("moveCylinder.odc");
@@ -605,3 +712,4 @@ void runCylindricalMoveFaceSessionTests() {CylindricalMoveFaceSessionTest::run()
 void runCylindricalMoveDocumentTest(const QString& path) {CylindricalMoveFaceSessionTest::documentRegression(path);}
 void runCylindricalMoveBoundaryTest(const QString& path) {CylindricalMoveFaceSessionTest::afterBoundary(path);}
 void runCrashPlanarTest(const QString& path,const QString& displacement) {CylindricalMoveFaceSessionTest::crashPreview(path,displacement);}
+void runOpenNotchSessionTest(const QString& path) {CylindricalMoveFaceSessionTest::openNotchSession(path);}

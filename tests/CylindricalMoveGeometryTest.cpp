@@ -533,6 +533,97 @@ void localNeighborhoodTests() {
     const auto moved=moveBoss(many,find(many,8),gp_Vec(-5,-5,0),BossBoundaryMode::Extend);
     require(bool(moved),"Unrelated cylinder count disabled local capability: "+moved.message);certified(moved.shape,volume(many));
 }
+void openNotchTests() {
+    const auto find=[](const TopoDS_Shape& shape,double radius) {
+        for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(face);
+            if(s.GetType()==GeomAbs_Cylinder&&std::abs(s.Cylinder().Radius()-radius)<1.e-7) return face;
+        }return TopoDS_Face();
+    };
+    for(int variant=0;variant<3;++variant) {
+        auto stock=BRepPrimAPI_MakeBox(163,80,60).Shape();
+        if(variant==2) stock=BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,BRepPrimAPI_MakeBox(gp_Pnt(140,65,0),23,15,60).Shape());
+        stock=BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(90,65,0),gp_Dir(0,0,1)),7,60).Shape());
+        const double bossX=variant==0?121:variant==1?158:166;
+        const auto feature=[&](double x,double height) {
+            auto shape=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(x,36,60),gp_Dir(0,0,1)),18,height).Shape();
+            if(variant==1) shape=BooleanGeometry::combine<BRepAlgoAPI_Common>(shape,BRepPrimAPI_MakeBox(gp_Pnt(0,0,60),163,80,height).Shape());
+            return shape;
+        };
+        const auto body=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stock,feature(bossX,55));
+        const auto oracle=[&](double x,double y) {
+            return BooleanGeometry::combine<BRepAlgoAPI_Cut>(body,BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(x,y,0),gp_Dir(0,0,1)),17,60).Shape());
+        };
+        gp_Trsf placement;if(variant==2) {placement.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.57);placement.SetTranslationPart(gp_Vec(200,-80,43));}
+        auto source=BRepBuilderAPI_Transform(oracle(54,36),placement,true).Shape();double x=54,y=36;
+        TopoDS_Shape open;
+        for(const auto delta:{gp_Vec(-54,0,0),gp_Vec(-5,0,0),gp_Vec(0,7,0),gp_Vec(33,0,0),gp_Vec(-28,0,0),gp_Vec(0,-8,0),gp_Vec(6,0,0),gp_Vec(-12,0,0),gp_Vec(30,0,0),gp_Vec(26,45,0),gp_Vec(0,5,0),gp_Vec(5,0,0),gp_Vec(0,-30,0)}) {
+            const auto stamp=serialized(source);
+            if((x==0&&y==36)||(x==50&&y==80)) {
+                const auto reference=moveThroughHole(source,find(source,17),gp_Vec());
+                require(bool(reference)&&reference.code==Code::Unchanged&&BRepReconstruction::equivalent(reference.shape,source),"Current notch cannot activate Move Face: "+reference.message);
+            }
+            const auto moved=moveThroughHole(source,find(source,17),delta.Transformed(placement));
+            require(bool(moved),"Repeated notch move failed (variant "+std::to_string(variant)+", x="+std::to_string(x)+", y="+std::to_string(y)+"): "+moved.message);
+            x+=delta.X();y+=delta.Y();const auto expected=BRepBuilderAPI_Transform(oracle(x,y),placement,true).Shape();
+            require(BRepReconstruction::equivalent(moved.shape,expected),"Notch movement changed independent boss/hole/planar material");
+            const double d=std::clamp(std::min({x,163-x,y,80-y}),-17.,17.);
+            const double cutArea=17*17*(pi/2+std::asin(d/17))+d*std::sqrt(std::max(0.,17*17-d*d));
+            const double bossArea=variant==1?18*18*(pi/2+std::asin(5./18))+5*std::sqrt(18*18-25):pi*18*18;
+            certified(moved.shape,163*80*60-(variant==2?23*15*60:0)-pi*7*7*60-cutArea*60+bossArea*55);
+            near(moved.radius,17,"Notch radius changed");near(moved.height,60,"Notch axial span changed");
+            require(moved.axis.Direction().IsParallel(gp_Dir(0,0,1).Transformed(placement),1.e-8),"Notch axis direction changed");
+            for(int i=-20;i<190;i+=11) for(int j=-5;j<90;j+=11) for(double z:{-1.,10.,59.,61.,90.,114.,116.}) {
+                const double px=i+.37,py=j+.61;
+                const bool bodyIn=px>0&&px<163&&py>0&&py<80&&z>0&&z<60&&
+                    !(variant==2&&px>140&&py>65)&&std::hypot(px-90,py-65)>7&&std::hypot(px-x,py-y)>17;
+                const bool bossIn=std::hypot(px-bossX,py-36)<18&&z>60&&z<115&&(variant!=1||px<163);
+                BRepClass3d_SolidClassifier c(moved.shape,gp_Pnt(px,py,z).Transformed(placement),1.e-7);
+                require(c.State()==(bodyIn||bossIn?TopAbs_IN:TopAbs_OUT),"Notch analytic occupancy mismatch");
+            }
+            require(serialized(source)==stamp,"Notch movement mutated the input B-Rep");source=moved.shape;
+            if(x==0&&y==36) open=source;
+        }
+        // The unaffected boss still supports its existing planar height edit;
+        // complete interior bosses also retain lateral translation.
+        TopoDS_Face cap;
+        for(TopExp_Explorer it(open,TopAbs_FACE);it.More();it.Next()) {
+            const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);
+            if(s.GetType()==GeomAbs_Plane&&s.Plane().Distance(gp_Pnt(bossX,36,115).Transformed(placement))<1.e-6&&
+               s.Plane().Axis().Direction().IsParallel(gp_Dir(0,0,1).Transformed(placement),1.e-8)) {cap=f;break;}
+        }
+        QString reason;const auto taller=MoveFaceGeometry::move(open,cap,1,reason);
+        require(!taller.IsNull(),"Unchanged boss cap became uneditable: "+reason.toStdString());
+        const auto openTool=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0,36,0),gp_Dir(0,0,1)),17,60).Shape();
+        const auto expectedTaller=BooleanGeometry::combine<BRepAlgoAPI_Cut>(BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stock,feature(bossX,56)),openTool);
+        require(BRepReconstruction::equivalent(taller,BRepBuilderAPI_Transform(expectedTaller,placement,true).Shape()),"Boss height edit changed the open notch");
+        if(variant==0) {
+            const auto movedBoss=moveBoss(open,find(open,18),gp_Vec(-3,0,0),BossBoundaryMode::Extend);
+            const auto expectedBoss=BooleanGeometry::combine<BRepAlgoAPI_Cut>(BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stock,feature(118,55)),openTool);
+            require(bool(movedBoss)&&BRepReconstruction::equivalent(movedBoss.shape,expectedBoss),"Unchanged complete boss lost lateral Move Face or changed the notch");
+        }
+        const auto stamp=serialized(open);
+        for(const auto destination:{gp_Pnt(0,5,0),gp_Pnt(90,65,0),gp_Pnt(bossX,36,0)}) {
+            const auto rejected=moveThroughHole(open,find(open,17),gp_Vec(gp_Pnt(0,36,0),destination).Transformed(placement));
+            require(!rejected&&rejected.shape.IsNull()&&!rejected.message.empty()&&serialized(open)==stamp,"Ambiguous corner/feature interaction was accepted or changed input");
+        }
+        require(!moveThroughHole(open,find(open,17),gp_Vec(0,0,1).Transformed(placement)),"Axial notch movement accepted");
+        const auto exited=moveThroughHole(open,find(open,17),gp_Vec(-40,0,0).Transformed(placement));
+        require(bool(exited)&&exited.code==Code::HoleExited&&BRepReconstruction::equivalent(exited.shape,BRepBuilderAPI_Transform(body,placement,true).Shape()),"Exited notch did not restore certified material");
+        // Imported/current geometry needs no prior operation state.
+        const auto imported=BRepBuilderAPI_Transform(oracle(0,36),placement,true).Shape();
+        const auto independent=moveThroughHole(imported,find(imported,17),gp_Vec(0,5,0).Transformed(placement));
+        require(bool(independent)&&BRepReconstruction::equivalent(independent.shape,BRepBuilderAPI_Transform(oracle(0,41),placement,true).Shape()),"Notch recognition depends on prior operations");
+        const auto patch=find(open,17);const BRepAdaptor_Surface surface(patch);
+        const double u=surface.FirstUParameter()+.37*(surface.LastUParameter()-surface.FirstUParameter());
+        BRepFeat_SplitShape split(open);split.Add(BRepBuilderAPI_MakeEdge(surface.Value(u,surface.FirstVParameter()),surface.Value(u,surface.LastVParameter())).Edge(),patch);split.Build();
+        require(split.IsDone(),"Cannot split notch mantle fixture");
+        TopTools_IndexedMapOfShape beforeFaces,afterFaces;TopExp::MapShapes(open,TopAbs_FACE,beforeFaces);TopExp::MapShapes(split.Shape(),TopAbs_FACE,afterFaces);
+        require(afterFaces.Extent()>beforeFaces.Extent(),"Notch fixture did not create split topology");
+        const auto splitResult=moveThroughHole(split.Shape(),find(split.Shape(),17),gp_Vec(0,3,0).Transformed(placement));
+        require(bool(splitResult)&&BRepReconstruction::equivalent(splitResult.shape,BRepBuilderAPI_Transform(oracle(0,39),placement,true).Shape()),"Split notch mantle did not reconstruct");
+    }
+}
 void radialPullTests() {
     const auto stock=BRepPrimAPI_MakeBox(163,80,60).Shape();
     const auto bore=[](double r){return BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,36,-10),gp_Dir(0,0,1)),r,80).Shape();};
@@ -599,6 +690,7 @@ void radialPullTests() {
 }
 int main(int argc,char** argv) {
     try {
+        if(argc>1&&std::string(argv[1])=="--notch") {openNotchTests();std::cout<<"Repeated open-notch geometry passed\n";return 0;}
         if(argc>1&&std::string(argv[1])=="--radius") {radialPullTests();std::cout<<"Certified radial Pull geometry passed\n";return 0;}
         if(argc>1&&std::string(argv[1])=="--local") {
             localNeighborhoodTests();std::cout<<"Local geometric neighborhood tests passed\n";return 0;
@@ -642,7 +734,9 @@ int main(int argc,char** argv) {
         refused(blind,mantle(blind),gp_Vec(5,0,0),Status::Unsupported);
         const auto notch=BooleanGeometry::combine<BRepAlgoAPI_Cut>(block(),
             BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0,40,-5),gp_Dir(0,0,1)),10,40).Shape());
-        refused(notch,mantle(notch),gp_Vec(5,0,0),Status::Unsupported);
+        const auto repeated=moveThroughHole(notch,mantle(notch),gp_Vec(5,0,0));
+        require(bool(repeated),"Open source notch was refused: "+repeated.message);occupancy(repeated.shape,5,40);
+        certified(repeated.shape,240000-30*(100*(pi/2+std::asin(.5))+5*std::sqrt(75.)));
         const auto cylinder=BRepPrimAPI_MakeCylinder(10,30).Shape();
         refused(cylinder,mantle(cylinder),gp_Vec(5,0,0),Status::Unsupported);
         const auto boss=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(block(),

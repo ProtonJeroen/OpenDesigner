@@ -1,9 +1,10 @@
 # General Move Face (v0.3.6)
 
-## Cylindrical features (v0.4.9, phases 9D–9D.4)
+## Cylindrical features (v0.4.9, phases 9D–9D.7A)
 
 The existing **3D Modeling → Move Face** command also accepts the cylindrical
-mantle of one selected complete circular through-hole or attached boss on
+wall of one selected complete circular through-hole, supported open cylindrical
+notch, or attached boss on
 certified support geometry. The rectangular-stock paths allow up to eight
 independent parallel cylindrical features. The local interior-boss path below
 does not use those pattern/count rules. Unselected features remain unchanged. A supported
@@ -23,7 +24,7 @@ direction is chosen automatically. Linear snapping and Shift bypass still apply.
 Bosses default visibly to **Extend**, which keeps the full round cylinder and
 valid overhangs. **Trim** clips it against the original stock side surfaces and
 can produce planar truncated walls. The choice stays fixed during the command.
-Through-holes hide this selector; they can open into a side notch or leave the
+Through-holes and notches hide this selector; they can open into a side notch or leave the
 stock completely, healing the original hole. Both policies preserve valid
 connected material; completely detached or clipped-away bosses are refused.
 
@@ -47,6 +48,14 @@ it does not require the whole Part to match rectangular stock or a cylinder-coun
 pattern. The old/new footprints must remain fully supported and clear of feature
 trims. Trim and Extend coincide for this interior case. Other boundary cases use
 the existing certified policy paths. See the [local reconstruction strategy](GEOMETRY_DRIVEN_MOVE_FACE.md).
+An open cylindrical notch through one planar exterior side can be selected and
+moved again. Move it farther outward, along the edge, or back inside to restore a
+complete circular hole. Each operation infers its axis, partial rims and current
+material-side boundary from the B-Rep. A restored hole can reopen on another side;
+no original feature position or Trim history is retained. Complete exit heals
+the opening and leaves no cylindrical wall to select. Corner/multiple-side
+notches, blind/sloped trims and interacting features remain unsupported and are
+refused before changing the Part. See [open-notch certificates and tests](OPEN_CYLINDRICAL_NOTCH_MOVE.md).
 Automated session checks cover normal/HiDPI; manual Fedora KDE acceptance and
 phase 9E lifecycle/persistence coverage remain pending.
 

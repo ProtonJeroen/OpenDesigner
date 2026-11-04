@@ -432,6 +432,7 @@ void runCylindricalMoveFaceSessionTests();
 void runCylindricalMoveDocumentTest(const QString& path);
 void runCylindricalMoveBoundaryTest(const QString& path);
 void runCrashPlanarTest(const QString& path,const QString& displacement);
+void runOpenNotchSessionTest(const QString& path);
 int main(int argc,char** argv) {
 #if defined(Q_OS_LINUX)
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM") && !qEnvironmentVariableIsEmpty("DISPLAY")) qputenv("QT_QPA_PLATFORM","xcb");
@@ -442,7 +443,9 @@ int main(int argc,char** argv) {
         const int document=app.arguments().indexOf("--cylindrical-document");
         const int boundary=app.arguments().indexOf("--cylindrical-boundary");
         const int crash=app.arguments().indexOf("--crash-planar");
-        if(crash>=0) runCrashPlanarTest(app.arguments().value(crash+1),app.arguments().value(crash+2,"regression"));
+        const int notch=app.arguments().indexOf("--open-notch");
+        if(notch>=0) runOpenNotchSessionTest(app.arguments().value(notch+1));
+        else if(crash>=0) runCrashPlanarTest(app.arguments().value(crash+1),app.arguments().value(crash+2,"regression"));
         else if(boundary>=0) runCylindricalMoveBoundaryTest(app.arguments().value(boundary+1));
         else if(document>=0) runCylindricalMoveDocumentTest(app.arguments().value(document+1));
         else if(app.arguments().contains("--cylindrical")) runCylindricalMoveFaceSessionTests();

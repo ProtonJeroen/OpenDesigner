@@ -833,6 +833,153 @@ Result moveLocalHole(const TopoDS_Shape& source,const TopoDS_Face& selected,
       catch(const std::exception&) {return refused;}
 }
 
+// Recover only the cylinder material on the actual exterior plane's material
+// side. The current notch rims define everything; no former stock is retained.
+Result moveLocalNotch(const TopoDS_Shape& source,const TopoDS_Face& selected,
+                      const gp_Vec& delta,const Result& refused) {
+    if(refused.status!=Status::Unsupported) return refused;
+    const auto unsupported=[](const char* message){return refuse(Status::Unsupported,Code::UnsupportedFeature,message);};
+    try {
+        BRepReconstruction::Neighborhood local;QString error;
+        if(!BRepReconstruction::neighborhood(source,selected,local,error)||!manifold(local.solid)||BRepAdaptor_Surface(local.target).GetType()!=GeomAbs_Cylinder) return refused;
+        const auto cylinder=BRepAdaptor_Surface(local.target).Cylinder();const auto axis=cylinder.Axis().Direction();
+        const double radius=cylinder.Radius(),tolerance=10*Precision::Confusion();
+        if(!std::isfinite(delta.X())||!std::isfinite(delta.Y())||!std::isfinite(delta.Z())||std::abs(delta.Dot(gp_Vec(axis)))>tolerance)
+            return refuse(Status::InvalidInput,Code::InvalidDisplacement,"Notch displacement must be finite and perpendicular to its cylinder axis.");
+        if(radius<=100*tolerance||radius>1.e7) return refused;
+        double wallArea=0;
+        for(const auto& face:local.patch) {
+            const BRepAdaptor_Surface s(face);const double u=(s.FirstUParameter()+s.LastUParameter())/2,v=(s.FirstVParameter()+s.LastVParameter())/2;
+            BRepLProp_SLProps p(s,u,v,1,tolerance);if(!p.IsNormalDefined()) return refused;
+            auto n=p.Normal();if(face.Orientation()==TopAbs_REVERSED) n.Reverse();
+            auto radial=gp_Vec(cylinder.Location(),s.Value(u,v));radial-=gp_Vec(axis)*radial.Dot(gp_Vec(axis));
+            if(n.Dot(gp_Dir(radial))>-.99) return refused;
+            const double probe=radius*1.e-4;
+            if(classify(local.solid,s.Value(u,v).Translated(gp_Vec(gp_Dir(radial))*-probe),tolerance)!=TopAbs_OUT||
+               classify(local.solid,s.Value(u,v).Translated(gp_Vec(gp_Dir(radial))*probe),tolerance)!=TopAbs_IN) return refused;
+            wallArea+=faceArea(face);
+        }
+        std::vector<double> ends;std::optional<gp_Pln> side;
+        for(const auto& face:local.neighbors) {
+            const BRepAdaptor_Surface s(face);if(s.GetType()!=GeomAbs_Plane) return unsupported("Open notch movement requires planar axial rims and a planar exterior side; blends are unsupported.");
+            auto normal=s.Plane().Axis().Direction();if(face.Orientation()==TopAbs_REVERSED) normal.Reverse();
+            if(normal.IsParallel(axis,angular)) {
+                const double end=coordinate(s.Plane().Location(),axis);
+                if(std::none_of(ends.begin(),ends.end(),[&](double z){return std::abs(z-end)<=tolerance;})) ends.push_back(end);
+            } else {
+                if(std::abs(normal.Dot(axis))>angular) return unsupported("Sloped notch boundaries cannot be reconstructed safely.");
+                if(side&&(!side->Axis().Direction().IsEqual(normal,angular)||side->Distance(s.Plane().Location())>tolerance))
+                    return unsupported("Open notches crossing multiple exterior sides or corners are not yet supported.");
+                side=gp_Pln(s.Plane().Location(),normal);
+            }
+        }
+        if(ends.size()!=2) return unsupported("Open notch movement needs exactly two unambiguous axial end planes.");
+        const double low=std::min(ends[0],ends[1]),height=std::abs(ends[0]-ends[1]);
+        if(height<=100*tolerance||height>1.e7) return unsupported("The notch has no reliable finite through-span.");
+        const auto base=cylinder.Location().Translated(gp_Vec(axis)*(low-coordinate(cylinder.Location(),axis)));
+        std::array<double,2> arcs{};double lines=0;
+        for(const auto& edge:local.boundary) {
+            const BRepAdaptor_Curve curve(edge);GProp_GProps p;BRepGProp::LinearProperties(edge,p);
+            if(curve.GetType()==GeomAbs_Circle) {
+                const auto circle=curve.Circle();const double z=coordinate(circle.Location(),axis);
+                const int end=std::abs(z-ends[0])<=tolerance?0:std::abs(z-ends[1])<=tolerance?1:-1;
+                if(end<0||std::abs(circle.Radius()-radius)>tolerance||gp_Lin(cylinder.Axis()).Distance(circle.Location())>tolerance) return unsupported("Notch rims do not share the selected cylinder's axis and radius.");
+                arcs[end]+=p.Mass();
+            } else if(side&&curve.GetType()==GeomAbs_Line&&curve.Line().Direction().IsParallel(axis,angular)&&side->Distance(curve.Value(curve.FirstParameter()))<=tolerance) lines+=p.Mass();
+            else return unsupported("Notch opening edges must follow one exterior plane parallel to the cylinder axis.");
+        }
+        const bool rim=side ? arcs[0]>100*tolerance&&arcs[0]<2*pi*radius-100*tolerance
+                            : std::abs(arcs[0]-2*pi*radius)<=tolerance*std::max(1.,radius);
+        if(!rim||std::abs(arcs[0]-arcs[1])>tolerance*std::max(1.,radius)||
+           std::abs(lines-(side?2*height:0))>tolerance*std::max(1.,height)||std::abs(wallArea-height*arcs[0])>1.e-8*std::max(1.,wallArea))
+            return unsupported("Notch wall and opening do not form one constant cylindrical through-span.");
+        const auto oldTool=BRepPrimAPI_MakeCylinder(gp_Ax2(base,axis),radius,height).Shape();
+        TopoDS_Shape missing=oldTool;
+        if(side) {
+            const auto half=BRepPrimAPI_MakeHalfSpace(BRepBuilderAPI_MakeFace(*side).Face(),side->Location().Translated(gp_Vec(side->Axis().Direction())*-std::max(1.,radius))).Solid();
+            missing=BooleanGeometry::combine<BRepAlgoAPI_Common>(oldTool,half);
+        }
+        double mass=0;if(!BRepReconstruction::validSolid(missing,mass)) return unsupported("The inferred notch fill is degenerate or ambiguous.");
+        GProp_GProps occupied;BRepGProp::VolumeProperties(BooleanGeometry::combine<BRepAlgoAPI_Common>(local.solid,oldTool),occupied);
+        if(std::abs(occupied.Mass())>1.e-8*std::max(1.,mass)) return unsupported("The selected notch cylinder contains ambiguous existing material.");
+        TopoDS_Shape healed;
+        if(!BRepReconstruction::normalize(BooleanGeometry::combine<BRepAlgoAPI_Fuse>(local.solid,missing),healed,error,true)||
+           !BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Cut>(healed,local.solid),missing)||
+           !BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Cut>(healed,oldTool),local.solid))
+            return unsupported("Filling the current notch did not recover a certified local material boundary.");
+        // All fill planes must close on actual exterior surfaces. Destination
+        // axial ends must also be exterior, refusing blind cuts under a boss.
+        const auto closedOnExterior=[&](const TopoDS_Shape& volume,bool axialOnly) {
+            for(TopExp_Explorer it(volume,TopAbs_FACE);it.More();it.Next()) {
+                const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(face);
+                if(s.GetType()!=GeomAbs_Plane||(axialOnly&&!s.Plane().Axis().Direction().IsParallel(axis,angular))) continue;
+                if(axialOnly) {
+                    const double z=coordinate(s.Plane().Location(),axis);
+                    if(std::abs(z-ends[0])>tolerance&&std::abs(z-ends[1])>tolerance) return false;
+                }
+                double covered=0;for(TopExp_Explorer f(healed,TopAbs_FACE);f.More();f.Next()) {
+                    const auto support=TopoDS::Face(f.Current());
+                    if(BRepReconstruction::sameAnalyticSupport(face,support)) covered+=faceArea(BooleanGeometry::combine<BRepAlgoAPI_Common>(face,support));
+                }
+                if(std::abs(covered-faceArea(face))>1.e-8*std::max(1.,faceArea(face))) return false;
+            }return true;
+        };
+        if(!closedOnExterior(missing,false)) return unsupported("The inferred notch fill does not close its actual exterior side and axial rims.");
+        double expectedWall=0;for(TopExp_Explorer it(missing,TopAbs_FACE);it.More();it.Next())
+            if(BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType()==GeomAbs_Cylinder) expectedWall+=faceArea(it.Current());
+        if(std::abs(expectedWall-wallArea)>1.e-8*std::max(1.,wallArea)) return unsupported("The partial mantle differs from the inferred exterior-boundary trim.");
+        const auto tool=BRepPrimAPI_MakeCylinder(gp_Ax2(base.Translated(delta),axis),radius,height).Shape();
+        const auto removed=BooleanGeometry::combine<BRepAlgoAPI_Common>(healed,tool);
+        if(!closedOnExterior(removed,true)) return refuse(Status::Unsupported,Code::InteractingFeatures,"Translated notch would enter a blind region or intersect another feature's support.");
+        const auto candidate=BooleanGeometry::combine<BRepAlgoAPI_Cut>(healed,tool);
+        auto affected=local.patch;affected.insert(affected.end(),local.neighbors.begin(),local.neighbors.end());
+        // A restored complete hole can open against an exterior side on its next
+        // move. Only planar side regions actually cut by the new finite tool
+        // may change; other planes and every unrelated cylindrical patch remain
+        // protected by the local material/surface certificate.
+        for(TopExp_Explorer it(local.solid,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(face);
+            if(s.GetType()==GeomAbs_Plane&&std::abs(s.Plane().Axis().Direction().Dot(axis))<=angular&&
+               faceArea(BooleanGeometry::combine<BRepAlgoAPI_Common>(face,tool))>tolerance*tolerance&&
+               std::none_of(affected.begin(),affected.end(),[&](const auto& f){return f.IsSame(face);})) affected.push_back(face);
+        }
+        gp_Trsf shift;shift.SetTranslation(delta);BRepReconstruction::Result finished;
+        const auto region=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(oldTool,tool);
+        if(!BRepReconstruction::finishLocal(local,candidate,region,affected,local.patch,shift,finished,error)||!manifold(finished.solid)) {
+            auto failure=refuse(Status::Unsupported,Code::InteractingFeatures,"Notch translation cannot preserve an unrelated feature or exterior surface: ");failure.message+=error.toStdString();return failure;
+        }
+        GProp_GProps removedMass;BRepGProp::VolumeProperties(removed,removedMass);
+        if(removedMass.Mass()>1.e-10&&!BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Cut>(healed,finished.solid),removed))
+            return refuse(Status::Failure,Code::InvalidResult,"Notch reconstruction changed material beyond the requested cylinder cut.");
+        auto translated=cylinder;translated.Translate(delta);bool remains=false;TopoDS_Face movedWall;
+        for(TopExp_Explorer it(finished.solid,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(face);
+            bool allowed=s.GetType()==GeomAbs_Cylinder&&sameCylinder(s.Cylinder(),translated,tolerance);
+            if(allowed&&faceArea(BooleanGeometry::combine<BRepAlgoAPI_Common>(face,tool))>tolerance*tolerance) {remains=true;movedWall=face;}
+            for(TopExp_Explorer old(local.solid,TopAbs_FACE);old.More()&&!allowed;old.Next()) {
+                const auto f=TopoDS::Face(old.Current());if(std::none_of(local.patch.begin(),local.patch.end(),[&](const auto& p){return p.IsSame(f);})) allowed=BRepReconstruction::sameAnalyticSupport(f,face);
+            }
+            if(!allowed) return refuse(Status::Failure,Code::InvalidResult,"Notch translation introduced an unintended boundary support.");
+        }
+        if(remains) {
+            BRepReconstruction::Neighborhood next;if(!BRepReconstruction::neighborhood(finished.solid,movedWall,next,error)) return unsupported("The moved notch neighborhood could not be certified.");
+            std::optional<gp_Pln> boundary;
+            for(const auto& face:next.neighbors) {
+                const BRepAdaptor_Surface s(face);if(s.GetType()!=GeomAbs_Plane) return unsupported("The destination notch meets an unsupported curved feature.");
+                auto n=s.Plane().Axis().Direction();if(face.Orientation()==TopAbs_REVERSED) n.Reverse();
+                if(n.IsParallel(axis,angular)) continue;
+                if(std::abs(n.Dot(axis))>angular||(boundary&&(!boundary->Axis().Direction().IsEqual(n,angular)||boundary->Distance(s.Plane().Location())>tolerance)))
+                    return unsupported("Destination notch crosses multiple exterior sides or a corner; original geometry was kept.");
+                boundary=gp_Pln(s.Plane().Location(),n);
+            }
+        }
+        Result result;result.status=Status::Success;result.code=delta.Magnitude()<=tolerance?Code::Unchanged:remains?Code::Moved:Code::HoleExited;
+        result.shape=finished.solid;result.radius=radius;result.height=height;result.axis=gp_Ax1(base.Translated(delta),axis);
+        result.message="Cylindrical notch translated from its current rims and certified exterior support.";return result;
+    } catch(const Standard_Failure&) {return unsupported("OCCT could not certify the current notch reconstruction; original geometry was kept.");}
+      catch(const std::exception&) {return unsupported("Notch material reconstruction failed; original geometry was kept.");}
+}
+
 Result moveLocalBoss(const TopoDS_Shape& source,const TopoDS_Face& selected,
                      const gp_Vec& delta,BossBoundaryMode policy,const Result& refused) {
     if(refused.status!=Status::Unsupported||!std::isfinite(delta.X())||!std::isfinite(delta.Y())||!std::isfinite(delta.Z())) return refused;
@@ -1046,7 +1193,9 @@ CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveThroughHole(
     const auto result=moveSelected(source,selected,delta,std::nullopt);
     if(result) return result;
     const auto exterior=moveWithExterior(source,selected,delta,result);
-    return exterior?exterior:moveLocalHole(source,selected,delta,exterior);
+    if(exterior) return exterior;
+    const auto local=moveLocalHole(source,selected,delta,exterior);
+    return local?local:moveLocalNotch(source,selected,delta,local);
 }
 
 CylindricalMoveGeometry::Result CylindricalMoveGeometry::resizeRadius(

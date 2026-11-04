@@ -120,7 +120,7 @@ void CadViewport::moveFace() {
     if(selection.kind==SelectionContext::Kind::Faces&&selection.faces.size()==1) {
         startMoveFace(selection.faces.front().partIndex,selection.faces.front().face);return;
     }
-    emit statusMessage(tr("Move Face: select one planar face or a complete cylindrical through-hole/boss mantle."));
+    emit statusMessage(tr("Move Face: select one planar face or a supported cylindrical hole, notch or boss wall."));
 }
 bool CadViewport::startMoveFace(size_t index, const TopoDS_Face& face) {
     if (!isPartVisible(index)) return false;
@@ -149,7 +149,7 @@ bool CadViewport::startMoveFace(size_t index, const TopoDS_Face& face) {
         cylinderMoveDirection_->setCurrentIndex(0);cylinderMoveAngle_->setValue(0);cylinderMoveAngle_->setEnabled(false);
         cylinderBossBoundary_->setCurrentIndex(0);
         cylinderMoveLabel_->setText(tr("%1 — axis in Part coordinates\n(%2, %3, %4)")
-            .arg(feature==MoveFaceFeature::Boss?tr("Boss"):tr("Through-hole"))
+            .arg(feature==MoveFaceFeature::Boss?tr("Boss"):tr("Through-hole / open notch"))
             .arg(normal.X(),0,'g',9).arg(normal.Y(),0,'g',9).arg(normal.Z(),0,'g',9));
         auto* model=qobject_cast<QStandardItemModel*>(cylinderMoveDirection_->model());
         for(int i=1;i<=3;++i) {

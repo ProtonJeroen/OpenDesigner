@@ -771,6 +771,29 @@ all seven focused regressions passed. Final numeric confirmation and native-file
 GDB replay passed; the unsafe offset routine was never entered. Original file
 hashes are unchanged. No full CTest suite was run.
 
+## 9D.7A — repeated open-notch Move Face
+
+See [recognition, local material certificates and tests](OPEN_CYLINDRICAL_NOTCH_MOVE.md).
+Recognize inward partial cylindrical patches from current rims, generatrices,
+two axial exterior planes and one planar side support. Infer and certify the
+missing cylindrical material on that support's material side, heal only that
+volume, and subtract the translated cylinder. No original feature position,
+primitive metadata, stock proxy or stored boundary policy is needed.
+
+Certify actual source/fill/re-cut material, destination through-span, outside
+material and unaffected trimmed surfaces using existing local reconstruction.
+Permit only actual planar boundary regions intersected by the new cutting tool
+to join the affected set, enabling complete holes to reopen on nonrectangular
+supports. Revalidate the destination neighborhood, allowing complete restoration,
+one-sided notches on another edge, face splits/merges and complete exit. Corners,
+depth variation and interacting features remain atomic diagnostic refusals.
+
+Reuse existing sessions and selection with explicit lateral references, live
+reconstructed previews and cached Undo/Redo. New focused headless and session
+regressions cover repeated directions, imported/split topology, rotated/scaled
+placements, unaffected features, numeric input, dragging and Escape. Native
+replays use the supplied documents read-only. No offset fallback is introduced.
+
 ## 9E — transactions, persistence and acceptance
 
 Confirm once into the same Part slot with one cached Undo/Redo step. Preserve
