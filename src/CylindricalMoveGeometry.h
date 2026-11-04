@@ -52,11 +52,16 @@ Result moveBoss(const TopoDS_Shape& source, const TopoDS_Face& mantle,
 bool removeBoundaryFeature(const TopoDS_Shape& source,const TopoDS_Face& mantle,
                            BRepReconstruction::Result& result,QString& error);
 // Radial Pull on current geometry: cylindrical holes bounded by certified
-// planar rims (including oblique/open trims), fully supported bosses, and a boss
-// cut by one radial plane. Actual cap/cut supports stay fixed.
+// planar rims (including oblique/open trims), and current full or planar-trimmed
+// bosses with a certified connected attachment, including overhangs. Actual
+// cap/cut supports stay fixed; a vanished historical Trim plane is never inferred.
 // No offset-kernel fallback; unsupported neighborhoods return diagnostics.
 Result resizeRadius(const TopoDS_Shape& source, const TopoDS_Face& mantle,
                     double radius);
+// Planar boss-cap height handles derived from current wall, attachment and cap.
+// Height reconstruction reuses the certified local planar sweep, without offset.
+Result bossHeightReference(const TopoDS_Shape& source,const TopoDS_Face& cap);
+Result resizeBossHeight(const TopoDS_Shape& source,const TopoDS_Face& cap,double height);
 // Certified paths before global offset: preserve exterior features during a
 // side-plane edit, or reconstruct an outward planar cut through one boss.
 // Uses actual rim/cap planes and material, not primitive history or a stock crop.

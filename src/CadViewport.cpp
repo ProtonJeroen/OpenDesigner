@@ -1610,7 +1610,7 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
         primitivePullBefore_.beforeCone = part.cone;
         primitivePullBefore_.beforeRadius = cylindricalFacePull_ ? cylindricalPullRadius_
             : part.spherePrimitive ? part.sphereRadius : part.cylinderRadius;
-        primitivePullBefore_.beforeHeight = part.cylinderHeight;
+        primitivePullBefore_.beforeHeight = bossHeightPull_ ? bossPullHeight_ : part.cylinderHeight;
         primitivePullBefore_.beforeBaseOffset = part.cylinderBaseOffset;
         dragIndex_ = arrowPartIndex_;
         dragStart_ = origin;
@@ -1841,7 +1841,7 @@ double CadViewport::primitivePullStartDimension() const {
                                      : primitivePullBefore_.beforeHeight;
 }
 bool CadViewport::primitivePullIsDiameter() const {
-    if (cylindricalFacePull_) return true;
+    if (cylindricalFacePull_) return !bossHeightPull_;
     if (boxes_[dragIndex_].conePrimitive)
         return conePullTarget_ == ConePullTarget::BottomDiameter
             || conePullTarget_ == ConePullTarget::TopDiameter;
@@ -1851,7 +1851,7 @@ bool CadViewport::primitivePullIsDiameter() const {
 QString CadViewport::primitivePullDimensionText() const {
     const auto& part = boxes_[dragIndex_];
     const bool diameter = primitivePullIsDiameter();
-    const double dimension = cylindricalFacePull_ ? 2.0*cylindricalPullRadius_
+    const double dimension = cylindricalFacePull_ ? (bossHeightPull_ ? bossPullHeight_ : 2.0*cylindricalPullRadius_)
         : part.conePrimitive
         ? (diameter ? 2.0*(conePullTarget_ == ConePullTarget::BottomDiameter
             ? part.cone.bottomRadius : part.cone.topRadius) : part.cone.height)
@@ -2078,15 +2078,17 @@ bool CadViewport::applyPrimitivePull(double distance) {
 bool CadViewport::applyCylindricalFacePull(double distance) {
     if (dragIndex_ >= boxes_.size() || cylindricalPullFace_.IsNull()
         || primitivePullBefore_.beforeShape.IsNull() || !std::isfinite(distance)) return false;
-    const double radius = primitivePullBefore_.beforeRadius + distance;
-    if (radius <= 0.01) {
-        if (commandSession_) commandSession_->geometryError = tr("Cylinder radius must be greater than 0.01 mm.");
+    const double dimension = (bossHeightPull_?primitivePullBefore_.beforeHeight:primitivePullBefore_.beforeRadius) + distance;
+    if (dimension <= 0.01) {
+        if (commandSession_) commandSession_->geometryError = (bossHeightPull_?tr("Boss height must be greater than 0.01 mm."):tr("Cylinder radius must be greater than 0.01 mm."));
         return false;
     }
     try {
-        // A cylindrical surface may be only a partial boss mantle. Reconstruct
-        // its actual capped/trimmed material; never send it to global offset.
-        const auto resized=CylindricalMoveGeometry::resizeRadius(primitivePullBefore_.beforeShape,cylindricalPullFace_,radius);
+        // Reconstruct a current cylindrical wall or boss cap from the immutable
+        // pre-drag B-Rep; neither route falls back to global offset.
+        const auto resized=bossHeightPull_
+            ? CylindricalMoveGeometry::resizeBossHeight(primitivePullBefore_.beforeShape,cylindricalPullFace_,dimension)
+            : CylindricalMoveGeometry::resizeRadius(primitivePullBefore_.beforeShape,cylindricalPullFace_,dimension);
         if(!resized) {
             if(commandSession_) commandSession_->geometryError=QString::fromStdString(resized.message);
             return false;
@@ -2100,8 +2102,8 @@ bool CadViewport::applyCylindricalFacePull(double distance) {
         BRepBndLib::AddOptimal(part.shape,bounds,false,false);
         bounds.Get(part.min[0],part.min[1],part.min[2],part.max[0],part.max[1],part.max[2]);
         part.baseMin=part.min;part.baseMax=part.max;
-        primitiveArrowOrigin_.Translate(gp_Vec(primitiveArrowDirection_)*(radius-cylindricalPullRadius_));
-        cylindricalPullRadius_=radius;
+        primitiveArrowOrigin_.Translate(gp_Vec(primitiveArrowDirection_)*(dimension-(bossHeightPull_?bossPullHeight_:cylindricalPullRadius_)));
+        if(bossHeightPull_) bossPullHeight_=dimension;else cylindricalPullRadius_=dimension;
         context_->ClearSelected(Standard_False);
         part.presentation->SetShape(part.shape);
         part.presentation->SetLocalTransformation(part.orientation);
@@ -2589,7 +2591,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
 void CadViewport::updateSelectedFaceArrow(const QPoint& point) {
     // Keep one manipulation arrow as an anchor for a multi-face selection.
     // The grouped drag operation will use all selected face owners.
-    cylindricalFacePull_=false;
+    cylindricalFacePull_=false;bossHeightPull_=false;bossPullHeight_=0;
     cylindricalPullFace_.Nullify();
     cylindricalPullRadius_=0.0;
     if (context_->NbSelected() >= 1) {
@@ -2602,6 +2604,16 @@ void CadViewport::updateSelectedFaceArrow(const QPoint& point) {
             for (size_t i = 0; i < boxes_.size(); ++i) {
                 if (boxes_[i].presentation != selected) continue;
                 const BRepAdaptor_Surface surf(TopoDS::Face(arrowOwner->Shape()));
+                if(!movePartMode_&&surf.GetType()==GeomAbs_Plane&&!boxes_[i].cylinderPrimitive&&!boxes_[i].spherePrimitive&&!boxes_[i].conePrimitive) {
+                    const auto reference=CylindricalMoveGeometry::bossHeightReference(boxes_[i].shape,TopoDS::Face(arrowOwner->Shape()));
+                    if(reference) {
+                        cylindricalFacePull_=true;bossHeightPull_=true;cylindricalPullFace_=TopoDS::Face(arrowOwner->Shape());
+                        cylindricalPullRadius_=reference.radius;bossPullHeight_=reference.height;
+                        GProp_GProps p;BRepGProp::SurfaceProperties(cylindricalPullFace_,p);primitiveArrowOrigin_=p.CentreOfMass();primitiveArrowDirection_=reference.axis.Direction();
+                        arrowPartIndex_=i;arrowVisible_=true;updateFaceArrow();
+                        emit statusMessage(tr("Boss cap: drag the arrow or enter the final height in mm."));break;
+                    }
+                }
                 if (!movePartMode_ && surf.GetType()==GeomAbs_Cylinder
                     && !boxes_[i].cylinderPrimitive && !boxes_[i].spherePrimitive
                     && !boxes_[i].conePrimitive) {

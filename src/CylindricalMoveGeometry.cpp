@@ -1124,8 +1124,10 @@ Result moveLocalNotch(const TopoDS_Shape& source,const TopoDS_Face& selected,
 
 // Boundary follow-up uses only the current cylinder and the healed support.
 // Extruding an actual trimmed support face retains its holes and side boundaries.
+struct BossRadiusEdit {std::optional<double> radius;gp_Ax1* attachment=nullptr;};
 Result moveBoundaryBoss(const TopoDS_Shape& source,const TopoDS_Face& selected,
-                        const gp_Vec& delta,BossBoundaryMode policy,const Result& refused,BRepReconstruction::Result* removal=nullptr) {
+                        const gp_Vec& delta,BossBoundaryMode policy,const Result& refused,BRepReconstruction::Result* removal=nullptr,
+                        const BossRadiusEdit* edit=nullptr) {
     if(refused.status!=Status::Unsupported) return refused;
     const auto unsupported=[](const char* message){return refuse(Status::Unsupported,Code::UnsupportedFeature,message);};
     try {
@@ -1133,7 +1135,7 @@ Result moveBoundaryBoss(const TopoDS_Shape& source,const TopoDS_Face& selected,
         if(!BRepReconstruction::neighborhood(source,selected,local,error)||!manifold(local.solid)||
            BRepAdaptor_Surface(local.target).GetType()!=GeomAbs_Cylinder) return refused;
         const auto cylinder=BRepAdaptor_Surface(local.target).Cylinder();const auto axis=cylinder.Axis().Direction();
-        const double radius=cylinder.Radius(),tolerance=10*Precision::Confusion();
+        const double radius=cylinder.Radius(),newRadius=edit&&edit->radius?*edit->radius:radius,tolerance=10*Precision::Confusion();
         if(!std::isfinite(delta.X())||!std::isfinite(delta.Y())||!std::isfinite(delta.Z())||std::abs(delta.Dot(gp_Vec(axis)))>tolerance)
             return refuse(Status::InvalidInput,Code::InvalidDisplacement,"Boss movement must be finite and perpendicular to its axis.");
         if(policy!=BossBoundaryMode::Trim&&policy!=BossBoundaryMode::Extend) return refused;
@@ -1168,7 +1170,7 @@ Result moveBoundaryBoss(const TopoDS_Shape& source,const TopoDS_Face& selected,
         if(std::abs(wall-expectedWall)>1.e-8*std::max(1.,wall)) return unsupported("Boss mantle contains interacting or incomplete trims.");
         // Exactly one axial plane must attach to the healed exterior. Both
         // orientations are considered, so reversed cylinder axes work as well.
-        TopoDS_Shape supportRegion;double baseZ=0;int attachments=0;
+        TopoDS_Shape supportRegion;double baseZ=0;gp_Dir outward=axis;int attachments=0;
         for(double z:ends) {
             TopoDS_Shape region;auto direction=axis;if(z>std::min(ends[0],ends[1])+tolerance) direction.Reverse();
             for(TopExp_Explorer it(healed,TopAbs_FACE);it.More();it.Next()) {
@@ -1182,13 +1184,14 @@ Result moveBoundaryBoss(const TopoDS_Shape& source,const TopoDS_Face& selected,
             if(region.IsNull()) continue;
             GProp_GProps overlap;BRepGProp::VolumeProperties(BooleanGeometry::combine<BRepAlgoAPI_Common>(oldFeature,region),overlap);
             if(overlap.Mass()<=1.e-8) continue;
-            ++attachments;supportRegion=region;baseZ=z;
+            ++attachments;supportRegion=region;baseZ=z;outward=direction;
         }
         if(attachments!=1) return unsupported("Boss must attach to one unambiguous planar exterior support.");
         const auto oldTrim=BooleanGeometry::combine<BRepAlgoAPI_Common>(oldTool,supportRegion);
         if(!BRepReconstruction::equivalent(oldFeature,oldTool)&&!BRepReconstruction::equivalent(oldFeature,oldTrim))
             return unsupported("Current boss is neither a full overhang nor the exact trim of its healed support.");
-        const auto newTool=BRepPrimAPI_MakeCylinder(gp_Ax2(low.Translated(delta),axis),radius,height).Shape();
+        if(edit) policy=BRepReconstruction::equivalent(oldFeature,oldTool)?BossBoundaryMode::Extend:BossBoundaryMode::Trim;
+        const auto newTool=BRepPrimAPI_MakeCylinder(gp_Ax2(low.Translated(delta),axis),newRadius,height).Shape();
         const auto clipped=BooleanGeometry::combine<BRepAlgoAPI_Common>(newTool,supportRegion);
         if(!BRepReconstruction::validSolid(clipped,mass)||mass<=1.e-8)
             return unsupported("Destination boss has no reliable connected support overlap.");
@@ -1197,12 +1200,12 @@ Result moveBoundaryBoss(const TopoDS_Shape& source,const TopoDS_Face& selected,
         std::optional<gp_Pln> side;
         for(const auto& shape:{oldTrim,clipped}) for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {
             const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(face);
-            if(s.GetType()==GeomAbs_Cylinder) {if(!sameCylinder(s.Cylinder(),shape.IsSame(oldTrim)?cylinder:gp_Cylinder(gp_Ax3(low.Translated(delta),axis),radius),tolerance)) return unsupported("Boss footprint intersects a curved feature boundary.");continue;}
+            if(s.GetType()==GeomAbs_Cylinder) {if(!sameCylinder(s.Cylinder(),shape.IsSame(oldTrim)?cylinder:gp_Cylinder(gp_Ax3(low.Translated(delta),axis),newRadius),tolerance)) return unsupported("Boss footprint intersects a curved feature boundary.");continue;}
             if(s.GetType()!=GeomAbs_Plane) return unsupported("Boss support has an unsupported boundary surface.");
             if(s.Plane().Axis().Direction().IsParallel(axis,angular)) continue;
             auto n=s.Plane().Axis().Direction();if(face.Orientation()==TopAbs_REVERSED) n.Reverse();
             if(std::abs(n.Dot(axis))>angular||(side&&(!side->Axis().Direction().IsEqual(n,angular)||side->Distance(s.Plane().Location())>tolerance)))
-                return unsupported("Repeated boss movement across corners or multiple side supports is unsupported.");
+                return unsupported("Boss reconstruction across corners or multiple side supports is not yet certified.");
             side=gp_Pln(s.Plane().Location(),n);
         }
         if(removal) {
@@ -1211,7 +1214,8 @@ Result moveBoundaryBoss(const TopoDS_Shape& source,const TopoDS_Face& selected,
                 return unsupported("Delete Face could not independently certify the removed boss material.");
             return finishCylindricalRemoval(local,healed,oldFeature,*removal);
         }
-        const auto feature=delta.Magnitude()<=tolerance?oldFeature:policy==BossBoundaryMode::Trim?clipped:newTool;
+        const bool unchanged=delta.Magnitude()<=tolerance&&std::abs(newRadius-radius)<=tolerance;
+        const auto feature=unchanged?oldFeature:policy==BossBoundaryMode::Trim?clipped:newTool;
         const auto candidate=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(healed,feature);
         auto affected=local.patch;affected.insert(affected.end(),local.neighbors.begin(),local.neighbors.end());
         // Only the actual base-plane material interface may acquire new trims.
@@ -1229,9 +1233,10 @@ Result moveBoundaryBoss(const TopoDS_Shape& source,const TopoDS_Face& selected,
         if(!BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Cut>(finished.solid,healed),feature)||
            !BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Cut>(finished.solid,feature),healed))
             return unsupported("Rebuilt boss failed independent added-material and support preservation checks.");
-        Result result;result.status=Status::Success;result.code=delta.Magnitude()<=tolerance?Code::Unchanged:Code::Moved;
-        result.shape=finished.solid;result.axis=gp_Ax1(low.Translated(delta),axis);result.radius=radius;result.height=height;
-        result.message="Boss translated from its current cylindrical wall and certified planar support.";return result;
+        Result result;result.status=Status::Success;result.code=unchanged?Code::Unchanged:Code::Moved;
+        result.shape=finished.solid;result.axis=gp_Ax1(low.Translated(delta),axis);result.radius=newRadius;result.height=height;
+        if(edit&&edit->attachment) *edit->attachment=gp_Ax1(cylinder.Location().Translated(delta+gp_Vec(axis)*(baseZ-coordinate(cylinder.Location(),axis))),outward);
+        result.message=edit?"Boss radius and attachment certified from current cylindrical material.":"Boss translated from its current cylindrical wall and certified planar support.";return result;
     } catch(const Standard_Failure&) {return unsupported("OCCT could not certify boundary boss reconstruction; original geometry was kept.");}
       catch(const std::exception&) {return unsupported("Boundary boss material reconstruction failed; original geometry was kept.");}
 }
@@ -1587,7 +1592,54 @@ static CylindricalMoveGeometry::Result resizeRadiusCertified(
 CylindricalMoveGeometry::Result CylindricalMoveGeometry::resizeRadius(
         const TopoDS_Shape& source,const TopoDS_Face& selected,double radius) {
     const auto result=resizeRadiusCertified(source,selected,radius);
-    return result?result:reconstructPlanarRimHole(source,selected,gp_Vec(),radius,result);
+    if(result) return result;
+    const BossRadiusEdit edit{radius};
+    const auto boss=moveBoundaryBoss(source,selected,gp_Vec(),BossBoundaryMode::Extend,result,nullptr,&edit);
+    return boss?boss:reconstructPlanarRimHole(source,selected,gp_Vec(),radius,boss);
+}
+
+CylindricalMoveGeometry::Result CylindricalMoveGeometry::bossHeightReference(
+        const TopoDS_Shape& source,const TopoDS_Face& cap) {
+    const auto unsupported=[](const char* message){return refuse(Status::Unsupported,Code::UnsupportedFeature,message);};
+    try {
+        BRepReconstruction::Neighborhood local;QString error;
+        if(!BRepReconstruction::neighborhood(source,cap,local,error)||BRepAdaptor_Surface(local.target).GetType()!=GeomAbs_Plane)
+            return unsupported("Boss height requires a current planar cap of one valid solid.");
+        TopoDS_Face mantle;
+        for(const auto& neighbor:local.neighbors) if(BRepAdaptor_Surface(neighbor).GetType()==GeomAbs_Cylinder) {
+            if(!mantle.IsNull()&&!BRepReconstruction::sameAnalyticSupport(mantle,neighbor))
+                return unsupported("Selected cap meets multiple cylindrical supports; a joint height reconstruction is not certified.");
+            mantle=neighbor;
+        }
+        if(mantle.IsNull()) return unsupported("Selected plane has no adjacent cylindrical boss wall.");
+        TopoDS_Face original;for(const auto& mapping:local.history) if(mapping.modified.front().IsSame(mantle)) original=mapping.original;
+        gp_Ax1 attachment;const BossRadiusEdit edit{std::nullopt,&attachment};
+        const auto result=moveBoundaryBoss(source,original,gp_Vec(),BossBoundaryMode::Extend,
+            unsupported("The current cylindrical boss support cannot certify a height reference."),nullptr,&edit);
+        if(!result) return result;
+        const BRepAdaptor_Surface surface(local.target);auto normal=surface.Plane().Axis().Direction();if(local.target.Orientation()==TopAbs_REVERSED) normal.Reverse();
+        const auto top=attachment.Location().Translated(gp_Vec(attachment.Direction())*result.height);
+        if(!normal.IsEqual(attachment.Direction(),angular)||surface.Plane().Distance(top)>1.e-6)
+            return unsupported("Select the exterior boss cap opposite its attachment; support and underside planes are not height handles.");
+        const auto tool=BRepPrimAPI_MakeCylinder(gp_Ax2(attachment.Location(),attachment.Direction()),result.radius,result.height).Shape();
+        for(const auto& patch:local.patch) if(std::abs(faceArea(BooleanGeometry::combine<BRepAlgoAPI_Common>(patch,tool))-faceArea(patch))>1.e-8*std::max(1.,faceArea(patch)))
+            return unsupported("Selected cap includes unrelated planar material outside the cylindrical feature.");
+        auto reference=result;reference.axis=attachment;return reference;
+    } catch(const Standard_Failure&) {return unsupported("The current cap/wall adjacency could not certify a boss height reference.");}
+      catch(const std::exception&) {return unsupported("Boss height material analysis failed; source geometry was kept.");}
+}
+
+CylindricalMoveGeometry::Result CylindricalMoveGeometry::resizeBossHeight(
+        const TopoDS_Shape& source,const TopoDS_Face& cap,double height) {
+    if(!std::isfinite(height)||height<=.01||height>1.e7) return refuse(Status::InvalidInput,Code::InvalidDisplacement,"Boss height must be finite and greater than 0.01 mm within the geometry limit.");
+    const auto reference=bossHeightReference(source,cap);if(!reference) return reference;
+    if(std::abs(height-reference.height)<=10*Precision::Confusion()) {auto result=reference;result.shape=source;return result;}
+    BRepReconstruction::Result rebuilt;QString error;
+    if(!BRepReconstruction::movePlanarLocal(source,cap,height-reference.height,rebuilt,error)||!manifold(rebuilt.solid)) {
+        auto failure=refuse(Status::Unsupported,Code::InvalidResult,"Boss height cap sweep cannot preserve the surrounding material: ");failure.message+=error.toStdString();return failure;
+    }
+    auto result=reference;result.shape=rebuilt.solid;result.height=height;result.code=Code::Moved;
+    result.message="Boss height reconstructed by sweeping its current cap along the cylindrical axis.";return result;
 }
 
 CylindricalMoveGeometry::Result CylindricalMoveGeometry::moveBoss(

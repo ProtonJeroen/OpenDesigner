@@ -851,6 +851,24 @@ Focused tests cover all three feature classes, rotated/split B-Reps, unaffected
 features, independent analytic volume/occupancy, atomic refusal, blue preview,
 Cancel/OK, cached Undo/Redo, selection cleanup, identity and native replay.
 
+## 9D.7D — remaining Pull/Resize gap analysis
+
+See [classification, corrections, tests and remaining limitations](PULL_RESIZE_GAPS.md).
+Reuse the boundary-boss material/attachment certificate for full-overhang diameter
+changes. Derive the current boss cap, attachment, radius and height to expose a
+height handle without primitive metadata. Reuse the local planar cap sweep;
+allow connected coplanar cap patches and swept regions across invariant wall
+seams, preserving exact material changes and unrelated patches. Current full
+cylinders remain full; current trimmed bosses retain their actual cut.
+
+Open-notch radial editing was already working at `a249519`; no replacement is
+added. Repeated radius/height confirmations, joint split-face selection, invalid
+preview recovery, Cancel, cached history, Part identity and rotated geometry
+pass the two new focused regressions. Directly affected radius/local/post-Trim
+regressions also pass. Independent-feature/mixed-parameter joint Pull and more
+complex attachment/cap reconstructions remain explicitly unsupported, rather
+than being classified as unrecognizable cylinders. No full CTest suite was run.
+
 ## 9E — transactions, persistence and acceptance
 
 Confirm once into the same Part slot with one cached Undo/Redo step. Preserve

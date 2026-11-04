@@ -106,11 +106,20 @@ void CadViewport::setSelectionMode(SelectionMode mode) {
 }
 bool CadViewport::supportsResize(const SelectionContext& selection) const {
     if(selection.kind!=SelectionContext::Kind::Faces || selection.faces.empty()) return false;
+    if(selection.faces.size()>1&&std::all_of(selection.faces.begin(),selection.faces.end(),[&](const auto& f){return f.partIndex==selection.faces.front().partIndex;})) {
+        const auto& first=selection.faces.front();BRepReconstruction::Neighborhood local;QString error;
+        if(BRepReconstruction::neighborhood(boxes_[first.partIndex].shape,first.face,local,error)&&
+           std::all_of(selection.faces.begin(),selection.faces.end(),[&](const auto& f){return std::any_of(local.history.begin(),local.history.end(),[&](const auto& m){return m.original.IsSame(f.face)&&std::any_of(local.patch.begin(),local.patch.end(),[&](const auto& patch){return patch.IsSame(m.modified.front());});});})) {
+            auto one=selection;one.faces.resize(1);return supportsResize(one);
+        }
+    }
     for(const auto& selected:selection.faces) {
         auto part=boxes_[selected.partIndex];
         const bool primitive=recognizePullPrimitive(part);
         const BRepAdaptor_Surface surface(selected.face);
         if(selection.faces.size()==1 && primitive) return true;
+        if(selection.faces.size()==1&&surface.GetType()==GeomAbs_Plane)
+            return bool(CylindricalMoveGeometry::bossHeightReference(part.shape,selected.face));
         if(selection.faces.size()==1 && surface.GetType()==GeomAbs_Cylinder) {
             double volume=0.0;
             return BRepReconstruction::validSolid(part.shape,volume);
@@ -327,7 +336,7 @@ void CadViewport::resetModelingTools() {
     movePartMode_=directMoveMode_=rotateMode_=pullMode_=moveFacePicking_=false;
     draggingFace_=draggingRotation_=primitivePullDragging_=multiFaceDragging_=groupRotationDragging_=false;
     dimensionEditing_=primitivePullEditing_=multiFaceEditing_=false;
-    cylindricalFacePull_=false;
+    cylindricalFacePull_=false;bossHeightPull_=false;bossPullHeight_=0;
     cylindricalPullFace_.Nullify();
     cylindricalPullRadius_=0.0;
     hideFaceArrow(); hideMoveAxes(); hideRotationRings(); clearMultiFaceHighlight();
@@ -359,10 +368,10 @@ void CadViewport::startPrimitivePull() {
     cancelCommandSession();
     const auto selection=selectionContext();
     if(!supportsResize(selection)) {
-        emit statusMessage(tr("Pull / Resize: select supported primitive faces first. No command started."));
+        emit statusMessage(tr("Pull / Resize: the selected faces have no certified individual or joint reconstruction. No command started."));
         return;
     }
-    if(selection.faces.size()==1&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Cylinder) {
+    if(!selection.faces.empty()&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Cylinder) {
         const auto& selected=selection.faces.front();auto probe=boxes_[selected.partIndex];
         if(!recognizePullPrimitive(probe)) {
             const auto capability=CylindricalMoveGeometry::resizeRadius(probe.shape,selected.face,BRepAdaptor_Surface(selected.face).Cylinder().Radius());

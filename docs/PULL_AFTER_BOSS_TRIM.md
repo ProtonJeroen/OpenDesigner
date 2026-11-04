@@ -98,3 +98,13 @@ unsupported activation, Cancel and Undo/Redo. A breakpoint configured to fail on
 entry to `BRepOffset_MakeOffset::MakeOffsetShape` was not hit. Original document
 hashes and source serialization remain unchanged. `git diff --check` passes.
 No full CTest suite was run.
+
+## Later scope update — phase 9D.7D
+
+The [remaining-gap analysis](PULL_RESIZE_GAPS.md) resolves the former full-overhang
+diameter restriction and adds geometry-derived height Pull on Trim/Extend caps,
+including repeated edits across wall seams and joint selection of split support
+patches. Current full cylinders remain full when resized; a vanished historical
+Trim plane is not restored. Open-notch and oblique-hole radial reconstruction
+was already added by the rotated-rim correction at `a249519`. The original
+coredump safeguards and absence of an offset fallback remain in force.

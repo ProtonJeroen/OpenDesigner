@@ -706,6 +706,25 @@ void repeatedBossDetailTests() {
         }
     }
 }
+void boundaryPullGapTests() {
+    const auto find=[](const TopoDS_Shape& shape,double radius) {for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);if(s.GetType()==GeomAbs_Cylinder&&std::abs(s.Cylinder().Radius()-radius)<1.e-7) return f;}return TopoDS_Face();};
+    const auto base=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(BRepPrimAPI_MakeBox(163,80,60).Shape(),
+        BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,36,0),gp_Dir(0,0,1)),17,60).Shape()),BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(90,65,60),gp_Dir(0,0,1)),7,20).Shape());
+    for(bool trim:{false,true}) for(bool placed:{false,true}) {
+        const double x=trim?158:166;gp_Trsf placement;if(placed) {placement.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.43);placement.SetTranslationPart(gp_Vec(140,-60,35));}
+        const auto oracle=[&](double r,double h) {auto boss=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(x,36,60),gp_Dir(0,0,1)),r,h).Shape();if(trim) boss=BooleanGeometry::combine<BRepAlgoAPI_Common>(boss,BRepPrimAPI_MakeBox(gp_Pnt(0,0,60),163,80,h).Shape());return BRepBuilderAPI_Transform(BooleanGeometry::combine<BRepAlgoAPI_Fuse>(base,boss),placement,true).Shape();};
+        auto source=oracle(18,55);double radius=18,height=55;
+        const auto cap=[&](const TopoDS_Shape& shape,double h) {for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);if(s.GetType()!=GeomAbs_Plane) continue;auto n=s.Plane().Axis().Direction();if(f.Orientation()==TopAbs_REVERSED) n.Reverse();if(n.IsEqual(gp_Dir(0,0,1).Transformed(placement),1.e-8)&&s.Plane().Distance(gp_Pnt(x,36,60+h).Transformed(placement))<1.e-6) return f;}return TopoDS_Face();};
+        const auto verify=[&](const TopoDS_Shape& shape,double r,double h) {require(BRepReconstruction::equivalent(shape,oracle(r,h)),"Boundary Pull changed unrelated hole/boss material");const double a=std::min(5.,r);const double area=trim?r*r*(pi/2+std::asin(a/r))+a*std::sqrt(std::max(0.,r*r-a*a)):pi*r*r;certified(shape,163*80*60-pi*289*60+pi*49*20+area*h);for(int i=0;i<190;i+=17) for(int j=0;j<80;j+=17) for(double z:{15.,59.,61.,85.,110.,119.}) {const double px=i+.27,py=j+.41;const bool body=px<163&&z<60&&std::hypot(px-54,py-36)>17;const bool other=std::hypot(px-90,py-65)<7&&z>60&&z<80;const bool boss=std::hypot(px-x,py-36)<r&&z>60&&z<60+h&&(!trim||px<163);BRepClass3d_SolidClassifier c(shape,gp_Pnt(px,py,z).Transformed(placement),1.e-7);require(c.State()==(body||other||boss?TopAbs_IN:TopAbs_OUT),"Boundary Pull independent occupancy mismatch");}};
+        if(!trim) for(double r:{20.,16.,12.}) {const auto stamp=serialized(source);const auto result=resizeRadius(source,find(source,radius),r);require(bool(result),"Extend radius gap remains: "+result.message);verify(result.shape,r,height);require(serialized(source)==stamp,"Extend radius mutated source");source=result.shape;radius=r;}
+        for(double h:{62.,40.,57.}) {const auto target=cap(source,height);const auto reference=bossHeightReference(source,target);require(bool(reference)&&std::abs(reference.height-height)<1.e-6,"Boss cap height reference failed: "+reference.message);const auto stamp=serialized(source);const auto result=resizeBossHeight(source,target,h);require(bool(result),"Boundary boss height failed (trim="+std::to_string(trim)+", placed="+std::to_string(placed)+", height="+std::to_string(h)+"): "+result.message);verify(result.shape,radius,h);require(serialized(source)==stamp,"Boss height mutated source");source=result.shape;height=h;}
+        const auto stamp=serialized(source);for(double h:{0.,-.1,std::numeric_limits<double>::quiet_NaN()}) {const auto result=resizeBossHeight(source,cap(source,height),h);require(!result&&result.shape.IsNull()&&!result.message.empty()&&serialized(source)==stamp,"Invalid height was accepted or mutated source");}
+        if(!trim) {const auto detached=resizeRadius(source,find(source,radius),2);require(!detached&&detached.shape.IsNull()&&!detached.message.empty(),"Detached overhang radius accepted");}
+        // Both split mantle and cap patches are current topology, not features.
+        const auto mantle=find(source,radius);const BRepAdaptor_Surface wall(mantle);const double u=wall.FirstUParameter()+.37*(wall.LastUParameter()-wall.FirstUParameter());
+        BRepFeat_SplitShape split(source);split.Add(BRepBuilderAPI_MakeEdge(wall.Value(u,wall.FirstVParameter()),wall.Value(u,wall.LastVParameter())).Edge(),mantle);split.Build();require(split.IsDone(),"Cannot split Pull mantle");const auto resized=resizeRadius(split.Shape(),find(split.Shape(),radius),radius+1);require(bool(resized),"Split mantle radial Pull failed: "+resized.message);verify(resized.shape,radius+1,height);
+    }
+}
 void radialPullTests() {
     const auto stock=BRepPrimAPI_MakeBox(163,80,60).Shape();
     const auto bore=[](double r){return BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(54,36,-10),gp_Dir(0,0,1)),r,80).Shape();};
@@ -743,7 +762,7 @@ void radialPullTests() {
         require(serialized(source)==stamp,"Radial edit mutated input");
         // A reconstructed partial or now-complete mantle remains editable.
         const auto repeated=resizeRadius(result.shape,face(result.shape,r),r+1);
-        if(partial&&r==5) require(!repeated&&!repeated.message.empty(),"A now-complete boss invented a vanished Trim plane to cross the boundary");
+        if(partial&&r==5) require(bool(repeated)&&BRepReconstruction::equivalent(repeated.shape,BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,bore(17)),boss(158,6))),"A current full boss did not grow as a full supported overhang without remembered Trim history");
         else require(bool(repeated),"Repeated radial edit failed (partial="+std::to_string(partial)+", R="+std::to_string(r)+"): "+repeated.message);
     }
     const auto stamp=serialized(trimmed.shape);
@@ -758,7 +777,8 @@ void radialPullTests() {
         certified(resized.shape,volume(expected));
     }
     const auto overhang=moveBoss(original,face(original,18),gp_Vec(45,0,0),BossBoundaryMode::Extend);
-    require(bool(overhang)&&!resizeRadius(overhang.shape,face(overhang.shape,18),20),"Uncertified overhang radius extension was accepted");
+    require(bool(overhang),"Cannot create Extend radial source");const auto overhangResize=resizeRadius(overhang.shape,face(overhang.shape,18),20);
+    require(bool(overhangResize)&&BRepReconstruction::equivalent(overhangResize.shape,BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,bore(17)),boss(166,20))),"Extend radius reconstruction changed surrounding stock");
     const auto notch=moveThroughHole(original,face(original,17),gp_Vec(-54,0,0));
     require(bool(notch),"Cannot construct planar-trim notch for radial reconstruction");
     const auto notchStamp=serialized(notch.shape);const auto resizedNotch=resizeRadius(notch.shape,face(notch.shape,17),20);
@@ -778,6 +798,7 @@ void radialPullTests() {
 }
 int main(int argc,char** argv) {
     try {
+        if(argc>1&&std::string(argv[1])=="--pull-gaps") {boundaryPullGapTests();std::cout<<"Boundary Pull gap geometry passed\n";return 0;}
         if(argc>1&&std::string(argv[1])=="--repeated-boss-detail") {repeatedBossDetailTests();std::cout<<"Imported/split boundary boss geometry passed\n";return 0;}
         if(argc>1&&std::string(argv[1])=="--repeated-boss") {repeatedBossTests();std::cout<<"Repeated boundary boss geometry passed\n";return 0;}
         if(argc>1&&std::string(argv[1])=="--notch") {openNotchTests();std::cout<<"Repeated open-notch geometry passed\n";return 0;}

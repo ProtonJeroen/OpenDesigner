@@ -180,8 +180,8 @@ bool BRepReconstruction::movePlanarLocal(const TopoDS_Shape& source,const TopoDS
         if(!std::isfinite(distance)||std::abs(distance)<1.e-7) return fail(QStringLiteral("requires a finite nonzero offset."));
         Neighborhood local;
         if(!neighborhood(source,target,local,error)) return false;
-        if(local.patch.size()!=1||BRepAdaptor_Surface(local.target).GetType()!=GeomAbs_Plane)
-            return fail(QStringLiteral("requires one planar patch."));
+        if(BRepAdaptor_Surface(local.target).GetType()!=GeomAbs_Plane)
+            return fail(QStringLiteral("requires a connected planar support patch."));
         auto normal=BRepAdaptor_Surface(local.target).Plane().Axis().Direction();
         if(local.target.Orientation()==TopAbs_REVERSED) normal.Reverse();
         // These adjacent supports retain exactly the same cross section during
@@ -194,7 +194,11 @@ bool BRepReconstruction::movePlanarLocal(const TopoDS_Shape& source,const TopoDS
             if(!invariant) return fail(QStringLiteral("an adjacent support changes cross section along the requested direction."));
         }
         const gp_Vec delta=gp_Vec(normal)*distance;gp_Trsf shift;shift.SetTranslation(delta);
-        const auto region=BRepPrimAPI_MakePrism(local.target,delta,true,true).Shape();
+        TopoDS_Shape region;
+        for(const auto& patch:local.patch) {
+            const auto swept=BRepPrimAPI_MakePrism(patch,delta,true,true).Shape();
+            region=region.IsNull()?swept:BooleanGeometry::combine<BRepAlgoAPI_Fuse>(region,swept);
+        }
         double regionVolume=0;
         if(!validSolid(region,regionVolume)) return fail(QStringLiteral("the trimmed-face sweep is not a valid closed volume."));
         const auto overlap=BooleanGeometry::combine<BRepAlgoAPI_Common>(local.solid,region);
@@ -206,10 +210,23 @@ bool BRepReconstruction::movePlanarLocal(const TopoDS_Shape& source,const TopoDS
         const auto actualChange=distance>0?BooleanGeometry::combine<BRepAlgoAPI_Cut>(candidate,local.solid)
                                           :BooleanGeometry::combine<BRepAlgoAPI_Cut>(local.solid,candidate);
         if(!equivalent(actualChange,region)) return fail(QStringLiteral("the actual material change differs from the trimmed-face sweep."));
-        auto affected=local.neighbors;affected.push_back(local.target);
+        auto affected=local.neighbors;affected.insert(affected.end(),local.patch.begin(),local.patch.end());
+        // Earlier edits may leave seams on an invariant wall. A sweep crossing
+        // such a seam changes the adjoining patch on the same analytic support.
+        // Only actual swept surface regions join the affected neighborhood.
+        for(TopExp_Explorer it(local.solid,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());
+            if(std::none_of(affected.begin(),affected.end(),[&](const auto& f){return f.IsSame(face);})&&
+               std::any_of(local.neighbors.begin(),local.neighbors.end(),[&](const auto& f){return sameAnalyticSupport(f,face);})) {
+                GProp_GProps overlapArea;BRepGProp::SurfaceProperties(BooleanGeometry::combine<BRepAlgoAPI_Common>(face,region),overlapArea);
+                if(overlapArea.Mass()>1.e-12) affected.push_back(face);
+            }
+        }
         Result finished;
-        if(!finishLocal(local,candidate,region,affected,{local.target},shift,finished,error)) return false;
-        const auto expected=TopoDS::Face(BRepBuilderAPI_Transform(local.target,shift,true).Shape());
+        if(!finishLocal(local,candidate,region,affected,local.patch,shift,finished,error)) return false;
+        std::vector<TopoDS_Face> expectedPatch;
+        for(const auto& patch:local.patch) expectedPatch.push_back(TopoDS::Face(BRepBuilderAPI_Transform(patch,shift,true).Shape()));
+        const auto expected=expectedPatch.front();
         const auto sameBoundary=[&](const TopoDS_Face& a,const TopoDS_Face& b) {
             if(!sameAnalyticSupport(a,b)) return false;
             if(BRepAdaptor_Surface(a).GetType()!=GeomAbs_Cylinder) return true;
@@ -224,21 +241,21 @@ bool BRepReconstruction::movePlanarLocal(const TopoDS_Shape& source,const TopoDS
             // oriented cylindrical cavity on the same geometric support.
             return side(a)*side(b)>0;
         };
-        double covered=0;GProp_GProps targetArea;BRepGProp::SurfaceProperties(expected,targetArea);
+        double covered=0,targetArea=0;for(const auto& patch:expectedPatch) {GProp_GProps area;BRepGProp::SurfaceProperties(patch,area);targetArea+=area.Mass();}
         for(TopExp_Explorer it(finished.solid,TopAbs_FACE);it.More();it.Next()) {
             const auto face=TopoDS::Face(it.Current());bool allowed=sameBoundary(expected,face);
             if(allowed) {
-                GProp_GProps area;BRepGProp::SurfaceProperties(BooleanGeometry::combine<BRepAlgoAPI_Common>(expected,face),area);covered+=area.Mass();
+                for(const auto& patch:expectedPatch) {GProp_GProps area;BRepGProp::SurfaceProperties(BooleanGeometry::combine<BRepAlgoAPI_Common>(patch,face),area);covered+=area.Mass();}
             }
             for(TopExp_Explorer old(local.solid,TopAbs_FACE);old.More()&&!allowed;old.Next())
-                if(!old.Current().IsSame(local.target)) allowed=sameBoundary(TopoDS::Face(old.Current()),face);
+                if(std::none_of(local.patch.begin(),local.patch.end(),[&](const auto& patch){return patch.IsSame(old.Current());})) allowed=sameBoundary(TopoDS::Face(old.Current()),face);
             if(!allowed) {
                 const BRepAdaptor_Surface s(face);GProp_GProps p;BRepGProp::SurfaceProperties(face,p);
                 return fail(QStringLiteral("the result introduced an unintended transition surface (type %1, center %2, %3, %4).")
                     .arg(int(s.GetType())).arg(p.CentreOfMass().X()).arg(p.CentreOfMass().Y()).arg(p.CentreOfMass().Z()));
             }
         }
-        if(std::abs(covered-targetArea.Mass())>1.e-8*std::max(1.,targetArea.Mass()))
+        if(std::abs(covered-targetArea)>1.e-8*std::max(1.,targetArea))
             return fail(QStringLiteral("the complete translated target patch did not survive."));
         result=std::move(finished);error.clear();return true;
     } catch(const Standard_Failure&) {return fail(QStringLiteral("OCCT could not reconstruct this neighborhood safely."));}

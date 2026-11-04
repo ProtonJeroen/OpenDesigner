@@ -653,6 +653,8 @@ private:
     bool primitivePullDragging_ = false;
     bool primitivePullEditing_ = false;
     bool cylindricalFacePull_ = false;
+    bool bossHeightPull_ = false;
+    double bossPullHeight_ = 0.0;
     TopoDS_Face cylindricalPullFace_;
     double cylindricalPullRadius_ = 0.0;
     PullChange primitivePullBefore_;

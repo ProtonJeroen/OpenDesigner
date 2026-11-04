@@ -35,6 +35,8 @@
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepFeat_SplitShape.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <BRepGProp.hxx>
@@ -529,7 +531,7 @@ struct CadViewportPullTest {
         start(20);require(v.previewCommand(-1)&&BRepReconstruction::equivalent(v.boxes_[0].shape,expected(19)),"Repeated partial-mantle Pull failed");v.cancelCommandSession();
         // Unsupported neighborhoods refuse at activation, with a diagnostic,
         // without starting a drag or altering the presented Part/history.
-        auto unsupported=v.boxes_[0];unsupported.shape=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(base,boss(166,18));v.applyFaceState(0,unsupported);
+        auto unsupported=v.boxes_[0];unsupported.shape=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(base,boss(54,18));v.applyFaceState(0,unsupported);
         v.context_->ClearSelected(Standard_False);v.context_->AddOrRemoveSelected(new StdSelect_BRepOwner(radiusFace(unsupported.shape,18),unsupported.presentation,5,Standard_True),Standard_False);
         QString diagnostic;const auto connection=QObject::connect(&v,&CadViewport::statusMessage,&v,[&](const QString& text){diagnostic=text;});
         std::unique_ptr<QMenu> unsupportedMenu(v.createSelectionMenu(QPoint(400,300)));auto* resize=unsupportedMenu->findChild<QAction*>("context.resize");
@@ -539,6 +541,42 @@ struct CadViewportPullTest {
         std::ostringstream after;BRepTools::Write(source,after);require(after.str()==stamp,"Radial Pull mutated original source");
         if(!path.isEmpty()) {QFile file(path);require(file.open(QIODevice::ReadOnly)&&file.readAll()==bytes,"Native document changed");}
         std::cout<<"Post-Trim radial Pull geometry, p-curves, drag, refusal, Cancel and Undo/Redo passed\n";
+    }
+
+    static void runBoundaryGaps(CadViewport& v) {
+        const auto cylinder=[](double x,double y,double z,double r,double h){return BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(x,y,z),gp_Dir(0,0,1)),r,h).Shape();};
+        const auto wall=[](const TopoDS_Shape& shape,double radius){std::vector<TopoDS_Face> faces;for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);if(s.GetType()==GeomAbs_Cylinder&&std::abs(s.Cylinder().Radius()-radius)<1.e-7) faces.push_back(f);}return faces;};
+        const auto caps=[](const TopoDS_Shape& shape,double height){std::vector<TopoDS_Face> faces;for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);if(s.GetType()!=GeomAbs_Plane) continue;auto n=s.Plane().Axis().Direction();if(f.Orientation()==TopAbs_REVERSED) n.Reverse();if(n.Z()>.99&&std::abs(s.Plane().Location().Z()-(60+height))<1.e-7) faces.push_back(f);}return faces;};
+        for(int kind=0;kind<4;++kind) {
+            const bool trim=kind==1,notch=kind==2,split=kind==3;const double x=trim?158:166;
+            const auto oracle=[&](double radius,double height) {auto body=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(BooleanGeometry::combine<BRepAlgoAPI_Cut>(BRepPrimAPI_MakeBox(163,80,60).Shape(),cylinder(notch?0:54,36,0,notch?radius:17,60)),cylinder(90,65,60,7,20));if(!notch) {auto boss=cylinder(x,36,60,radius,height);if(trim) boss=BooleanGeometry::combine<BRepAlgoAPI_Common>(boss,BRepPrimAPI_MakeBox(gp_Pnt(0,0,60),163,80,height).Shape());body=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(body,boss);}return body;};
+            double radius=notch?17:18,height=55;NativeDocumentSnapshot snapshot;NativePartState p;p.id="pull-gap-part";p.name="Current geometry";p.shape=oracle(radius,height);p.geometryKind=1;p.cylinderPrimitive=true;p.cylinderRadius=999;p.cylinderHeight=999;
+            if(split) {
+                auto patch=wall(p.shape,radius).front();const BRepAdaptor_Surface s(patch);const double u=s.FirstUParameter()+.37*(s.LastUParameter()-s.FirstUParameter());BRepFeat_SplitShape builder(p.shape);builder.Add(BRepBuilderAPI_MakeEdge(s.Value(u,s.FirstVParameter()),s.Value(u,s.LastVParameter())).Edge(),patch);builder.Build();require(builder.IsDone(),"Cannot split UI boss mantle");p.shape=builder.Shape();
+                const auto cap=caps(p.shape,height).front();BRepFeat_SplitShape top(p.shape);top.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(x-radius,36,60+height),gp_Pnt(x+radius,36,60+height)).Edge(),cap);top.Build();require(top.IsDone(),"Cannot split UI boss cap");p.shape=top.Shape();require(wall(p.shape,radius).size()>1&&caps(p.shape,height).size()>1,"Joint Pull fixture has no split faces");
+            }
+            p.transform.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.3);p.transform.SetTranslationPart(gp_Vec(30,-20,25));snapshot.parts.push_back(p);NativePartState other;other.id="pull-other";other.name="Other Part";other.shape=BRepPrimAPI_MakeBox(10,10,10).Shape();other.transform.SetTranslation(gp_Vec(250,0,0));snapshot.parts.push_back(other);QString error;require(v.importDocumentSnapshot(snapshot,error),qPrintable(error));v.fitSelection({0});QApplication::processEvents();
+            const auto initial=v.boxes_[0];const auto untouched=v.boxes_[1].shape;std::vector<TopoDS_Shape> states{initial.shape};
+            const auto verify=[&](double r,double h) {require(BRepReconstruction::equivalent(v.boxes_[0].shape,oracle(r,h)),"Boundary Pull preview/commit differs from independent material oracle");double mass=0;require(BRepReconstruction::validSolid(v.boxes_[0].shape,mass),"Boundary Pull result is invalid");};
+            const auto start=[&](bool heightHandle) {
+                v.context_->ClearSelected(Standard_False);const auto faces=heightHandle?caps(v.boxes_[0].shape,height):wall(v.boxes_[0].shape,radius);require(!faces.empty(),"Current Pull faces disappeared");
+                for(const auto& f:faces) v.context_->AddOrRemoveSelected(new StdSelect_BRepOwner(f,v.boxes_[0].presentation,5,Standard_True),Standard_False);
+                std::unique_ptr<QMenu> menu(v.createSelectionMenu(QPoint(400,300)));auto* action=menu->findChild<QAction*>("context.resize");require(action&&action->isEnabled(),"Current single/joint geometry has no Pull action");action->trigger();
+                require(v.pullMode_&&v.cylindricalFacePull_&&v.bossHeightPull_==heightHandle&&v.arrowVisible_,"Current cylindrical Pull handle failed recognition");const auto grab=beginPull(v);checkDimension(v,heightHandle?height:2*radius,!heightHandle);return grab;
+            };
+            const auto grab=start(false);dragBy(v,grab,1.5);require(v.commandSession_->valid,"Boundary radius drag has no live preview");verify(v.cylindricalPullRadius_,height);v.cancelCommandSession();require(v.boxes_[0].shape.IsSame(initial.shape)&&v.undoStack_.empty(),"Radius Cancel changed source/history");
+            if(!notch) {start(true);require(v.previewCommand(4),"Cap height has no live preview");verify(radius,height+4);const auto valid=v.boxes_[0].shape;require(!v.previewCommand(-height)&&!v.commandSession_->geometryError.isEmpty()&&v.boxes_[0].shape.IsSame(valid),"Invalid height lost the last valid preview");v.cancelCommandSession();require(v.boxes_[0].shape.IsSame(initial.shape)&&v.undoStack_.empty(),"Height Cancel changed source/history");}
+            start(false);exact(v,2*(radius+1.75),true);radius+=1.75;require(!v.commandSession_,"Absolute diameter did not confirm");verify(radius,height);states.push_back(v.boxes_[0].shape);
+            if(!notch) {start(true);exact(v,62.5);height=62.5;require(!v.commandSession_,"Absolute height did not confirm");verify(radius,height);states.push_back(v.boxes_[0].shape);}
+            start(false);exact(v,2*(radius-1),true);radius-=1;verify(radius,height);states.push_back(v.boxes_[0].shape);
+            if(!notch) {start(true);exact(v,40);height=40;verify(radius,height);states.push_back(v.boxes_[0].shape);}
+            require(v.undoStack_.size()==states.size()-1,"Repeated Pull did not create one history step per confirmation");
+            for(size_t i=states.size()-1;i>0;--i) {v.undoPull();require(v.boxes_[0].shape.IsSame(states[i-1]),"Repeated Pull Undo lost cached source");}
+            for(size_t i=1;i<states.size();++i) {v.redoPull();require(v.boxes_[0].shape.IsSame(states[i]),"Repeated Pull Redo rebuilt geometry");}
+            require(v.boxes_[0].persistentId==initial.persistentId&&v.boxes_[0].presentation==initial.presentation&&v.boxes_[0].name==initial.name&&v.boxes_[0].color==initial.color&&v.boxes_[0].visible==initial.visible&&v.boxes_[1].shape.IsSame(untouched),"Pull lost Part identity/appearance or changed another Part");
+            for(int r=1;r<=3;++r) for(int c=1;c<=4;++c) near(v.boxes_[0].orientation.Value(r,c),initial.orientation.Value(r,c),"Pull changed Part placement");
+        }
+        std::cout<<"Boundary diameter/height, joint split faces, repeated confirmations, Cancel and cached history passed\n";
     }
 
     using ConeTarget = CadViewport::ConePullTarget;
@@ -1334,7 +1372,8 @@ int main(int argc, char** argv) {
     viewport.show();
     app.processEvents();
     try {
-        if(app.arguments().contains("--trimmed-boss-pull")) {
+        if(app.arguments().contains("--boundary-gaps")) CadViewportPullTest::runBoundaryGaps(viewport);
+        else if(app.arguments().contains("--trimmed-boss-pull")) {
             const int arg=app.arguments().indexOf("--trimmed-boss-pull");CadViewportPullTest::runTrimmedBossPull(viewport,app.arguments().value(arg+1));
         }
         else if (app.arguments().contains(QStringLiteral("--native-pull"))) {
