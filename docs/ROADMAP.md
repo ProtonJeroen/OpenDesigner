@@ -661,6 +661,36 @@ See [Extrude](EXTRUDE_PROFILE.md), [Revolve](REVOLVE.md),
 
 See [planned cylindrical-face move: holes and bosses](https://github.com/ProtonJeroen/OpenDesigner/issues/51).
 
+## Planned — Advanced geometry-driven Pull/Resize and multi-face reconstruction
+
+These are **known remaining capability gaps after v0.4.9 phase 9D.7D**, not
+completed functionality. Apply the project-wide geometry-first, history-independent
+B-Rep principle: recognize all faces from their current surfaces and topology
+regardless of creation method, trims or neighboring geometry.
+
+- [ ] **Independent-feature joint Pull:** allow compatible faces belonging to
+  multiple distinct features on one or more Parts to be selected and resized
+  together with an explicit, coherent operation policy; preserve each feature's
+  geometric relationships and reject incompatible or ambiguous combinations safely.
+- [ ] **Mixed cap/wall joint Pull:** support coordinated Pull/Resize of planar
+  cylinder caps and cylindrical mantles in one selection, with well-defined
+  diameter-versus-height behavior, direction, reference geometry and result
+  reconstruction. Existing joint selection of split faces belonging to the
+  same cap must continue to work.
+- [ ] **Complex boss attachments:** reconstruct bosses supported by multiple,
+  intersecting or otherwise complex neighboring faces rather than requiring
+  simple planar stock interfaces. Preserve unrelated material and allow valid
+  topology changes, with explicit refusal for uncertifiable cases.
+- [ ] **Nonconstant-section boss caps and transitions:** extend support beyond
+  constant-section cylindrical boss cap patterns; infer the actual geometric
+  supports and boundaries and handle valid varying/oblique transitions without
+  requiring primitive history or circular rim assumptions.
+- [ ] Reuse shared B-Rep neighborhood, topology correspondence and independent
+  material/volume certification for Move/Rotate/Pull/Resize/Delete. Preserve
+  preview, numeric input, Cancel, Undo/Redo, Part identity and Save/Open.
+  Add targeted geometry/session regressions and manual Fedora KDE acceptance
+  for each independently scoped extension; avoid duplicating algorithms.
+
 ## Next milestones
 - CAD document ownership, persistent save/load and robust selection
 - Direct face modeling and workplanes
