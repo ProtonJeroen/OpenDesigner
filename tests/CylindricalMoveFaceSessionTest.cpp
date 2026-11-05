@@ -2,6 +2,7 @@
 #include "MainWindow.h"
 #include "CylindricalMoveGeometry.h"
 #include "BRepReconstruction.h"
+#include "DeleteFaceGeometry.h"
 #include "MoveFaceGeometry.h"
 #include "BooleanGeometry.h"
 #include "CommandPanelPositioner.h"
@@ -20,6 +21,7 @@
 #include <QTreeWidget>
 #include <QTemporaryDir>
 #include <QFile>
+#include <QFileInfo>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepLProp_SLProps.hxx>
@@ -78,6 +80,158 @@ void events() {
 }
 
 struct CylindricalMoveFaceSessionTest {
+    // This suite deliberately crosses the native storage boundary between edits.
+    // No creation recipe or geometry-suite replay is needed after Open.
+    static void persistenceHistory(const QString& suppliedPath) {
+        const QFileInfo sourceInfo(suppliedPath);
+        const bool singleDocument=sourceInfo.isFile();
+        const QString directory=singleDocument?sourceInfo.absolutePath():suppliedPath;
+        QTemporaryDir temp;check(temp.isValid(),"Cannot create persistence test directory");
+        const QStringList names=singleDocument?QStringList{sourceInfo.fileName()}:directory.isEmpty()?QStringList{"generated","generated-rotated"}:QStringList{"moveCylinder.odc","moveCylinderBug.odc","crash03112026.odc","hole2.odc"};
+        for(const auto& name:names) {
+            const bool rotated=name=="hole2.odc"||name=="generated-rotated";
+            NativeDocumentSnapshot snapshot;QString error;QByteArray original;
+            const auto sourcePath=directory+"/"+name;
+            if(directory.isEmpty()) {
+                NativePartState part;part.id="persistence-part";part.name="Boundary edits";
+                part.shape=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(fixture(false),BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(70,40,30),gp_Dir(0,0,1)),12,20).Shape());part.color=QColor(23,85,172);
+                if(rotated) {
+                    const gp_Pln plane(gp_Pnt(0,0,25),gp_Dir(.2,0,1));
+                    const auto stock=BooleanGeometry::combine<BRepAlgoAPI_Common>(BRepPrimAPI_MakeBox(100,80,50).Shape(),BRepPrimAPI_MakeHalfSpace(BRepBuilderAPI_MakeFace(plane).Face(),gp_Pnt(0,0,0)).Solid());
+                    part.shape=BooleanGeometry::combine<BRepAlgoAPI_Cut>(stock,BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(40,40,-10),gp_Dir(0,0,1)),21,80).Shape());
+                }
+                part.transform.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.31);
+                part.transform.SetTranslationPart(gp_Vec(45,-20,15));snapshot.parts={part};
+            } else {
+                QFile file(sourcePath);check(file.open(QIODevice::ReadOnly),"Cannot read Phase 9E source");original=file.readAll();
+                check(NativeDocumentStorage::load(sourcePath,snapshot,error),qPrintable(error));
+            }
+            check(!snapshot.parts.empty(),"Empty persistence fixture");
+            std::cout<<"Checking Phase 9E document: "<<name.toStdString()<<std::endl;
+            const auto featureRadius=[](const TopoDS_Shape& shape,TopAbs_Orientation orientation) {
+                for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface surface(face);if(surface.GetType()==GeomAbs_Cylinder&&face.Orientation()==orientation) return surface.Cylinder().Radius();}
+                throw std::runtime_error("Required analytic cylindrical feature missing");
+            };
+            NativePartState hidden;hidden.id="phase9e-hidden";hidden.name="Hidden identity witness";
+            hidden.shape=BRepPrimAPI_MakeBox(5,6,7).Shape();hidden.visible=false;
+            snapshot.parts.push_back(hidden);if(snapshot.activePartId.isEmpty()) snapshot.activePartId=hidden.id;
+            MainWindow window;window.show();events();auto& v=*window.findChild<CadViewport*>();
+            check(v.importDocumentSnapshot(snapshot,error),qPrintable(error));v.fitSelection({0});
+            auto* tree=window.findChild<QTreeWidget*>();auto* row=tree->topLevelItem(0)->child(0);
+            const auto identity=v.boxes_[0];const auto active=v.activePartId();
+            const auto identityCheck=[&](bool samePresentation) {
+                const auto& p=v.boxes_[0];check(p.persistentId==identity.persistentId&&p.name==identity.name&&p.color==identity.color&&p.visible==identity.visible&&v.activePartId()==active,"Edit/history/Open changed Part identity or appearance");
+                for(int r=1;r<=3;++r) for(int c=1;c<=4;++c) near(p.orientation.Value(r,c),identity.orientation.Value(r,c),"Placement changed");
+                check(!v.boxes_.back().visible&&!v.context_->IsDisplayed(v.boxes_.back().presentation),"Hidden witness became visible");
+                check(tree->topLevelItem(0)->child(0)->text(0)==identity.name,"Browser name changed");
+                if(samePresentation) check(p.presentation==identity.presentation&&tree->topLevelItem(0)->child(0)==row,"Edit/history replaced presentation/browser row");
+            };
+            const auto compare=[](const TopoDS_Shape& a,const TopoDS_Shape& b) {
+                double mass=0;check(BRepReconstruction::validSolid(b,mass),"Reopened solid invalid");near(mass,volume(a),"Reopened volume changed");
+                for(auto type:{TopAbs_SOLID,TopAbs_SHELL,TopAbs_FACE,TopAbs_WIRE,TopAbs_EDGE,TopAbs_VERTEX}) {TopTools_IndexedMapOfShape x,y;TopExp::MapShapes(a,type,x);TopExp::MapShapes(b,type,y);check(x.Extent()==y.Extent(),"Reopened topology count changed");}
+                check(BRepReconstruction::equivalent(a,b),"Reopened material differs");
+                Bnd_Box bounds;BRepBndLib::AddOptimal(a,bounds,false,false);double x,y,z,X,Y,Z;bounds.Get(x,y,z,X,Y,Z);
+                BRepClass3d_SolidClassifier ca(a),cb(b);
+                for(int i=0;i<7;++i) for(int j=0;j<7;++j) for(int k=0;k<7;++k) {const gp_Pnt p(x+(X-x)*(i+.37)/7,y+(Y-y)*(j+.41)/7,z+(Z-z)*(k+.29)/7);ca.Perform(p,1.e-7);cb.Perform(p,1.e-7);check(ca.State()==cb.State(),"Reopened occupancy changed");}
+            };
+            int serial=0;
+            const auto stored=[&](const TopoDS_Shape& expected,bool reopen) {
+                NativeDocumentSnapshot captured,loaded;check(v.exportDocumentSnapshot(captured),"Capture failed");
+                const auto path=temp.filePath(QString("state-%1.odc").arg(serial++));
+                const auto undo=v.undoStack_.size(),redo=v.redoStack_.size();const auto selected=v.context_->NbSelected();
+                check(NativeDocumentStorage::save(path,captured,error),qPrintable(error));check(NativeDocumentStorage::load(path,loaded,error),qPrintable(error));
+                check(v.undoStack_.size()==undo&&v.redoStack_.size()==redo&&v.context_->NbSelected()==selected,"Save changed history/selection");
+                compare(expected,loaded.parts[0].shape);
+                check(loaded.parts.size()==captured.parts.size(),"Native Part count changed");
+                for(size_t i=0;i<loaded.parts.size();++i) {
+                    const auto& a=captured.parts[i];const auto& b=loaded.parts[i];
+                    check(a.id==b.id&&a.name==b.name&&a.color==b.color&&a.visible==b.visible,"Native Part metadata changed");
+                    for(int r=1;r<=3;++r) for(int c=1;c<=4;++c) near(a.transform.Value(r,c),b.transform.Value(r,c),"Native Part placement changed");
+                    if(i>0) compare(a.shape,b.shape);
+                }
+                check(loaded.activePartId==active&&loaded.parts.back().id==hidden.id&&!loaded.parts.back().visible,"Native identity metadata changed");
+                if(reopen) {check(v.importDocumentSnapshot(loaded,error),qPrintable(error));check(v.undoStack_.empty()&&v.redoStack_.empty()&&!v.commandSession_&&v.context_->NbSelected()==0&&v.selectedPartIndices_.empty()&&!v.arrowVisible_,"Open retained history/selection/preview");identityCheck(false);v.fitSelection({0});}
+                return loaded;
+            };
+            std::vector<TopoDS_Shape> states{v.boxes_[0].shape};
+            double radius=featureRadius(v.boxes_[0].shape,TopAbs_REVERSED);
+            const auto move=[&](double delta,bool cancel) {
+                const auto before=v.boxes_[0].shape;const auto undo=v.undoStack_.size(),redo=v.redoStack_.size();select(v,0,radiusFace(before,radius));check(v.startMoveFace(0,radiusFace(before,radius)),"Reopened face cannot Move");
+                v.cylinderMoveDirection_->setCurrentIndex(1);input(v,QLocale().toString(delta*std::abs(v.boxes_[0].orientation.ScaleFactor()),'g',15));check(v.commandSession_->valid,qPrintable(v.commandSession_->geometryError));
+                stored(before,false);const auto preview=v.commandSession_->preview;
+                if(cancel) v.cancelCommandSession();else v.commandButtons_->button(QDialogButtonBox::Ok)->click();
+                check(!v.commandSession_&&v.context_->DisplayStatus(preview)==PrsMgr_DisplayStatus_None,"Move preview leaked");
+                if(cancel) check(v.boxes_[0].shape.IsSame(before)&&v.undoStack_.size()==undo&&v.redoStack_.size()==redo,"Cancelled Move changed geometry/history");
+            };
+            // Complete hole -> boundary notch; oblique rim stays within its support.
+            check(!radiusFace(v.boxes_[0].shape,radius).IsNull(),"Current hole radius absent from first Part");
+            const auto axis=BRepAdaptor_Surface(radiusFace(v.boxes_[0].shape,radius)).Cylinder().Location();
+            double left=1.e100;
+            for(TopExp_Explorer it(v.boxes_[0].shape,TopAbs_FACE);it.More();it.Next()) {const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface surface(face);if(surface.GetType()!=GeomAbs_Plane) continue;auto normal=surface.Plane().Axis().Direction();if(face.Orientation()==TopAbs_REVERSED) normal.Reverse();if(normal.X()<-.99) left=std::min(left,surface.Plane().Location().X());}
+            check(left<1.e99,"Exterior side missing");
+            move(rotated?3:left-axis.X(),false);states.push_back(v.boxes_[0].shape);
+            move(rotated?-2:2,false);states.push_back(v.boxes_[0].shape);
+            move(1,true);identityCheck(true);
+            for(size_t i=states.size()-1;i>0;--i) {v.undoPull();check(v.boxes_[0].shape.IsSame(states[i-1]),"Mixed Undo lost cached geometry");identityCheck(true);stored(states[i-1],false);}
+            for(size_t i=1;i<states.size();++i) {v.redoPull();check(v.boxes_[0].shape.IsSame(states[i]),"Mixed Redo lost cached geometry");identityCheck(true);}
+            stored(v.boxes_[0].shape,true);
+            // A fresh owner from reopened topology must activate radial Pull.
+            select(v,0,radiusFace(v.boxes_[0].shape,radius));std::unique_ptr<QMenu> menu(v.createSelectionMenu(QPoint()));auto* pull=menu->findChild<QAction*>("context.resize");check(pull&&pull->isEnabled(),"Reopened cylinder cannot resize");pull->trigger();
+            check(v.cylindricalFacePull_,"Reopened cylinder used primitive metadata");
+            check(v.beginArrowDrag(project(v,v.primitiveArrowOrigin_.Translated(gp_Vec(v.primitiveArrowDirection_)*15).Transformed(v.boxes_[0].orientation))),"Reopened Pull drag failed");
+            const auto beforePull=v.commandSession_->changes.front().faceChange->before.shape;
+            check(v.previewCommand(.5),"Reopened radial Pull preview failed");stored(beforePull,false);
+            // Invalid preview after a valid one must still save the confirmed model.
+            check(!v.previewCommand(-1000),"Invalid radius accepted");stored(beforePull,false);v.cancelCommandSession();check(v.boxes_[0].shape.IsSame(beforePull),"Failed/cancelled Pull changed geometry");
+            select(v,0,radiusFace(v.boxes_[0].shape,radius));menu.reset(v.createSelectionMenu(QPoint()));menu->findChild<QAction*>("context.resize")->trigger();
+            check(v.beginArrowDrag(project(v,v.primitiveArrowOrigin_.Translated(gp_Vec(v.primitiveArrowDirection_)*15).Transformed(v.boxes_[0].orientation))),"Pull restart failed");
+            input(v,QLocale().toString((radius+.5)*2*std::abs(v.boxes_[0].orientation.ScaleFactor()),'g',15));check(v.commandSession_->valid,"Diameter input failed");v.confirmCommandSession();radius+=.5;
+            const auto diameterResult=v.boxes_[0].shape;v.undoPull();check(v.boxes_[0].shape.IsSame(beforePull),"Diameter Undo lost source");v.redoPull();check(v.boxes_[0].shape.IsSame(diameterResult),"Diameter Redo lost result");
+            stored(v.boxes_[0].shape,true);const auto resized=v.boxes_[0].shape;
+            move(1,false);const auto moved=v.boxes_[0].shape;
+            const auto savedMove=stored(moved,false);
+            BRepReconstruction::Result deleteBefore,deleteReopened;QString beforeReason,reopenedReason;
+            const bool supportedBefore=DeleteFaceGeometry::remove(moved,{radiusFace(moved,radius)},deleteBefore,beforeReason);
+            const bool supportedReopened=DeleteFaceGeometry::remove(savedMove.parts[0].shape,{radiusFace(savedMove.parts[0].shape,radius)},deleteReopened,reopenedReason);
+            check(supportedBefore==supportedReopened,"Serialization changed Delete Face capability");
+            const auto deleteHistory=v.undoStack_.size(),deleteRedo=v.redoStack_.size();
+            select(v,0,radiusFace(moved,radius));v.deleteFace();
+            if(!supportedBefore) {
+                check(rotated&&!v.commandSession_&&v.boxes_[0].shape.IsSame(moved)&&v.undoStack_.size()==deleteHistory&&v.redoStack_.size()==deleteRedo,"Failed Delete changed model/history or boundary deletion regressed");
+                stored(moved,true);
+                std::cout<<"Existing Delete Face refusal before and after native storage: "<<beforeReason.toStdString()<<std::endl;
+            } else {
+                check(v.commandSession_&&v.commandSession_->valid,"Reopened boundary Delete Face failed");stored(moved,false);
+                v.confirmCommandSession();const auto deleted=v.boxes_[0].shape;stored(deleted,false);
+                v.undoPull();check(v.boxes_[0].shape.IsSame(moved),"Delete Undo lost source");v.undoPull();check(v.boxes_[0].shape.IsSame(resized),"Move Undo after Delete lost source");
+                v.redoPull();v.redoPull();check(v.boxes_[0].shape.IsSame(deleted),"Delete Redo lost result");stored(deleted,true);
+            }
+            if(!rotated) for(bool trim:{false,true}) {
+                check(v.importDocumentSnapshot(snapshot,error),qPrintable(error));v.fitSelection({0});
+                radius=featureRadius(v.boxes_[0].shape,TopAbs_FORWARD);
+                const auto originalBoss=v.boxes_[0].shape;
+                select(v,0,radiusFace(originalBoss,radius));check(v.startMoveFace(0,radiusFace(originalBoss,radius)),"Native boss activation failed");
+                v.cylinderMoveDirection_->setCurrentIndex(2);v.cylinderBossBoundary_->setCurrentIndex(trim?1:0);
+                const double y=BRepAdaptor_Surface(radiusFace(originalBoss,radius)).Cylinder().Location().Y();
+                input(v,QLocale().toString((directory.isEmpty()?7-y:-1)*std::abs(v.boxes_[0].orientation.ScaleFactor()),'g',15));check(v.commandSession_->valid,qPrintable(v.commandSession_->geometryError));
+                v.confirmCommandSession();stored(v.boxes_[0].shape,true);const auto boundary=v.boxes_[0].shape;
+                move(-1,false);const auto repeated=v.boxes_[0].shape;
+                // Select the current top planar cap from the actual Part topology.
+                TopoDS_Face cap;double highest=-1.e100;
+                for(TopExp_Explorer it(repeated,TopAbs_FACE);it.More();it.Next()) {const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface surface(face);if(surface.GetType()==GeomAbs_Plane&&surface.Plane().Axis().Direction().IsParallel(gp_Dir(0,0,1),1.e-8)&&surface.Plane().Location().Z()>highest) {highest=surface.Plane().Location().Z();cap=face;}}
+                check(!cap.IsNull(),"Boundary boss top cap missing");select(v,0,cap);v.startPrimitivePull();check(v.bossHeightPull_,"Reopened boss height not recognized");
+                check(v.beginArrowDrag(project(v,v.primitiveArrowOrigin_.Translated(gp_Vec(v.primitiveArrowDirection_)*15).Transformed(v.boxes_[0].orientation))),"Height Pull drag failed");
+                check(v.previewCommand(2),"Height Pull preview failed");stored(repeated,false);
+                // Preserve the preview's physical delta through the normal dimension UI.
+                input(v,QLocale().toString((v.primitivePullBefore_.beforeHeight+2)*std::abs(v.boxes_[0].orientation.ScaleFactor()),'g',15));
+                check(v.commandSession_->valid,"Height input failed");v.confirmCommandSession();const auto raised=v.boxes_[0].shape;stored(raised,false);
+                v.undoPull();check(v.boxes_[0].shape.IsSame(repeated),"Height Undo lost source");v.undoPull();check(v.boxes_[0].shape.IsSame(boundary),"Repeated boss Undo lost source");
+                v.redoPull();v.redoPull();check(v.boxes_[0].shape.IsSame(raised),"Height/boss Redo lost result");stored(raised,true);
+            }
+            if(!directory.isEmpty()) {QFile file(sourcePath);check(file.open(QIODevice::ReadOnly)&&file.readAll()==original,"Source ODC changed");}
+            std::cout<<"Phase 9E persistence/history passed: "<<name.toStdString()<<std::endl;
+        }
+    }
     static void rotatedHole(const QString& suppliedPath) {
         NativeDocumentSnapshot snapshot;QString error;QTemporaryDir temporary;QString path=suppliedPath;
         if(path.isEmpty()) {
@@ -864,3 +1018,5 @@ void runCrashPlanarTest(const QString& path,const QString& displacement) {Cylind
 void runOpenNotchSessionTest(const QString& path) {CylindricalMoveFaceSessionTest::openNotchSession(path);}
 
 void runRotatedHoleTest(const QString& path) {CylindricalMoveFaceSessionTest::rotatedHole(path);}
+
+void runFacePersistenceHistoryTest(const QString& directory) {CylindricalMoveFaceSessionTest::persistenceHistory(directory);}
