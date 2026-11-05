@@ -46,8 +46,8 @@ Result moveThroughHole(const TopoDS_Shape& source, const TopoDS_Face& mantle,
 // overhang. No invented bridges or support pedestals. Policy is always explicit.
 Result moveBoss(const TopoDS_Shape& source, const TopoDS_Face& mantle,
                 const gp_Vec& displacement, BossBoundaryMode policy);
-// Whole-feature deletion from one current notch/boundary-boss wall. Reuses the
-// same material certificates as movement; includes connected split mantles and
+// Whole-feature deletion from one current planar-rim hole, notch or boundary-boss wall. Reuses the
+// same material certificates as movement, including oblique/elliptical rims; includes connected split mantles and
 // boss cap/underside regions. Returns immutable source-to-result correspondence.
 bool removeBoundaryFeature(const TopoDS_Shape& source,const TopoDS_Face& mantle,
                            BRepReconstruction::Result& result,QString& error);

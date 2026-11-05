@@ -1,6 +1,10 @@
 # v0.4.9 final integration review (Phase 9F)
 
 Review baseline: `74b70eb` on `feature/v0.4.9-move-cylindrical-face`.
+**Post-review update:** [Phase 9F.1](SLOPED_OPENING_DELETE_FACE.md) resolves the
+certified sloped-opening Delete Face gap described below. This document retains
+the results and limitations at `b4bcfb2`; the cross-screen HiDPI limitation remains.
+
 This review prepares the existing scope for publication; it does not add geometry
 capabilities or change the roadmap.
 
@@ -42,7 +46,7 @@ selection. Open clears history, selection and tools and reconstructs presentatio
 
 ## Unresolved geometry capabilities
 
-- **Delete Face on the sloped cylindrical opening in `hole2.odc` is unresolved.**
+- **At this review baseline, Delete Face on the sloped cylindrical opening in `hole2.odc` was unresolved.**
   It is unsupported both before and after serialization. Phase 9E checks the same
   refusal on both B-Reps and verifies failure leaves model/history unchanged.
   Move Face and radial Pull on supported rotated planar rims do work. A passing
@@ -117,7 +121,7 @@ production command-panel algorithms.
 
 The Linux Release build and all tested cases are validated for the documented
 prototype scope. No new production geometry, history or persistence fix was
-required. The unresolved sloped-opening Delete Face capability remains explicit.
+required. The sloped-opening gap recorded here was subsequently resolved for certified planar rims in Phase 9F.1.
 
 **Cross-screen HiDPI panel placement remains a platform limitation on this
 Qt 6.11.2/xcb desktop.** Fixing the fixture does not fix or certify production

@@ -67,7 +67,9 @@ Validation on 2026-11-05:
 
 No production history, identity or serialization gap was found. The gap closed by
 this change is combined regression coverage across editing and native storage.
-For the edited `hole2.odc` shape, Delete Face rejects the sloped cylindrical
-boundary both before and after serialization. The test verifies that this refusal
-preserves geometry and history and that saving still captures confirmed material.
-This existing geometry limitation is not broadened or repaired by Phase 9E.
+At the Phase 9E baseline, Delete Face on the edited `hole2.odc` shape rejected the
+sloped cylindrical boundary both before and after serialization. That test verified
+that refusal preserved geometry/history and Save captured confirmed material.
+Phase 9E did not repair that geometry limitation. [Phase 9F.1](SLOPED_OPENING_DELETE_FACE.md)
+now reuses the actual planar-rim fill for deletion; the history regression requires
+this case to succeed before and after serialization instead of allowing refusal.

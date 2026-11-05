@@ -248,9 +248,14 @@ screen proof.
 
 ## v0.4.9 integration status
 
-Delete Face on the sloped cylindrical opening in `hole2.odc` remains an unresolved
-geometry capability. It is rejected before and after native serialization; the
-passing Phase 9E persistence checks verify safe refusal, not completed deletion.
-See [Phase 9E](FACE_HISTORY_PERSISTENCE.md) for current private-file persistence
-results (including the current `moveCylinder.odc`) and the
-[final integration review](V049_INTEGRATION_REVIEW.md) for release validation.
+Phase 9F.1 adds Delete Face for the current sloped cylindrical opening in
+`hole2.odc`, including its elliptical rims, by consuming the shared certified
+planar-rim fill before re-cutting. It preserves unrelated geometry, preview,
+Cancel, cached history and Part identity across native Save/Open. See
+[sloped-opening deletion](SLOPED_OPENING_DELETE_FACE.md) for the exact reproduction,
+independent oracles and limits. The old safe refusal was a geometry capability gap,
+not a persistence failure; it is now required to succeed in the history regression.
+
+Nonplanar/uncertified interacting rims, unproved closures and outward sloped boss
+trims remain outside this extension. See [Phase 9E](FACE_HISTORY_PERSISTENCE.md) and
+the historical [Phase 9F review](V049_INTEGRATION_REVIEW.md) for earlier validation.

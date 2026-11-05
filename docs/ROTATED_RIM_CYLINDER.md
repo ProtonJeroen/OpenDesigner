@@ -90,3 +90,12 @@ The directly affected `--radius` and `--notch` geometry regressions also passed,
 including independent trim material checks for the newly certified notch resize
 and corner return move. No full CTest suite or unrelated passing suite was run.
 The original `hole2.odc` hash is unchanged and the file remains untracked.
+
+
+## Phase 9F.1: Delete Face follow-up
+
+[Sloped-opening Delete Face](SLOPED_OPENING_DELETE_FACE.md) now consumes this same
+planar-rim fill through the existing cylindrical-removal validator. The current
+private document's R24 opening and unrelated side boss are tested independently,
+including Save/Open, Cancel, cached history and Part identity. Curved/interacting
+or otherwise unproved closures remain diagnostic refusals.

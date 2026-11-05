@@ -194,18 +194,12 @@ struct CylindricalMoveFaceSessionTest {
             const bool supportedBefore=DeleteFaceGeometry::remove(moved,{radiusFace(moved,radius)},deleteBefore,beforeReason);
             const bool supportedReopened=DeleteFaceGeometry::remove(savedMove.parts[0].shape,{radiusFace(savedMove.parts[0].shape,radius)},deleteReopened,reopenedReason);
             check(supportedBefore==supportedReopened,"Serialization changed Delete Face capability");
-            const auto deleteHistory=v.undoStack_.size(),deleteRedo=v.redoStack_.size();
+            check(supportedBefore,qPrintable(beforeReason));
             select(v,0,radiusFace(moved,radius));v.deleteFace();
-            if(!supportedBefore) {
-                check(rotated&&!v.commandSession_&&v.boxes_[0].shape.IsSame(moved)&&v.undoStack_.size()==deleteHistory&&v.redoStack_.size()==deleteRedo,"Failed Delete changed model/history or boundary deletion regressed");
-                stored(moved,true);
-                std::cout<<"Existing Delete Face refusal before and after native storage: "<<beforeReason.toStdString()<<std::endl;
-            } else {
-                check(v.commandSession_&&v.commandSession_->valid,"Reopened boundary Delete Face failed");stored(moved,false);
-                v.confirmCommandSession();const auto deleted=v.boxes_[0].shape;stored(deleted,false);
-                v.undoPull();check(v.boxes_[0].shape.IsSame(moved),"Delete Undo lost source");v.undoPull();check(v.boxes_[0].shape.IsSame(resized),"Move Undo after Delete lost source");
-                v.redoPull();v.redoPull();check(v.boxes_[0].shape.IsSame(deleted),"Delete Redo lost result");stored(deleted,true);
-            }
+            check(v.commandSession_&&v.commandSession_->valid,"Reopened boundary Delete Face failed");stored(moved,false);
+            v.confirmCommandSession();const auto deleted=v.boxes_[0].shape;stored(deleted,false);
+            v.undoPull();check(v.boxes_[0].shape.IsSame(moved),"Delete Undo lost source");v.undoPull();check(v.boxes_[0].shape.IsSame(resized),"Move Undo after Delete lost source");
+            v.redoPull();v.redoPull();check(v.boxes_[0].shape.IsSame(deleted),"Delete Redo lost result");stored(deleted,true);
             if(!rotated) for(bool trim:{false,true}) {
                 check(v.importDocumentSnapshot(snapshot,error),qPrintable(error));v.fitSelection({0});
                 radius=featureRadius(v.boxes_[0].shape,TopAbs_FORWARD);

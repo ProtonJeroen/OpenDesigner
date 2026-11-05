@@ -835,11 +835,16 @@ Result moveLocalHole(const TopoDS_Shape& source,const TopoDS_Face& selected,
       catch(const std::exception&) {return refused;}
 }
 
+Result finishCylindricalRemoval(const BRepReconstruction::Neighborhood& local,
+                               const TopoDS_Shape& healed,const TopoDS_Shape& region,
+                               BRepReconstruction::Result& removal);
+
 // Planar rim supports can intersect a cylinder in circles, ellipses or trimmed
 // curves. Infer the missing material from those actual planes, not edge types
 // or a stock pattern. The same certificate serves lateral Move and radial Pull.
 Result reconstructPlanarRimHole(const TopoDS_Shape& source,const TopoDS_Face& selected,
-                               const gp_Vec& delta,double newRadius,const Result& refused) {
+                               const gp_Vec& delta,double newRadius,const Result& refused,
+                               BRepReconstruction::Result* removal=nullptr) {
     if(refused.status!=Status::Unsupported) return refused;
     const auto unsupported=[](const char* message){return refuse(Status::Unsupported,Code::UnsupportedFeature,message);};
     try {
@@ -918,6 +923,9 @@ Result reconstructPlanarRimHole(const TopoDS_Shape& source,const TopoDS_Face& se
             }return true;
         };
         if(!exteriorEnds(missing)) return unsupported("The current cylindrical void does not terminate on exterior rim surfaces; blind/interacting material is preserved.");
+        // Delete consumes the same independently certified fill as Move/Pull,
+        // before a destination cutter is constructed. No new closure is inferred.
+        if(removal) return finishCylindricalRemoval(local,healed,missing,*removal);
         double low=0,high=0;const auto destination=tool(cylinder.Location().Translated(delta),newRadius,low,high);
         if(!BRepReconstruction::validSolid(destination,mass)) return unsupported("Requested cylinder and rim planes have no reliable finite intersection.");
         const auto removed=BooleanGeometry::combine<BRepAlgoAPI_Common>(healed,destination);
@@ -1471,7 +1479,12 @@ bool CylindricalMoveGeometry::removeBoundaryFeature(const TopoDS_Shape& source,c
     if(notch) return true;
     const auto boss=moveBoundaryBoss(source,mantle,gp_Vec(),BossBoundaryMode::Extend,refused,&result);
     if(boss) return true;
-    result={};error=QStringLiteral("Cylindrical Delete Face: %1 %2").arg(QString::fromStdString(notch.message),QString::fromStdString(boss.message));return false;
+    auto rim=refused;
+    if(!mantle.IsNull()&&BRepAdaptor_Surface(mantle).GetType()==GeomAbs_Cylinder)
+        rim=reconstructPlanarRimHole(source,mantle,gp_Vec(),BRepAdaptor_Surface(mantle).Cylinder().Radius(),refused,&result);
+    if(rim) return true;
+    result={};error=QStringLiteral("Cylindrical Delete Face: %1 %2 %3")
+        .arg(QString::fromStdString(notch.message),QString::fromStdString(boss.message),QString::fromStdString(rim.message));return false;
 }
 
 static CylindricalMoveGeometry::Result resizeRadiusCertified(

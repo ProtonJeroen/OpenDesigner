@@ -13,12 +13,12 @@ identity and history checks are recorded in [Phase 9E](docs/FACE_HISTORY_PERSIST
 Final build/test results and release limitations are recorded in the
 [v0.4.9 integration review](docs/V049_INTEGRATION_REVIEW.md).
 
-**Unresolved geometry capability:** Delete Face on the sloped cylindrical opening
-in `hole2.odc` remains unsupported before and after serialization. This is not a
-persistence failure or completed Delete Face functionality. See the
-[rotated-rim scope](docs/ROTATED_RIM_CYLINDER.md#reconstruction-limits) and
+Delete Face now supports the certified sloped cylindrical opening in `hole2.odc`,
+including elliptical planar rims, native Save/Open and cached history. See
+[sloped-opening deletion](docs/SLOPED_OPENING_DELETE_FACE.md) for verification and
+remaining reconstruction limits, and
 [Pull/Resize limits](docs/PULL_RESIZE_GAPS.md#unsupported-versus-ambiguous-versus-invalid).
-Cross-screen HiDPI panel placement also remains a platform limitation on the
+Cross-screen HiDPI panel placement remains a platform limitation on the
 reviewed Qt/xcb desktop; see the integration review for the tested scope.
 
 Both commands support New Solid, Add Material and Remove Material with shared
