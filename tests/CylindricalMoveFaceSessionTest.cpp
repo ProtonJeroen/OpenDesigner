@@ -226,6 +226,85 @@ struct CylindricalMoveFaceSessionTest {
             std::cout<<"Phase 9E persistence/history passed: "<<name.toStdString()<<std::endl;
         }
     }
+    static void slopedPlane(const QString& path) {
+        QTemporaryDir temporary;check(temporary.isValid(),"cannot create planar-opening test directory");NativeDocumentSnapshot snapshot;QString error;QByteArray original;
+        if(!path.isEmpty()) {QFile file(path);check(file.open(QIODevice::ReadOnly),"cannot read planar-opening native document");original=file.readAll();check(NativeDocumentStorage::load(path,snapshot,error),qPrintable(error));}
+        else {
+            TopoDS_Shape body=BRepPrimAPI_MakeBox(163,80,200).Shape();const double angle=std::numbers::pi/12;
+            for(const auto& plane:{gp_Pln(gp_Pnt(56.4275,36,125.439),gp_Dir(std::sin(angle),0,std::cos(angle))),gp_Pln(gp_Pnt(155.654,0,-6.49658),gp_Dir(std::cos(angle),0,std::sin(angle)))})
+                body=BooleanGeometry::combine<BRepAlgoAPI_Common>(body,BRepPrimAPI_MakeHalfSpace(BRepBuilderAPI_MakeFace(plane).Face(),plane.Location().Translated(gp_Vec(plane.Axis().Direction())*-100)).Solid());
+            body=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(body,BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(30,0,60),gp_Dir(0,-1,0)),8,15).Shape());
+            NativePartState p;p.id="sloped-planar-face";p.name="Planar face with opening";p.shape=BooleanGeometry::combine<BRepAlgoAPI_Cut>(body,BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(84,36,-60),gp_Dir(0,0,1)),21,300).Shape());snapshot.parts={p};
+        }
+        check(!snapshot.parts.empty(),"empty planar-rim native document");const auto source=snapshot.parts[0].shape;TopoDS_Face originalPlane;double best=-2;
+        for(TopExp_Explorer it(source,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(face);if(s.GetType()!=GeomAbs_Plane) continue;
+            bool ellipse=false;for(TopExp_Explorer e(face,TopAbs_EDGE);e.More();e.Next()) ellipse|=BRepAdaptor_Curve(TopoDS::Edge(e.Current())).GetType()==GeomAbs_Ellipse;
+            auto n=s.Plane().Axis().Direction();if(face.Orientation()==TopAbs_REVERSED) n.Reverse();if(ellipse&&n.Z()>best) {best=n.Z();originalPlane=face;}
+        }
+        check(!originalPlane.IsNull(),"no sloped planar face with an elliptical boundary");gp_Pnt p;gp_Dir normal;
+        check(MoveFaceGeometry::reference(source,originalPlane,p,normal,error),qPrintable(error));const auto originalSupport=BRepAdaptor_Surface(originalPlane).Plane();
+        struct Hole {gp_Cylinder cylinder;};struct Boss {gp_Cylinder cylinder;double low,high;TopoDS_Shape solid;};
+        std::vector<Hole> holes;std::vector<Boss> bosses;
+        for(TopExp_Explorer it(source,TopAbs_FACE);it.More();it.Next()) {const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);if(s.GetType()!=GeomAbs_Cylinder) continue;
+            const auto c=s.Cylinder();if(f.Orientation()==TopAbs_REVERSED) holes.push_back({c});else bosses.push_back({c,s.FirstVParameter(),s.LastVParameter(),BRepPrimAPI_MakeCylinder(gp_Ax2(c.Location().Translated(gp_Vec(c.Axis().Direction())*s.FirstVParameter()),c.Axis().Direction()),c.Radius(),s.LastVParameter()-s.FirstVParameter()).Shape()});}
+        check(!holes.empty(),"native planar face has no inward cylindrical opening");
+        struct Support {gp_Pln plane;bool moved;};std::vector<Support> planes;
+        for(TopExp_Explorer it(source,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(face);if(s.GetType()!=GeomAbs_Plane) continue;GProp_GProps area;BRepGProp::SurfaceProperties(face,area);
+            if(std::any_of(bosses.begin(),bosses.end(),[&](const auto& b){return s.Plane().Axis().Direction().IsParallel(b.cylinder.Axis().Direction(),1.e-8)&&gp_Lin(b.cylinder.Axis()).Distance(area.CentreOfMass())<1.e-6&&std::abs(area.Mass()-std::numbers::pi*std::pow(b.cylinder.Radius(),2))<1.e-7*area.Mass();})) continue;
+            auto n=s.Plane().Axis().Direction();if(face.Orientation()==TopAbs_REVERSED) n.Reverse();planes.push_back({gp_Pln(s.Plane().Location(),n),BRepReconstruction::sameAnalyticSupport(face,originalPlane)});
+        }
+        const auto tool=[](const gp_Cylinder& c){return BRepPrimAPI_MakeCylinder(gp_Ax2(c.Location().Translated(gp_Vec(c.Axis().Direction())*-1000),c.Axis().Direction()),c.Radius(),2000).Shape();};
+        // Whole-model oracle: all physical outer planes, fixed boss volumes and
+        // long fixed-axis cutters. It never uses production healing or sweeps.
+        const auto oracle=[&](double offset,const std::vector<Hole>& cavities) {
+            TopoDS_Shape body=BRepPrimAPI_MakeBox(gp_Pnt(-10000,-10000,-10000),20000,20000,20000).Shape();std::vector<gp_Pln> supports;
+            for(const auto& support:planes) {auto plane=support.plane;if(support.moved) plane.Translate(gp_Vec(normal)*offset);supports.push_back(plane);body=BooleanGeometry::combine<BRepAlgoAPI_Common>(body,BRepPrimAPI_MakeHalfSpace(BRepBuilderAPI_MakeFace(plane).Face(),plane.Location().Translated(gp_Vec(plane.Axis().Direction())*-100)).Solid());}
+            for(TopExp_Explorer it(body,TopAbs_FACE);it.More();it.Next()) {const BRepAdaptor_Surface s(TopoDS::Face(it.Current()));check(s.GetType()==GeomAbs_Plane&&std::any_of(supports.begin(),supports.end(),[&](const auto& plane){return plane.Axis().Direction().IsParallel(s.Plane().Axis().Direction(),1.e-8)&&plane.Distance(s.Plane().Location())<1.e-6;}),"planar oracle retained a computational seed support");}
+            for(const auto& boss:bosses) body=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(body,boss.solid);
+            for(const auto& hole:cavities) body=BooleanGeometry::combine<BRepAlgoAPI_Cut>(body,tool(hole.cylinder));return body;
+        };
+        check(BRepReconstruction::equivalent(source,oracle(0,holes)),"native document differs from independent physical-support oracle");
+        const auto planeAt=[&](const TopoDS_Shape& shape,double offset,const gp_Trsf& trsf=gp_Trsf()) {
+            auto expected=originalSupport;expected.Translate(gp_Vec(normal)*offset);expected.Transform(trsf);
+            for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);if(s.GetType()==GeomAbs_Plane&&s.Plane().Axis().Direction().IsParallel(expected.Axis().Direction(),1.e-8)&&expected.Distance(s.Plane().Location())<1.e-6) return f;}
+            throw std::runtime_error("moved planar support disappeared");
+        };
+        const auto verify=[&](const TopoDS_Shape& shape,double offset,const std::vector<Hole>& cavities,const gp_Trsf& trsf=gp_Trsf()) {
+            const auto expectedLocal=oracle(offset,cavities);const auto expected=BRepBuilderAPI_Transform(expectedLocal,trsf,true).Shape();double mass=0;
+            check(BRepReconstruction::validSolid(shape,mass),"planar move did not produce one valid closed solid");near(mass,volume(expected),"planar move volume differs from independent oracle");check(BRepReconstruction::equivalent(shape,expected),"planar move changed independent material");
+            const auto face=planeAt(shape,offset,trsf);bool ellipse=false;
+            for(TopExp_Explorer e(face,TopAbs_EDGE);e.More();e.Next()) {const BRepAdaptor_Curve curve(TopoDS::Edge(e.Current()));if(curve.GetType()!=GeomAbs_Ellipse) continue;ellipse=true;const auto point=curve.Value((curve.FirstParameter()+curve.LastParameter())/2).Transformed(trsf.Inverted());auto plane=originalSupport;plane.Translate(gp_Vec(normal)*offset);near(plane.Distance(point),0,"elliptical edge left the moved plane");check(std::any_of(cavities.begin(),cavities.end(),[&](const auto& hole){return std::abs(gp_Lin(hole.cylinder.Axis()).Distance(point)-hole.cylinder.Radius())<1.e-6;}),"elliptical edge left its stationary cylinder");}
+            check(ellipse,"moved face lost its recalculated elliptical opening");
+            std::vector<gp_Cylinder> supports;for(const auto& h:cavities) supports.push_back(h.cylinder);for(const auto& b:bosses) supports.push_back(b.cylinder);
+            for(const auto& c:supports) {auto wanted=c;wanted.Transform(trsf);bool found=false;for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {const BRepAdaptor_Surface s(TopoDS::Face(it.Current()));if(s.GetType()!=GeomAbs_Cylinder) continue;const auto actual=s.Cylinder();const bool same=std::abs(actual.Radius()-wanted.Radius())<1.e-7&&actual.Axis().IsCoaxial(wanted.Axis(),1.e-8,1.e-6);found|=same;check(std::any_of(supports.begin(),supports.end(),[&](auto old){old.Transform(trsf);return std::abs(actual.Radius()-old.Radius())<1.e-7&&actual.Axis().IsCoaxial(old.Axis(),1.e-8,1.e-6);}),"planar edit changed a cylinder radius/axis");}check(found,"planar edit lost a stationary cylindrical feature");}
+            TopTools_IndexedMapOfShape edges;TopExp::MapShapes(shape,TopAbs_EDGE,edges);for(int i=1;i<=edges.Extent();++i) {int uses=0;for(TopExp_Explorer f(shape,TopAbs_FACE);f.More();f.Next()) for(TopExp_Explorer e(f.Current(),TopAbs_EDGE);e.More();e.Next()) if(e.Current().IsSame(edges(i))) ++uses;check(uses==2,"planar move has nonmanifold edge uses");}
+            Bnd_Box bounds;BRepBndLib::AddOptimal(expectedLocal,bounds,false,false);double x,y,z,X,Y,Z;bounds.Get(x,y,z,X,Y,Z);BRepClass3d_SolidClassifier classifier(shape);
+            for(int i=-1;i<=8;++i) for(int j=-1;j<=8;++j) for(int k=-1;k<=8;++k) {const gp_Pnt point(x+(X-x)*(i+.37)/8,y+(Y-y)*(j+.41)/8,z+(Z-z)*(k+.29)/8);const bool stock=std::all_of(planes.begin(),planes.end(),[&](const auto& s){auto plane=s.plane;if(s.moved) plane.Translate(gp_Vec(normal)*offset);return gp_Vec(plane.Location(),point).Dot(gp_Vec(plane.Axis().Direction()))<0;});const bool boss=std::any_of(bosses.begin(),bosses.end(),[&](const auto& b){const auto v=gp_Vec(b.cylinder.Location(),point);const double t=v.Dot(gp_Vec(b.cylinder.Axis().Direction()));return t>b.low&&t<b.high&&gp_Lin(b.cylinder.Axis()).Distance(point)<b.cylinder.Radius();});const bool hole=std::any_of(cavities.begin(),cavities.end(),[&](const auto& h){return gp_Lin(h.cylinder.Axis()).Distance(point)<h.cylinder.Radius();});classifier.Perform(point.Transformed(trsf),1.e-7);check(classifier.State()==((stock||boss)&&!hole?TopAbs_IN:TopAbs_OUT),"planar move failed analytic halfspace/cylinder occupancy");}
+        };
+        for(int variant=0;variant<2;++variant) {
+            auto cavities=holes;auto current=source;gp_Trsf trsf;
+            if(variant) {gp_Cylinder extra(gp_Ax3(gp_Pnt(100,62,0),gp_Dir(0,0,1)),4);cavities.push_back({extra});current=BooleanGeometry::combine<BRepAlgoAPI_Cut>(current,tool(extra));trsf.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.43);trsf.SetTranslationPart(gp_Vec(170,-55,32));current=BRepBuilderAPI_Transform(current,trsf,true).Shape();}
+            double offset=0;for(double delta:{5.,-3.,2.,-4.}) {const auto before=serialized(current);const auto moved=MoveFaceGeometry::move(current,planeAt(current,offset,trsf),delta,error);check(!moved.IsNull(),qPrintable(error));offset+=delta;verify(moved,offset,cavities,trsf);check(serialized(current)==before,"planar reconstruction mutated its input");current=moved;}
+        }
+        snapshot.parts[0].color=QColor(23,85,172);snapshot.parts[0].geometryKind=1;snapshot.parts[0].cylinderPrimitive=true;snapshot.parts[0].cylinderRadius=999;
+        snapshot.parts[0].transform.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.31);snapshot.parts[0].transform.SetTranslationPart(gp_Vec(45,-20,15));
+        NativePartState witness;witness.id="plane-hidden-witness";witness.name="Hidden witness";witness.shape=BRepPrimAPI_MakeBox(5,6,7).Shape();witness.visible=false;snapshot.parts.push_back(witness);snapshot.activePartId=witness.id;
+        MainWindow window;window.show();events();auto& v=*window.findChild<CadViewport*>();check(v.importDocumentSnapshot(snapshot,error),qPrintable(error));v.fitSelection({0});
+        auto* tree=window.findChild<QTreeWidget*>();auto* row=tree->topLevelItem(0)->child(0);const auto before=v.boxes_[0];const auto active=v.activePartId();double offset=0;
+        const auto identity=[&](bool same) {const auto& part=v.boxes_[0];check(part.persistentId==before.persistentId&&part.name==before.name&&part.color==before.color&&part.visible==before.visible&&v.activePartId()==active,"planar edit lost Part identity/appearance/Active Part");for(int r=1;r<=3;++r) for(int c=1;c<=4;++c) near(part.orientation.Value(r,c),before.orientation.Value(r,c),"planar edit changed placement");check(!v.boxes_.back().visible&&!v.context_->IsDisplayed(v.boxes_.back().presentation),"planar edit displayed hidden witness");if(same) check(part.presentation==before.presentation&&tree->topLevelItem(0)->child(0)==row,"planar edit replaced Part/browser presentation");};
+        const auto save=[&](bool reopen) {NativeDocumentSnapshot captured,restored;check(v.exportDocumentSnapshot(captured),"planar snapshot capture failed");const auto file=temporary.filePath("plane.odc");const auto undo=v.undoStack_.size(),redo=v.redoStack_.size();check(NativeDocumentStorage::save(file,captured,error)&&NativeDocumentStorage::load(file,restored,error),qPrintable(error));verify(restored.parts[0].shape,offset,holes);check(v.undoStack_.size()==undo&&v.redoStack_.size()==redo,"planar Save changed history");if(reopen) {check(v.importDocumentSnapshot(restored,error),qPrintable(error));check(v.undoStack_.empty()&&v.redoStack_.empty()&&!v.commandSession_&&v.context_->NbSelected()==0&&!v.arrowVisible_,"planar Open retained history/preview/selection");identity(false);v.fitSelection({0});}};
+        const auto start=[&](double delta) {const auto face=planeAt(v.boxes_[0].shape,offset);select(v,0,face);check(v.startMoveFace(0,face),"current planar face cannot start Move Face");check(v.commandSession_->moveFeature==CadViewport::MoveFaceFeature::Planar,"planar face classified as a cylinder command");input(v,QLocale().toString(delta*std::abs(before.orientation.ScaleFactor()),'g',15));check(v.commandSession_->valid,qPrintable(v.commandSession_->geometryError));verify(v.commandSession_->candidate,offset+delta,holes);};
+        start(5);const auto shown=v.commandSession_->preview;check(!shown.IsNull()&&v.boxes_[0].shape.IsSame(before.shape),"planar preview changed confirmed geometry");TColStd_ListOfInteger modes;v.context_->ActivatedModes(shown,modes);check(modes.IsEmpty(),"planar preview is selectable");save(false);v.cancelCommandSession();check(!v.commandSession_&&v.boxes_[0].shape.IsSame(before.shape)&&v.undoStack_.empty()&&v.context_->DisplayStatus(shown)==PrsMgr_DisplayStatus_None,"planar Cancel changed model/history or leaked preview");identity(true);
+        std::vector<TopoDS_Shape> states{before.shape};std::vector<double> offsets{0};
+        for(double delta:{5.,-2.,1.}) {start(delta);const auto candidate=v.commandSession_->candidate;const auto preview=v.commandSession_->preview;v.confirmCommandSession();offset+=delta;check(!v.commandSession_&&BRepReconstruction::equivalent(v.boxes_[0].shape,candidate)&&v.context_->DisplayStatus(preview)==PrsMgr_DisplayStatus_None,"numeric planar confirmation differs from preview or leaked it");verify(v.boxes_[0].shape,offset,holes);states.push_back(v.boxes_[0].shape);offsets.push_back(offset);identity(true);currentOwners(v,0);}
+        for(size_t i=states.size()-1;i>0;--i) {v.undoPull();offset=offsets[i-1];check(v.boxes_[0].shape.IsSame(states[i-1]),"planar Undo lost cached state");identity(true);}
+        for(size_t i=1;i<states.size();++i) {v.redoPull();offset=offsets[i];check(v.boxes_[0].shape.IsSame(states[i]),"planar Redo rebuilt geometry");identity(true);}
+        save(true);start(-1);v.confirmCommandSession();offset-=1;verify(v.boxes_[0].shape,offset,holes);identity(false);save(true);
+        if(!path.isEmpty()) {QFile file(path);check(file.open(QIODevice::ReadOnly)&&file.readAll()==original,"planar Move modified the private native document");}
+        std::cout<<"Sloped planar Move Face with stationary cylindrical openings: geometry, repeated signs, numeric sessions, history and persistence passed\n";
+    }
     static void rotatedHole(const QString& suppliedPath) {
         NativeDocumentSnapshot snapshot;QString error;QTemporaryDir temporary;QString path=suppliedPath;
         if(path.isEmpty()) {
@@ -1018,3 +1097,5 @@ void runOpenNotchSessionTest(const QString& path) {CylindricalMoveFaceSessionTes
 void runRotatedHoleTest(const QString& path) {CylindricalMoveFaceSessionTest::rotatedHole(path);}
 
 void runFacePersistenceHistoryTest(const QString& directory) {CylindricalMoveFaceSessionTest::persistenceHistory(directory);}
+
+void runSlopedPlaneTest(const QString& path) {CylindricalMoveFaceSessionTest::slopedPlane(path);}

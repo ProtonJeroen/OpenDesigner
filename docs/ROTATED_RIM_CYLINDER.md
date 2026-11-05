@@ -99,3 +99,12 @@ planar-rim fill through the existing cylindrical-removal validator. The current
 private document's R24 opening and unrelated side boss are tested independently,
 including Save/Open, Cancel, cached history and Part identity. Curved/interacting
 or otherwise unproved closures remain diagnostic refusals.
+
+
+## Phase 9F.1B: moving the planar rim support
+
+[Planar opening Move Face](SLOPED_PLANAR_OPENING_MOVE.md) now moves the selected
+planar support while keeping cylindrical holes stationary. It updates the actual
+rim plane and recomputes elliptical intersections using the same current-material
+certificate. This is a planar normal-offset command, distinct from moving or
+resizing the cylindrical wall.

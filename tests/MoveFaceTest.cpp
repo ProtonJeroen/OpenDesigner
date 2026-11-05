@@ -102,6 +102,8 @@ struct MoveFaceTest {
         const auto open=cap(shapes[0],true);
         require(MoveFaceGeometry::move(open,open,10,error).IsNull(),"open face accepted as solid");
         const auto halfSphere=BRepAlgoAPI_Cut(sphere,BRepPrimAPI_MakeBox(gp_Pnt(-40,-40,-40),80,80,40).Shape()).Shape();
+        gp_Pnt planarCenter;gp_Dir planarNormal;
+        require(MoveFaceGeometry::reference(halfSphere,cap(halfSphere,false),planarCenter,planarNormal,error),"planar recognition depended on a neighboring surface type");
         require(MoveFaceGeometry::move(halfSphere,cap(halfSphere,false),5,error).IsNull(),"planar face with spherical neighbour accepted");
         // OCCT may handle a planar through-hole cap natively; if it cannot, the
         // operation must refuse without mutating the source.
@@ -434,6 +436,7 @@ void runCylindricalMoveBoundaryTest(const QString& path);
 void runCrashPlanarTest(const QString& path,const QString& displacement);
 void runOpenNotchSessionTest(const QString& path);
 void runRotatedHoleTest(const QString& path);
+void runSlopedPlaneTest(const QString& path);
 void runFacePersistenceHistoryTest(const QString& directory);
 int main(int argc,char** argv) {
 #if defined(Q_OS_LINUX)
@@ -448,7 +451,9 @@ int main(int argc,char** argv) {
         const int notch=app.arguments().indexOf("--open-notch");
         const int rotated=app.arguments().indexOf("--rotated-hole");
         const int persistence=app.arguments().indexOf("--history-persistence");
-        if(persistence>=0) runFacePersistenceHistoryTest(app.arguments().value(persistence+1));
+        const int plane=app.arguments().indexOf("--sloped-plane");
+        if(plane>=0) runSlopedPlaneTest(app.arguments().value(plane+1));
+        else if(persistence>=0) runFacePersistenceHistoryTest(app.arguments().value(persistence+1));
         else if(rotated>=0) runRotatedHoleTest(app.arguments().value(rotated+1));
         else if(notch>=0) runOpenNotchSessionTest(app.arguments().value(notch+1));
         else if(crash>=0) runCrashPlanarTest(app.arguments().value(crash+1),app.arguments().value(crash+2,"regression"));

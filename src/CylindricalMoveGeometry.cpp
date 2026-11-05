@@ -844,7 +844,8 @@ Result finishCylindricalRemoval(const BRepReconstruction::Neighborhood& local,
 // or a stock pattern. The same certificate serves lateral Move and radial Pull.
 Result reconstructPlanarRimHole(const TopoDS_Shape& source,const TopoDS_Face& selected,
                                const gp_Vec& delta,double newRadius,const Result& refused,
-                               BRepReconstruction::Result* removal=nullptr) {
+                               BRepReconstruction::Result* removal=nullptr,
+                               const TopoDS_Face& movingPlane={},double planeOffset=0) {
     if(refused.status!=Status::Unsupported) return refused;
     const auto unsupported=[](const char* message){return refuse(Status::Unsupported,Code::UnsupportedFeature,message);};
     try {
@@ -926,37 +927,110 @@ Result reconstructPlanarRimHole(const TopoDS_Shape& source,const TopoDS_Face& se
         // Delete consumes the same independently certified fill as Move/Pull,
         // before a destination cutter is constructed. No new closure is inferred.
         if(removal) return finishCylindricalRemoval(local,healed,missing,*removal);
+        auto affected=local.patch;affected.insert(affected.end(),local.neighbors.begin(),local.neighbors.end());
+        std::vector<TopoDS_Face> planePatch;TopoDS_Shape planeChange;gp_Pln movedPlane;
+        const bool planeEdit=!movingPlane.IsNull();
+        if(planeEdit) {
+            // Heal only a certified opening, move the now unperforated plane
+            // with the existing planar engine, then re-cut its stationary void.
+            BRepReconstruction::Result filled;
+            const auto certified=finishCylindricalRemoval(local,healed,missing,filled);
+            if(!certified) return certified;
+            healed=filled.solid;TopoDS_Face copiedPlane;
+            for(const auto& mapping:local.history) if(mapping.original.IsSame(movingPlane)) copiedPlane=mapping.modified.front();
+            BRepReconstruction::Neighborhood planeLocal;
+            if(copiedPlane.IsNull()||!BRepReconstruction::neighborhood(local.solid,copiedPlane,planeLocal,error))
+                return unsupported("Cannot resolve the selected planar patch in the hole neighborhood.");
+            for(const auto& mapping:planeLocal.history) {
+                const auto f=mapping.modified.front();
+                const bool selected=std::any_of(planeLocal.patch.begin(),planeLocal.patch.end(),[&](const auto& p){return p.IsSame(f);});
+                const bool adjacent=std::any_of(planeLocal.neighbors.begin(),planeLocal.neighbors.end(),[&](const auto& p){return p.IsSame(f);});
+                if(selected) planePatch.push_back(mapping.original);
+                if(selected||adjacent) affected.push_back(mapping.original);
+            }
+            movedPlane=BRepAdaptor_Surface(copiedPlane).Plane();auto normal=movedPlane.Axis().Direction();
+            if(copiedPlane.Orientation()==TopAbs_REVERSED) normal.Reverse();
+            int changed=0;
+            for(auto& plane:planes) if(plane.Axis().Direction().IsParallel(normal,angular)&&plane.Distance(movedPlane.Location())<tolerance) {
+                plane.Translate(gp_Vec(normal)*planeOffset);++changed;
+            }
+            if(changed!=1) return unsupported("The selected plane is not one unique physical rim support.");
+            movedPlane.Translate(gp_Vec(normal)*planeOffset);
+            TopoDS_Face healedPlane;
+            for(TopExp_Explorer it(healed,TopAbs_FACE);it.More();it.Next()) {
+                const auto f=TopoDS::Face(it.Current());
+                if(BRepReconstruction::sameAnalyticSupport(copiedPlane,f)&&faceArea(BooleanGeometry::combine<BRepAlgoAPI_Common>(f,copiedPlane))>tolerance*tolerance) {healedPlane=f;break;}
+            }
+            if(healedPlane.IsNull()) return unsupported("The certified fill lost the selected planar support.");
+            const auto moved=MoveFaceGeometry::move(healed,healedPlane,planeOffset,error);
+            if(moved.IsNull()) {auto failure=unsupported("Moving the healed planar support failed: ");failure.message+=error.toStdString();return failure;}
+            const auto retained=BooleanGeometry::combine<BRepAlgoAPI_Common>(healed,moved);
+            if(!BRepReconstruction::equivalent(retained,planeOffset>0?healed:moved))
+                return unsupported("The planar edit changed material beyond its signed growth/shrink region.");
+            planeChange=planeOffset>0?BooleanGeometry::combine<BRepAlgoAPI_Cut>(moved,healed):BooleanGeometry::combine<BRepAlgoAPI_Cut>(healed,moved);
+            healed=moved;
+        }
         double low=0,high=0;const auto destination=tool(cylinder.Location().Translated(delta),newRadius,low,high);
         if(!BRepReconstruction::validSolid(destination,mass)) return unsupported("Requested cylinder and rim planes have no reliable finite intersection.");
         const auto removed=BooleanGeometry::combine<BRepAlgoAPI_Common>(healed,destination);
+        if(planeEdit&&!BRepReconstruction::equivalent(removed,destination))
+            return unsupported("The moved rim span intersects an unrelated void or leaves its certified surrounding material.");
         if(!exteriorEnds(removed)) return unsupported("Requested hole would end inside material beyond its current rim supports.");
         const auto candidate=BooleanGeometry::combine<BRepAlgoAPI_Cut>(healed,destination);
-        auto affected=local.patch;affected.insert(affected.end(),local.neighbors.begin(),local.neighbors.end());
         for(TopExp_Explorer it(local.solid,TopAbs_FACE);it.More();it.Next()) {
             const auto face=TopoDS::Face(it.Current());
             if(BRepAdaptor_Surface(face).GetType()==GeomAbs_Plane&&faceArea(BooleanGeometry::combine<BRepAlgoAPI_Common>(face,destination))>tolerance*tolerance&&
                std::none_of(affected.begin(),affected.end(),[&](const auto& f){return f.IsSame(face);})) affected.push_back(face);
         }
         gp_Trsf identity;BRepReconstruction::Result finished;
-        const auto region=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(missing,destination);
+        auto region=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(missing,destination);
+        if(planeEdit) region=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(region,planeChange);
         if(!BRepReconstruction::finishLocal(local,candidate,region,affected,{},identity,finished,error)||!manifold(finished.solid)) {
             auto failure=unsupported("Cylindrical reconstruction cannot preserve unrelated material or trimmed faces: ");failure.message+=error.toStdString();return failure;
         }
         if(!BRepReconstruction::equivalent(BooleanGeometry::combine<BRepAlgoAPI_Cut>(healed,finished.solid),removed)) return unsupported("Reconstructed hole failed independent removed-material verification.");
-        auto translated=cylinder;translated.Translate(delta);translated.SetRadius(newRadius);bool remains=false;
+        auto translated=cylinder;translated.Translate(delta);translated.SetRadius(newRadius);bool remains=false,targetPresent=false;
         for(TopExp_Explorer it(finished.solid,TopAbs_FACE);it.More();it.Next()) {
             const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(face);
             bool allowed=s.GetType()==GeomAbs_Cylinder&&sameCylinder(s.Cylinder(),translated,tolerance);remains=remains||allowed;
+            if(planeEdit&&s.GetType()==GeomAbs_Plane&&s.Plane().Axis().Direction().IsParallel(movedPlane.Axis().Direction(),angular)&&movedPlane.Distance(s.Plane().Location())<tolerance) {allowed=true;targetPresent=true;}
             for(TopExp_Explorer old(local.solid,TopAbs_FACE);old.More()&&!allowed;old.Next()) {
-                const auto f=TopoDS::Face(old.Current());if(std::none_of(local.patch.begin(),local.patch.end(),[&](const auto& p){return p.IsSame(f);})) allowed=BRepReconstruction::sameAnalyticSupport(f,face);
+                const auto f=TopoDS::Face(old.Current());
+                if(std::none_of(local.patch.begin(),local.patch.end(),[&](const auto& p){return p.IsSame(f);})&&std::none_of(planePatch.begin(),planePatch.end(),[&](const auto& p){return p.IsSame(f);})) allowed=BRepReconstruction::sameAnalyticSupport(f,face);
             }
             if(!allowed) return unsupported("Requested hole introduced an unintended analytic boundary surface.");
         }
-        Result result;result.status=Status::Success;result.code=delta.Magnitude()<=tolerance&&std::abs(newRadius-radius)<=tolerance?Code::Unchanged:remains?Code::Moved:Code::HoleExited;
+        if(planeEdit&&(!targetPresent||!remains)) return unsupported("The moved planar support or stationary cylindrical opening disappeared.");
+        Result result;result.status=Status::Success;result.code=planeEdit?Code::Moved:delta.Magnitude()<=tolerance&&std::abs(newRadius-radius)<=tolerance?Code::Unchanged:remains?Code::Moved:Code::HoleExited;
         result.shape=finished.solid;result.radius=newRadius;result.height=high-low;result.axis=gp_Ax1(cylinder.Location().Translated(delta+gp_Vec(axis)*low),axis);
-        result.message="Cylindrical hole reconstructed against its current planar rim supports.";return result;
+        result.message=planeEdit?"Planar support moved with stationary cylindrical rims re-intersected.":"Cylindrical hole reconstructed against its current planar rim supports.";return result;
     } catch(const Standard_Failure& exception) {auto failure=unsupported("OCCT could not certify the requested cylinder/plane intersection: ");failure.message+=exception.GetMessageString();return failure;}
       catch(const std::exception& exception) {auto failure=unsupported("Current rim planes could not certify the cylindrical material reconstruction: ");failure.message+=exception.what();return failure;}
+}
+
+Result movePlaneWithStationaryHoles(const TopoDS_Shape& source,const TopoDS_Face& plane,double distance) {
+    auto refused=refuse(Status::Unsupported,Code::UnsupportedStock,"No certified planar-rim opening adjoins the selected plane.");
+    try {
+        BRepReconstruction::Neighborhood local;QString error;
+        if(!BRepReconstruction::neighborhood(source,plane,local,error)||BRepAdaptor_Surface(local.target).GetType()!=GeomAbs_Plane) return refused;
+        for(const auto& neighbor:local.neighbors) {
+            const BRepAdaptor_Surface s(neighbor);if(s.GetType()!=GeomAbs_Cylinder) continue;
+            // The inward material side, not primitive flags or wire curve types,
+            // identifies an opening. The shared certificate proves its closure.
+            const double u=(s.FirstUParameter()+s.LastUParameter())/2,v=(s.FirstVParameter()+s.LastVParameter())/2;
+            BRepLProp_SLProps props(s,u,v,1,Precision::Confusion());if(!props.IsNormalDefined()) continue;
+            auto normal=props.Normal();if(neighbor.Orientation()==TopAbs_REVERSED) normal.Reverse();
+            auto radial=gp_Vec(s.Cylinder().Location(),s.Value(u,v));const gp_Vec axis(s.Cylinder().Axis().Direction());radial-=axis*radial.Dot(axis);
+            if(normal.Dot(gp_Dir(radial))>-.99) continue;
+            TopoDS_Face original;for(const auto& mapping:local.history) if(mapping.modified.front().IsSame(neighbor)) original=mapping.original;
+            const auto result=reconstructPlanarRimHole(source,original,gp_Vec(),s.Cylinder().Radius(),
+                refuse(Status::Unsupported,Code::UnsupportedFeature,"The current planar opening has no certified stationary-rim reconstruction."),nullptr,plane,distance);
+            if(result) return result;
+            refused=result;
+        }
+        return refused;
+    } catch(const Standard_Failure&) {return refuse(Status::Unsupported,Code::KernelFailure,"The current plane/opening neighborhood could not be analyzed safely.");}
+      catch(const std::exception&) {return refuse(Status::Unsupported,Code::KernelFailure,"The current plane/opening material certificate failed safely.");}
 }
 
 // Shared acceptance for the already certified fill/healed body. The selected
@@ -1667,6 +1741,8 @@ CylindricalMoveGeometry::Result CylindricalMoveGeometry::movePlanarPreservingExt
         const TopoDS_Shape& source,const TopoDS_Face& plane,double distance) {
     const auto clipped=moveClippedBossPlane(source,plane,distance);
     if(clipped||clipped.status==Status::Failure) return clipped;
+    const auto holes=movePlaneWithStationaryHoles(source,plane,distance);
+    if(holes) return holes;
     const auto refused=refuse(Status::Unsupported,Code::UnsupportedStock,"No certified unaffected stock slab with exterior features was found.");
     for(TopExp_Explorer it(source,TopAbs_FACE);it.More();it.Next()) {
         const auto face=TopoDS::Face(it.Current());
@@ -1674,5 +1750,5 @@ CylindricalMoveGeometry::Result CylindricalMoveGeometry::movePlanarPreservingExt
         const auto moved=moveWithExterior(source,face,gp_Vec(0,0,0),refused,plane,distance);
         if(moved) return moved;
     }
-    return refused;
+    return holes.code==Code::UnsupportedStock?refused:holes;
 }

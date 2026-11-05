@@ -103,10 +103,24 @@ the cached direct-edit result. Names, colors, visibility, presentation identity
 and Structure Browser row IDs are preserved. Confirmation replaces obsolete face
 owners with a whole-part selection; Cancel restores the original face owners.
 
+## Planar faces containing cylindrical openings (Phase 9F.1B)
+
+A planar face remains recognizable when its boundary contains inner wires,
+ellipses or other intersection curves. Selected-plane recognition is independent
+of unrelated surface types; reconstruction then proves its actual local supports.
+For certified planar-rim openings, Move Face heals the current void internally,
+moves the plane using existing planar reconstruction, and re-cuts the stationary
+cylinder against the updated rim plane. Its radius/axis stay fixed while the
+elliptical opening and adjacent edges are recomputed. Multiple certified openings,
+repeated signed normal offsets, preview, Cancel, cached history and Save/Open are
+covered. No source pattern, primitive metadata or feature history is required.
+See [exact diagnosis, independent tests and limits](SLOPED_PLANAR_OPENING_MOVE.md).
+
 ## Supported geometry (v0.3.6)
 
-Planar targets on one closed valid solid/shell, up to 64 faces, with plane,
-cylinder and cone supports. Box faces, cylinder/cone caps, simple Subtract
+Planar targets on one closed valid solid/shell, up to 64 faces. The legacy global
+offset route certifies plane, cylinder and cone supports; local reconstruction
+routes analyze their own actual neighborhoods. Box faces, cylinder/cone caps, simple Subtract
 faces and the two-height Unite riser are covered by automated geometry tests.
 Both signs of a face offset are supported conditionally on reconstruction.
 Cone cap radii follow the existing conical support, rather than primitive Pull.

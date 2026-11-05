@@ -18,6 +18,9 @@ including elliptical planar rims, native Save/Open and cached history. See
 [sloped-opening deletion](docs/SLOPED_OPENING_DELETE_FACE.md) for verification and
 remaining reconstruction limits, and
 [Pull/Resize limits](docs/PULL_RESIZE_GAPS.md#unsupported-versus-ambiguous-versus-invalid).
+Move Face also moves a certified planar face containing cylindrical openings along
+its normal, rebuilding elliptical rims while keeping cylinder axes and radii fixed.
+See [planar opening movement](docs/SLOPED_PLANAR_OPENING_MOVE.md).
 Cross-screen HiDPI panel placement remains a platform limitation on the
 reviewed Qt/xcb desktop; see the integration review for the tested scope.
 

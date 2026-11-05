@@ -76,8 +76,10 @@ bool MoveFaceGeometry::reference(const TopoDS_Shape& solid, const TopoDS_Face& f
             return false;
         }
         double volume=0;
-        if (!supported(solid) || !BRepReconstruction::validSolid(solid,volume)) {
-            error=QStringLiteral("Move Face needs one valid solid and shell (up to 64 faces); faces must be planes, cylinders or cones.");
+        // Recognize the selected plane independently of unrelated surfaces.
+        // Reconstruction routes certify their own local supports separately.
+        if (count(solid,TopAbs_FACE)>64 || !BRepReconstruction::validSolid(solid,volume)) {
+            error=QStringLiteral("Move Face needs one valid solid and shell (up to 64 faces).");
             qWarning().noquote()<<"Move Face unsupported topology:"<<error<<topologyDetails(solid,face)
                                <<"valid="<<BRepCheck_Analyzer(solid).IsValid();
             return false;
@@ -98,6 +100,9 @@ static TopoDS_Shape offsetMove(const TopoDS_Shape& source, const TopoDS_Face& so
     if (!std::isfinite(distance)) { error=QStringLiteral("Enter a finite face offset."); return {}; }
     if (!MoveFaceGeometry::reference(source,sourceFace,center,normal,error)) return {};
     if (std::abs(distance)<tolerance) return source;
+    // This kernel route retains its existing surface budget. It is not a
+    // recognition rule for the selected plane or for local reconstruction.
+    if(!supported(source)) {error=QStringLiteral("The global offset route cannot certify these retained surfaces; a local reconstruction is required.");return {};}
     BRepReconstruction::Prepared prepared;
     if(!BRepReconstruction::prepare(source,sourceFace,prepared,error)) return {};
     const auto& solid=prepared.solid;
