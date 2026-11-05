@@ -1007,7 +1007,11 @@ struct CylindricalMoveFaceSessionTest {
         v.addCylinder();const auto unsupported=v.boxes_.size()-1;
         QString diagnostic;QObject::connect(&v,&CadViewport::statusMessage,&v,[&](const QString& text){diagnostic=text;});
         select(v,unsupported,mantle(v.boxes_[unsupported].shape));action->trigger();
-        check(!v.commandSession_&&diagnostic.contains("Unsupported cylinder"),"Unsupported cylinder opened a session or lost diagnostics");
+        const QString unavailable="Move Face unavailable: ";
+        const bool explained=(diagnostic.startsWith(unavailable)&&diagnostic.size()>unavailable.size())
+            || (diagnostic.startsWith("Cylindrical surface recognized; Move Face reconstruction unavailable.")
+                &&diagnostic.contains("Hole: ")&&diagnostic.contains("Boss: "));
+        check(!v.commandSession_&&explained,qPrintable("Uncertified cylinder opened a session or lost its reconstruction diagnostic: "+diagnostic));
         std::cout<<"Cylindrical Move Face selection, direction, policy and live previews passed\n";
     }
 };

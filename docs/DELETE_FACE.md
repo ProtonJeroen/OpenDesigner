@@ -244,3 +244,13 @@ Ctrl selection, transformed Parts, both confirmation/cancellation paths and
 history from Edit, toolbar and keyboard. Check visible previews and popup focus
 at the desktop's actual scaling. Offscreen rendered checks are not a native
 screen proof.
+
+
+## v0.4.9 integration status
+
+Delete Face on the sloped cylindrical opening in `hole2.odc` remains an unresolved
+geometry capability. It is rejected before and after native serialization; the
+passing Phase 9E persistence checks verify safe refusal, not completed deletion.
+See [Phase 9E](FACE_HISTORY_PERSISTENCE.md) for current private-file persistence
+results (including the current `moveCylinder.odc`) and the
+[final integration review](V049_INTEGRATION_REVIEW.md) for release validation.

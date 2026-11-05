@@ -197,10 +197,22 @@ void bossTests() {
         bossRefused(standalone,mantle(standalone),gp_Vec(3,0,0),policy,Status::Unsupported,Code::UnsupportedFeature);
         const auto hole=fixture();
         bossRefused(hole,mantle(hole),gp_Vec(3,0,0),policy,Status::Unsupported,Code::UnsupportedFeature);
-        // A partial source boss is deliberately outside initial recognition.
+        // Phase 9D.7B recognizes this current overhanging boss independently
+        // of its creation. Both policies must now reconstruct certified material.
         const auto partial=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(block(),
             BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0,40,30),gp_Dir(0,0,1)),10,20).Shape());
-        bossRefused(partial,mantle(partial),gp_Vec(3,0,0),policy,Status::Unsupported,Code::UnsupportedStock);
+        const auto partialBefore=serialized(partial);
+        const auto movedPartial=moveBoss(partial,mantle(partial),gp_Vec(3,0,0),policy);
+        require(bool(movedPartial),"Boundary boss move refused: "+movedPartial.message);
+        auto feature=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(3,40,30),gp_Dir(0,0,1)),10,20).Shape();
+        if(policy==BossBoundaryMode::Trim) feature=BooleanGeometry::combine<BRepAlgoAPI_Common>(
+            feature,BRepPrimAPI_MakeBox(100,80,50).Shape());
+        const auto expected=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(block(),feature);
+        require(BRepReconstruction::equivalent(movedPartial.shape,expected),"Boundary boss policy changed expected material");
+        const double footprint=100*(pi/2+std::asin(.3))+3*std::sqrt(91.);
+        certified(movedPartial.shape,policy==BossBoundaryMode::Trim?240000+20*footprint:full);
+        bossOccupancy(movedPartial.shape,3,40,policy);
+        require(serialized(partial)==partialBefore,"Boundary boss move mutated input");
         const auto two=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(source,
             BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(70,40,30),gp_Dir(0,0,1)),5,20).Shape());
         const auto movedTwo=moveBoss(two,mantle(two),gp_Vec(3,0,0),policy);
