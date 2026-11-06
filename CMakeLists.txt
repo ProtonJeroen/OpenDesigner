@@ -138,6 +138,15 @@ if(OPENDESIGNER_BUILD_TESTS)
     # These tests assert native keyboard focus. Other GUI processes on the same
     # desktop can steal it and delay WM placement; isolate that shared resource.
     set_tests_properties(command-panel-positioning command-panel-positioning-hidpi PROPERTIES RUN_SERIAL TRUE)
+    # Qt 6.11's offscreen backend provides configurable, asynchronous QScreens.
+    # Keep the production minimum Qt version unchanged; no private Qt API needed.
+    if(Qt6Widgets_VERSION VERSION_GREATER_EQUAL 6.11)
+        add_executable(OpenDesignerCommandPanelCrossScreenTests tests/CommandPanelCrossScreenTest.cpp)
+        target_link_libraries(OpenDesignerCommandPanelCrossScreenTests PRIVATE OpenDesignerCommandPanels)
+        add_test(NAME command-panel-cross-screen COMMAND OpenDesignerCommandPanelCrossScreenTests)
+        set_tests_properties(command-panel-cross-screen PROPERTIES TIMEOUT 60 ENVIRONMENT
+            "QT_QPA_PLATFORM=offscreen:configfile=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/command-panel-screens/screens.json;QT_QPA_OFFSCREEN_NO_GLX=1;QT_SCREEN_SCALE_FACTORS=s100=1\\;s125=1.25\\;s150=1.5\\;s200=2;QT_SCALE_FACTOR=1")
+    endif()
     add_executable(OpenDesignerSketchProjectionTests tests/SketchProjectionTest.cpp src/NativeDocument.cpp)
     target_link_libraries(OpenDesignerSketchProjectionTests PRIVATE OpenDesignerConstruction)
     add_test(NAME sketch-projection-geometry COMMAND OpenDesignerSketchProjectionTests)

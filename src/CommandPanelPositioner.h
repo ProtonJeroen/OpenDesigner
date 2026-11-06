@@ -2,9 +2,13 @@
 #include <QObject>
 #include <QPoint>
 #include <QRect>
+#include <QPointer>
+#include <QTimer>
 #include <memory>
 #include <vector>
 class QWidget;
+class QWindow;
+class QScreen;
 
 // UI placement only. Does not own command state or intercept keyboard input.
 class CommandPanelPositioner final : public QObject {
@@ -24,6 +28,14 @@ private:
     QWidget* viewport_;
     std::vector<std::unique_ptr<Panel>> panels_;
     bool pending_=false;
+    QTimer reconcileTimer_;
+    int reconcilePasses_=0;
+    bool screenTransition_=false;
+    std::vector<QPointer<QWindow>> windows_;
+    std::vector<QPointer<QScreen>> screens_;
+    QRect viewportBounds() const;
+    void watchWindows();
+    void reconcile(bool screenTransition=false);
     void schedule();
     void fit(Panel& panel);
     void moveFrame(Panel& panel,const QPoint& position);

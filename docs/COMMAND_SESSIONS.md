@@ -330,6 +330,12 @@ Undo/Redo routing continue through the existing session adapter. Placement does
 not touch selection, snapping, model geometry, camera, dirty state or history.
 No position is persisted in .odc. The phase-1/2 geometry and storage are unchanged.
 
+[Phase 9F.2](CROSS_SCREEN_HIDPI.md) uses consistent native-window logical geometry
+for viewport bounds and panel frames, absolute native frame moves and bounded
+reconciliation across asynchronous screen/DPR/configure changes. Synthetic Qt
+screens exercise 100%, 125%, 150% and 200% transitions; physical multi-monitor
+KWin acceptance remains pending.
+
 Sizing correction (2026-10-23): the outer window layout could cache the scroll
 area's old size hint, including a hint measured while the generic preview controls
 were hidden. Adding/showing controls or changing a wrapped drawing prompt updated

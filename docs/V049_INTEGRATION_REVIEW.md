@@ -3,7 +3,9 @@
 Review baseline: `74b70eb` on `feature/v0.4.9-move-cylindrical-face`.
 **Post-review update:** [Phase 9F.1](SLOPED_OPENING_DELETE_FACE.md) resolves the
 certified sloped-opening Delete Face gap described below. This document retains
-the results and limitations at `b4bcfb2`; the cross-screen HiDPI limitation remains.
+the results and limitations at `b4bcfb2`. [Phase 9F.2](CROSS_SCREEN_HIDPI.md)
+subsequently corrects production cross-screen positioning; physical multi-monitor
+qualification remains pending.
 
 This review prepares the existing scope for publication; it does not add geometry
 capabilities or change the roadmap.

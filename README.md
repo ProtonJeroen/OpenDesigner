@@ -21,8 +21,9 @@ remaining reconstruction limits, and
 Move Face also moves a certified planar face containing cylindrical openings along
 its normal, rebuilding elliptical rims while keeping cylinder axes and radii fixed.
 See [planar opening movement](docs/SLOPED_PLANAR_OPENING_MOVE.md).
-Cross-screen HiDPI panel placement remains a platform limitation on the
-reviewed Qt/xcb desktop; see the integration review for the tested scope.
+Phase 9F.2 corrects production cross-screen HiDPI panel placement and delayed
+native geometry handling. Synthetic 100–200% screen tests exercise the production
+positioner; [real multi-monitor acceptance remains pending](docs/CROSS_SCREEN_HIDPI.md).
 
 Both commands support New Solid, Add Material and Remove Material with shared
 Active Part targeting, live previews, Undo/Redo and native Save/Open. The user

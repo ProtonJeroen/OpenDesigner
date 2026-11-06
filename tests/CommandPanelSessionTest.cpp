@@ -11,6 +11,9 @@
 #include <QWheelEvent>
 #include <QDockWidget>
 #include <QPointer>
+#include <QPixmap>
+#include <QScreen>
+#include <QDebug>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QLayout>
@@ -77,6 +80,16 @@ struct CommandPanelSessionTest {
         }
         check(!face.IsNull() && v.startMoveFace(0,face),"cannot start actual Move Face sizing regression");
         anchored(v,v.commandPanel_);completeForm(v.commandPanel_);
+        const auto capture=qEnvironmentVariable("OPENDESIGNER_PANEL_CAPTURE");
+        if(!capture.isEmpty()) {
+            QString diagnostic;QDebug(&diagnostic)<<"GUI capture platform"<<QGuiApplication::platformName();
+            for(auto* screen:QGuiApplication::screens()) QDebug(&diagnostic)<<screen->name()<<screen->geometry()<<"DPR"<<screen->devicePixelRatio();
+            std::cout<<diagnostic.toStdString()<<'\n';
+            // XWayland screen readback may be black under KWin. Render the Qt
+            // controls directly; this does not capture OCCT's native drawable.
+            check(window.grab().save(capture+"-window.png"),"cannot capture command-panel window");
+            check(v.commandPanel_->grab().save(capture+"-panel.png"),"cannot capture command-panel controls");
+        }
         check(v.previewCommand(2),"Move Face sizing preview failed");completeForm(v.commandPanel_);v.cancelCommandSession();
         v.startConstruction(Construction::Method::PlaneFace);anchored(v,v.constructionPanel_);completeForm(v.constructionPanel_);
         v.fitAll();v.chooseConstructionRole(0);int x,y;v.view_->Convert(50,40,60,x,y);
