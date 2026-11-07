@@ -1913,10 +1913,16 @@ bool CadViewport::isPartVisible(size_t index) const {
 void CadViewport::fitSelection(const std::vector<size_t>& indices) {
     if (view_.IsNull()) return;
     Bnd_Box bounds;
-    for (const auto index : indices) {
-        if (!isPartVisible(index)) continue;
-        const auto& part = boxes_[index];
-        BRepBndLib::Add(part.presentation->Shape().Moved(TopLoc_Location(part.orientation)), bounds);
+    try {
+        for (const auto index : indices) {
+            if (!isPartVisible(index)) continue;
+            const auto& part = boxes_[index];
+            // Topological locations cannot represent scale on all supported OCCT
+            // versions. Apply the placement to geometry when scale requires it.
+            BRepBndLib::Add(BRepBuilderAPI_Transform(part.presentation->Shape(),part.orientation).Shape(), bounds);
+        }
+    } catch(const Standard_Failure&) {
+        emit statusMessage(tr("Open CASCADE could not compute the selected Part bounds."));return;
     }
     if (bounds.IsVoid()) return;
     view_->FitAll(bounds, 0.1, Standard_False);

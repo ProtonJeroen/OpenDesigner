@@ -4,6 +4,7 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
+#include <BRep_Builder.hxx>
 #include <BRepLib.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepOffset_MakeOffset.hxx>
@@ -15,6 +16,7 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Solid.hxx>
+#include <TopoDS_Compound.hxx>
 #include <Standard_Failure.hxx>
 #include <QDebug>
 #include <QStringList>
@@ -146,6 +148,23 @@ static TopoDS_Shape offsetMove(const TopoDS_Shape& source, const TopoDS_Face& so
             if (!BRepLib::OrientClosedSolid(solidResult)) return fail(QStringLiteral("the offset shell cannot bound a solid."));
             result=solidResult;
         }
+        // Older offset builders assign coarse edge/vertex tolerances even to
+        // analytic intersections. Recompute from the curve representations and
+        // their endpoints; never cap tolerances to make a candidate acceptable.
+        BRepLib::SameParameter(result,tolerance,true);
+        TopTools_IndexedMapOfShape edges;TopExp::MapShapes(result,TopAbs_EDGE,edges);
+        BRep_Builder builder;TopoDS_Compound network;builder.MakeCompound(network);
+        for(int i=1;i<=edges.Extent();++i) builder.Add(network,edges(i));
+        // Only the edge network: face-size heuristics in UpdateTolerances(true)
+        // must not replace the existing surface tolerances.
+        BRepLib::UpdateTolerances(network,true);
+        for(const auto type:{TopAbs_FACE,TopAbs_EDGE,TopAbs_VERTEX})
+            for(TopExp_Explorer it(result,type);it.More();it.Next()) {
+                const double t=type==TopAbs_FACE?BRep_Tool::Tolerance(TopoDS::Face(it.Current())):
+                    type==TopAbs_EDGE?BRep_Tool::Tolerance(TopoDS::Edge(it.Current())):BRep_Tool::Tolerance(TopoDS::Vertex(it.Current()));
+                if(!std::isfinite(t)||t>1.e-6)
+                    return fail(QStringLiteral("the offset result exceeds the local reconstruction tolerance limit."));
+            }
         double volume=0;
         if (result.IsNull() || !supported(result) || !BRepReconstruction::validSolid(result,volume)) {
             const QString details=QStringLiteral("solids=%1 shells=%2 faces=%3 edges=%4 vertices=%5 valid=%6 supported=%7")

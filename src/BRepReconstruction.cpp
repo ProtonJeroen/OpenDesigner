@@ -101,7 +101,7 @@ bool BRepReconstruction::neighborhood(const TopoDS_Shape& source,const TopoDS_Fa
         for(const auto type:{TopAbs_FACE,TopAbs_EDGE,TopAbs_VERTEX}) for(TopExp_Explorer it(result.solid,type);it.More();it.Next()) {
             const double t=type==TopAbs_FACE?BRep_Tool::Tolerance(TopoDS::Face(it.Current())):
                 type==TopAbs_EDGE?BRep_Tool::Tolerance(TopoDS::Edge(it.Current())):BRep_Tool::Tolerance(TopoDS::Vertex(it.Current()));
-            if(!std::isfinite(t)||t>1.e-6) return fail(QStringLiteral("Source tolerances exceed the local reconstruction limit."));
+            if(!std::isfinite(t)||t>1.e-6) return fail(QStringLiteral("Source tolerance %1 exceeds the local reconstruction limit (1e-6).").arg(t,0,'g',15));
         }
         for(int i=1;i<=faces.Extent();++i) {
             auto copied=TopoDS::Face(copy.ModifiedShape(faces(i)));copied.Orientation(faces(i).Orientation());
@@ -269,24 +269,37 @@ bool BRepReconstruction::normalize(const TopoDS_Shape& candidate,TopoDS_Shape& r
         if(!validSolid(candidate,volume)) {
             error=QStringLiteral("Reconstruction did not produce one valid closed solid.");return false;
         }
-        BRepBuilderAPI_Copy isolated(candidate,true,false);
-        auto cleaned=isolated.Shape();
-        BRepTools::RemoveInternals(cleaned,false);
-        ShapeUpgrade_UnifySameDomain unify(cleaned,true,true,false);
-        unify.SetSafeInputMode(true);unify.Build();
-        if(!validSolid(unify.Shape(),volume)||!equivalent(candidate,unify.Shape())) {
-            // Same-domain merging can mishandle a cylinder whose axial extent
-            // varies around an overhang. Retaining its valid split patches is
-            // legitimate topology, not permission to heal or accept bad material.
+        try {
+            BRepBuilderAPI_Copy isolated(candidate,true,false);
+            auto cleaned=isolated.Shape();
+            BRepTools::RemoveInternals(cleaned,false);
+            ShapeUpgrade_UnifySameDomain unify(cleaned,true,true,false);
             if(allowValidSplits) {
-                BRepBuilderAPI_Copy splitCopy(candidate,true,false);
-                if(validSolid(splitCopy.Shape(),volume)&&equivalent(candidate,splitCopy.Shape())) {
-                    result=splitCopy.Shape();error.clear();return true;
-                }
+                // Preserve cylindrical trims during optional cleanup. Merging
+                // bands with different axial extents can throw or loop inside
+                // OCCT's same-domain unifier. Planar seams may still merge.
+                for(TopExp_Explorer f(cleaned,TopAbs_FACE);f.More();f.Next())
+                    if(BRepAdaptor_Surface(TopoDS::Face(f.Current())).GetType()==GeomAbs_Cylinder)
+                        for(TopExp_Explorer e(f.Current(),TopAbs_EDGE);e.More();e.Next()) unify.KeepShape(e.Current());
             }
-            error=QStringLiteral("Final unification changed material or invalidated the solid.");return false;
+            unify.SetSafeInputMode(true);unify.Build();
+            if(validSolid(unify.Shape(),volume)&&equivalent(candidate,unify.Shape())) {
+                result=unify.Shape();error.clear();return true;
+            }
+            error=QStringLiteral("Final unification changed material or invalidated the solid.");
+        } catch(const Standard_Failure&) {
+            error=QStringLiteral("OCCT could not safely unify the reconstructed solid.");
         }
-        result=unify.Shape();error.clear();return true;
+        // Optional same-domain merging can return bad geometry OR throw (in
+        // particular on OCCT 7.6). Both cases may retain the original split
+        // candidate, with exactly the same solid/material certification.
+        if(allowValidSplits) {
+            BRepBuilderAPI_Copy splitCopy(candidate,true,false);
+            if(validSolid(splitCopy.Shape(),volume)&&equivalent(candidate,splitCopy.Shape())) {
+                result=splitCopy.Shape();error.clear();return true;
+            }
+        }
+        return false;
     } catch(const Standard_Failure&) {
         error=QStringLiteral("OCCT could not safely unify the reconstructed solid.");return false;
     }

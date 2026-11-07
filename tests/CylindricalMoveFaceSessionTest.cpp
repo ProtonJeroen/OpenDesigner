@@ -29,7 +29,10 @@
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRep_Builder.hxx>
+#include <BRep_Tool.hxx>
 #include <gp_Lin.hxx>
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
@@ -272,6 +275,12 @@ struct CylindricalMoveFaceSessionTest {
             throw std::runtime_error("moved planar support disappeared");
         };
         const auto verify=[&](const TopoDS_Shape& shape,double offset,const std::vector<Hole>& cavities,const gp_Trsf& trsf=gp_Trsf()) {
+            for(const auto type:{TopAbs_FACE,TopAbs_EDGE,TopAbs_VERTEX})
+                for(TopExp_Explorer it(shape,type);it.More();it.Next()) {
+                    const double t=type==TopAbs_FACE?BRep_Tool::Tolerance(TopoDS::Face(it.Current())):
+                        type==TopAbs_EDGE?BRep_Tool::Tolerance(TopoDS::Edge(it.Current())):BRep_Tool::Tolerance(TopoDS::Vertex(it.Current()));
+                    check(std::isfinite(t)&&t<=1.e-6,"planar move retained excessive kernel tolerances");
+                }
             const auto expectedLocal=oracle(offset,cavities);const auto expected=BRepBuilderAPI_Transform(expectedLocal,trsf,true).Shape();double mass=0;
             check(BRepReconstruction::validSolid(shape,mass),"planar move did not produce one valid closed solid");near(mass,volume(expected),"planar move volume differs from independent oracle");check(BRepReconstruction::equivalent(shape,expected),"planar move changed independent material");
             const auto face=planeAt(shape,offset,trsf);bool ellipse=false;
@@ -283,6 +292,13 @@ struct CylindricalMoveFaceSessionTest {
             Bnd_Box bounds;BRepBndLib::AddOptimal(expectedLocal,bounds,false,false);double x,y,z,X,Y,Z;bounds.Get(x,y,z,X,Y,Z);BRepClass3d_SolidClassifier classifier(shape);
             for(int i=-1;i<=8;++i) for(int j=-1;j<=8;++j) for(int k=-1;k<=8;++k) {const gp_Pnt point(x+(X-x)*(i+.37)/8,y+(Y-y)*(j+.41)/8,z+(Z-z)*(k+.29)/8);const bool stock=std::all_of(planes.begin(),planes.end(),[&](const auto& s){auto plane=s.plane;if(s.moved) plane.Translate(gp_Vec(normal)*offset);return gp_Vec(plane.Location(),point).Dot(gp_Vec(plane.Axis().Direction()))<0;});const bool boss=std::any_of(bosses.begin(),bosses.end(),[&](const auto& b){const auto v=gp_Vec(b.cylinder.Location(),point);const double t=v.Dot(gp_Vec(b.cylinder.Axis().Direction()));return t>b.low&&t<b.high&&gp_Lin(b.cylinder.Axis()).Distance(point)<b.cylinder.Radius();});const bool hole=std::any_of(cavities.begin(),cavities.end(),[&](const auto& h){return gp_Lin(h.cylinder.Axis()).Distance(point)<h.cylinder.Radius();});classifier.Perform(point.Transformed(trsf),1.e-7);check(classifier.State()==((stock||boss)&&!hole?TopAbs_IN:TopAbs_OUT),"planar move failed analytic halfspace/cylinder occupancy");}
         };
+        // Kernel-output tolerance recomputation must never relax source safety.
+        BRepBuilderAPI_Copy uncertain(source,true,false);
+        TopExp_Explorer vertex(uncertain.Shape(),TopAbs_VERTEX);check(vertex.More(),"missing tolerance regression vertex");
+        BRep_Builder().UpdateVertex(TopoDS::Vertex(vertex.Current()),.001);
+        const auto uncertainStamp=serialized(uncertain.Shape());
+        check(MoveFaceGeometry::move(uncertain.Shape(),planeAt(uncertain.Shape(),0),5,error).IsNull()&&!error.isEmpty(),"excessive source tolerance was accepted");
+        check(serialized(uncertain.Shape())==uncertainStamp,"tolerance refusal changed its source");
         for(int variant=0;variant<2;++variant) {
             auto cavities=holes;auto current=source;gp_Trsf trsf;
             if(variant) {gp_Cylinder extra(gp_Ax3(gp_Pnt(100,62,0),gp_Dir(0,0,1)),4);cavities.push_back({extra});current=BooleanGeometry::combine<BRepAlgoAPI_Cut>(current,tool(extra));trsf.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.43);trsf.SetTranslationPart(gp_Vec(170,-55,32));current=BRepBuilderAPI_Transform(current,trsf,true).Shape();}
@@ -539,6 +555,13 @@ struct CylindricalMoveFaceSessionTest {
         MainWindow window;window.resize(1200,900);window.show();events();auto& v=*window.findChild<CadViewport*>();
         check(v.importDocumentSnapshot(snapshot,error),qPrintable(error));v.view_->SetProj(V3d_XnegYnegZpos);v.fitSelection({0});events();
         const auto before=v.boxes_[0];const auto stamp=serialized(before.shape);const auto history=v.undoStack_.size();
+        select(v,0,holeFace);
+        std::unique_ptr<QMenu> fitMenu(v.createSelectionMenu(QPoint()));
+        auto* fit=fitMenu->findChild<QAction*>("context.fit_selected");check(fit,"scaled face Fit Selected action missing");
+        const double partScale=v.view_->Camera()->Scale();fit->trigger();events();
+        check(std::abs(v.view_->Camera()->Scale()-partScale)>1.e-5,"scaled face Fit Selected did not frame the face");
+        v.fitSelection({0});
+        check(v.boxes_[0].shape.IsSame(before.shape)&&v.undoStack_.size()==history,"scaled Fit Selected changed geometry/history");
         auto* tree=window.findChild<QTreeWidget*>();auto* row=tree->topLevelItem(0)->child(0);const double scale=std::abs(before.orientation.ScaleFactor());
         const auto other=v.boxes_.size()>1?v.boxes_[1].shape:TopoDS_Shape();
         QAction* action=nullptr;for(auto* a:window.findChildren<QAction*>()) if(a->text()=="Move Face") action=a;

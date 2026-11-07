@@ -18,6 +18,7 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <TopExp_Explorer.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 #include <Bnd_Box.hxx>
 #include <Standard_Failure.hxx>
 #include <exception>
@@ -162,8 +163,12 @@ QMenu* CadViewport::createSelectionMenu(const QPoint& anchor) {
         connect(fit,&QAction::triggered,this,[this,selection] {
             if(selection.kind==SelectionContext::Kind::Parts) {fitSelection(selection.parts);return;}
             Bnd_Box bounds;
-            for(const auto& selected:selection.faces) if(isPartVisible(selected.partIndex))
-                BRepBndLib::Add(selected.face.Moved(TopLoc_Location(boxes_[selected.partIndex].orientation)),bounds,Standard_False);
+            try {
+                for(const auto& selected:selection.faces) if(isPartVisible(selected.partIndex))
+                    BRepBndLib::Add(BRepBuilderAPI_Transform(selected.face,boxes_[selected.partIndex].orientation).Shape(),bounds,Standard_False);
+            } catch(const Standard_Failure&) {
+                emit statusMessage(tr("Open CASCADE could not compute the selected face bounds."));return;
+            }
             if(bounds.IsVoid() || view_.IsNull()) return;
             view_->FitAll(bounds,0.1,Standard_False);stabilizeViewCamera();view_->ZFitAll();updateConstructionLabels();view_->Redraw();
         });
