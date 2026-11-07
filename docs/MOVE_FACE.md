@@ -1,5 +1,82 @@
 # General Move Face (v0.3.6)
 
+## Cylindrical features (v0.4.9, phases 9D–9D.7B)
+
+The existing **3D Modeling → Move Face** command also accepts the cylindrical
+wall of one selected complete circular through-hole, supported open cylindrical
+notch, or attached boss on
+certified support geometry. The rectangular-stock paths allow up to eight
+independent parallel cylindrical features. The local interior-boss path below
+does not use those pattern/count rules. Unselected features remain unchanged. A supported
+cylindrical face also offers Move Face in its Face context
+menu. The selected face determines the target, independently of Active Part.
+Planar Move Face keeps its normal-offset workflow described below.
+
+Choose an explicit **Part X/Y/Z projected into lateral plane** reference in the
+Command Panel. References parallel to the cylinder axis are disabled. Set the
+**Direction angle** to rotate that reference in the lateral plane; positive angles
+follow the right-hand rule about the displayed cylinder axis (Part coordinates).
+The orange arrow shows the resulting positive direction. Drag it or type signed
+mm in the distance field. References and angles are relative to the Part; signed
+distance is measured in world mm, including for rotated/scaled Parts. No lateral
+direction is chosen automatically. Linear snapping and Shift bypass still apply.
+
+Bosses default visibly to **Extend**, which keeps the full round cylinder and
+valid overhangs. **Trim** clips it against the original stock side surfaces and
+can produce planar truncated walls. The choice stays fixed during the command.
+Through-holes and notches hide this selector; they can open into a side notch or leave the
+stock completely, healing the original hole. Both policies preserve valid
+connected material; completely detached or clipped-away bosses are refused.
+
+Direction, distance and policy changes show the actual rebuilt blue translucent
+solid. Invalid geometry restores the source display and disables OK. Correct the
+parameters or cancel with Esc/Cancel; Enter/OK confirms through the existing
+session. Blind selected holes, blends and interacting/touching edits remain
+unsupported. Existing boundary paths have rectangular-stock/parallel-feature
+limits; a local fallback supports repeated movement of a trimmed or overhanging
+boss across one planar side boundary.
+Moving into an unselected feature is refused.
+Geometry calculation remains synchronous. See the [phase plan](CYLINDRICAL_MOVE_PLAN.md).
+After a boss crosses one planar side boundary, select its current cylindrical
+wall to move it farther outward, along the boundary, or back inward to restore a
+fully supported boss. Trim clips the cylinder against the current healed planar
+support; Extend retains the full cylinder with a certified attachment. Each move
+reads the current B-Rep, including split walls, without remembered feature state.
+Corners, multiple side boundaries, sloped/curved trims, blends and interacting
+features remain outside this fallback. See [repeated boss reconstruction](REPEATED_BOUNDARY_BOSS_MOVE.md).
+A separated complete through-hole remains editable: the
+actual exterior boss material is preserved without re-recognizing it as an
+interior boss. Unaffected stock side planes can also move when a through-hole's
+physical rim planes certify the stock slab and the edit stays clear of exterior
+material. Interface planes and interacting edits remain conditional/refused.
+An unchanged complete boss can also move repeatedly after another hole becomes
+an open notch. This local path checks the actual cap, rims and planar support;
+it does not require the whole Part to match rectangular stock or a cylinder-count
+pattern. The old/new footprints must remain fully supported and clear of feature
+trims. Trim and Extend coincide for this interior case. Other boundary cases use
+the existing certified policy paths. See the [local reconstruction strategy](GEOMETRY_DRIVEN_MOVE_FACE.md).
+An open cylindrical notch through one planar exterior side can be selected and
+moved again. Move it farther outward, along the edge, or back inside to restore a
+complete circular hole. Each operation infers its axis, partial rims and current
+material-side boundary from the B-Rep. A restored hole can reopen on another side;
+no original feature position or Trim history is retained. Complete exit heals
+the opening and leaves no cylindrical wall to select. The shared planar-rim
+certificate also accepts valid corner/multiple-side
+transitions when the current planes and material prove them. Curved closures,
+blind regions and interacting features still need a valid reconstruction and are
+refused atomically when uncertified. See [open-notch certificates and tests](OPEN_CYLINDRICAL_NOTCH_MOVE.md).
+A rotated top face does not change cylindrical identity. Hole movement and radial
+Pull can reconstruct against oblique planar rims, including an elliptical upper
+opening and circular lower opening. Radius and axis direction remain fixed during
+lateral movement; actual depth and intersection curves follow the unchanged
+surrounding planes. No rectangular-stock, rim-curve-type or cylinder-count rule
+is used by this local certificate. See [exact rotated-rim regression](ROTATED_RIM_CYLINDER.md).
+
+Automated session checks cover normal/HiDPI; manual Fedora KDE acceptance and
+phase 9E lifecycle/persistence coverage remain pending.
+
+## Planar workflow
+
 Choose **Modeling > Move Face**, then click one planar face. A preselected face
 can also be used, including through the viewport Face context menu. The visible
 Faces selection mode keeps Boolean/GeneralBRep faces selectable even with part
@@ -26,10 +103,24 @@ the cached direct-edit result. Names, colors, visibility, presentation identity
 and Structure Browser row IDs are preserved. Confirmation replaces obsolete face
 owners with a whole-part selection; Cancel restores the original face owners.
 
+## Planar faces containing cylindrical openings (Phase 9F.1B)
+
+A planar face remains recognizable when its boundary contains inner wires,
+ellipses or other intersection curves. Selected-plane recognition is independent
+of unrelated surface types; reconstruction then proves its actual local supports.
+For certified planar-rim openings, Move Face heals the current void internally,
+moves the plane using existing planar reconstruction, and re-cuts the stationary
+cylinder against the updated rim plane. Its radius/axis stay fixed while the
+elliptical opening and adjacent edges are recomputed. Multiple certified openings,
+repeated signed normal offsets, preview, Cancel, cached history and Save/Open are
+covered. No source pattern, primitive metadata or feature history is required.
+See [exact diagnosis, independent tests and limits](SLOPED_PLANAR_OPENING_MOVE.md).
+
 ## Supported geometry (v0.3.6)
 
-Planar targets on one closed valid solid/shell, up to 64 faces, with plane,
-cylinder and cone supports. Box faces, cylinder/cone caps, simple Subtract
+Planar targets on one closed valid solid/shell, up to 64 faces. The legacy global
+offset route certifies plane, cylinder and cone supports; local reconstruction
+routes analyze their own actual neighborhoods. Box faces, cylinder/cone caps, simple Subtract
 faces and the two-height Unite riser are covered by automated geometry tests.
 Both signs of a face offset are supported conditionally on reconstruction.
 Cone cap radii follow the existing conical support, rather than primitive Pull.

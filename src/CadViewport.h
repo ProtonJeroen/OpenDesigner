@@ -16,6 +16,7 @@ class QShortcut;
 class QAction;
 class QMenu;
 class QComboBox;
+class QDoubleSpinBox;
 class QLabel;
 class QContextMenuEvent;
 #include <AIS_InteractiveContext.hxx>
@@ -191,6 +192,7 @@ private:
     friend struct NativeDocumentSessionTest;
     friend struct BooleanOperationsTest;
     friend struct MoveFaceTest;
+    friend struct CylindricalMoveFaceSessionTest;
     friend struct SelectionContextTest;
     friend struct DebugModelTest;
     friend struct DeleteFaceTest;
@@ -369,6 +371,7 @@ private:
         QJsonObject debugOperation;
     };
     // Transaction state only: confirmed changes use the existing modeling history.
+    enum class MoveFaceFeature { Planar, ThroughHole, Boss };
     struct CommandSession {
         enum class State { Selection, Parameters, Preview, Confirmed, Cancelled };
         enum class Kind { Move, Rotate, MoveFace, RotateFace, AlignFace, Boolean, Pull, DeleteFace, Construction, Sketch, Extrude, Revolve };
@@ -390,6 +393,10 @@ private:
         gp_Trsf delta;
         double value = 0;
         TopoDS_Face face;
+        MoveFaceFeature moveFeature = MoveFaceFeature::Planar;
+        gp_Dir cylinderAxisLocal = gp_Dir(0,0,1);
+        bool lateralDirectionReady = false;
+        bool bossTrim = false; // Extend is the visible default for each new session.
         gp_Ax1 faceAxis = gp_Ax1(gp_Pnt(0,0,0),gp_Dir(1,0,0));
         gp_Pln referencePlane = gp_Pln(gp_Pnt(0,0,0),gp_Dir(0,0,1));
         size_t referencePart = 0;
@@ -522,6 +529,10 @@ private:
     bool previewCommand(double value);
     bool startMoveFace(size_t index, const TopoDS_Face& face);
     bool previewMoveFace(double value);
+    bool moveFaceReference(const TopoDS_Shape& shape, const TopoDS_Face& face,
+                           MoveFaceFeature& feature, gp_Pnt& center, gp_Dir& axis, QString& error) const;
+    void initializeCylindricalMoveControls();
+    void updateCylindricalMoveParameters();
     bool presentFacePreview(const CadPart& before, bool changed, QString& error);
     Handle(AIS_Shape) createFacePreview(const CadPart& before, const TopoDS_Shape& candidate, QString& error);
     void reportGeometryFailure(const QString& operation, const QString& reason, bool popup);
@@ -542,6 +553,10 @@ private:
     Handle(AIS_Shape) moveFaceArrow_;
     Handle(AIS_Shape) faceRotationManipulator_;
     QComboBox* faceAxisSelector_ = nullptr;
+    QLabel* cylinderMoveLabel_ = nullptr;
+    QComboBox* cylinderMoveDirection_ = nullptr;
+    QDoubleSpinBox* cylinderMoveAngle_ = nullptr;
+    QComboBox* cylinderBossBoundary_ = nullptr;
     QComboBox* faceAlignSelector_ = nullptr;
     QLabel* faceAlignTargetLabel_ = nullptr;
     QLabel* faceAlignReferenceLabel_ = nullptr;
@@ -638,6 +653,8 @@ private:
     bool primitivePullDragging_ = false;
     bool primitivePullEditing_ = false;
     bool cylindricalFacePull_ = false;
+    bool bossHeightPull_ = false;
+    double bossPullHeight_ = 0.0;
     TopoDS_Face cylindricalPullFace_;
     double cylindricalPullRadius_ = 0.0;
     PullChange primitivePullBefore_;

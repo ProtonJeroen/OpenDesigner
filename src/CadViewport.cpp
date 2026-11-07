@@ -40,12 +40,11 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
-#include <BRepBuilderAPI_MakeSolid.hxx>
+#include "CylindricalMoveGeometry.h"
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <TopExp_Explorer.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
-#include <BRepOffset_MakeOffset.hxx>
 #include <gp_Circ.hxx>
 #include <ElCLib.hxx>
 #include <BRep_Builder.hxx>
@@ -145,6 +144,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     faceAxisSelector_->setObjectName(QStringLiteral("rotateFaceAxisSelector"));
     faceAxisSelector_->addItems({tr("Choose a straight edge…"),tr("World X axis"),tr("World Y axis"),tr("World Z axis")});
     faceAxisSelector_->hide(); commandLayout->addWidget(faceAxisSelector_);
+    initializeCylindricalMoveControls();
     faceAlignSelector_=new QComboBox(commandPanel_);
     faceAlignSelector_->setObjectName(QStringLiteral("alignFaceModeSelector"));
     faceAlignSelector_->addItems({tr("Coplanar"),tr("Parallel")});
@@ -217,6 +217,8 @@ void CadViewport::beginCommandSession(CommandSession::Kind kind,
     dragDimension_->setText(QLocale().toString(0.0,'f',2));
     commandButtons_->button(QDialogButtonBox::Ok)->setEnabled(true);
     faceAxisSelector_->setVisible(kind==CommandSession::Kind::RotateFace);
+    cylinderMoveLabel_->hide(); cylinderMoveDirection_->hide();
+    cylinderMoveAngle_->hide(); cylinderBossBoundary_->hide();
     faceAlignSelector_->setVisible(kind==CommandSession::Kind::AlignFace);
     faceAlignTargetLabel_->setVisible(kind==CommandSession::Kind::AlignFace);
     faceAlignReferenceLabel_->setVisible(kind==CommandSession::Kind::AlignFace);
@@ -271,6 +273,9 @@ bool CadViewport::updateCommandParameter(bool reportError) {
             commandSession_->state=CommandSession::State::Parameters;
             QString error;
             presentFacePreview(*commandSession_->faceBefore,false,error);
+            if(commandSession_->kind==CommandSession::Kind::MoveFace && commandSession_->moveFeature!=MoveFaceFeature::Planar
+               && commandSession_->lateralDirectionReady && !moveFaceArrow_.IsNull())
+                displayPullArrow(moveFaceArrow_,commandSession_->pivot,gp_Vec(commandSession_->direction));
             redrawFacePreview();
         }
         if (reportError || faceCommand) emit statusMessage(tr("Enter a valid finite angle or distance before confirming."));
@@ -380,6 +385,8 @@ void CadViewport::closeCommandSession(bool confirm) {
     groupRotationDragging_ = false;
     dragDimension_->hide(); commandButtons_->hide(); commandPanel_->hide();
     faceAxisSelector_->hide(); faceAlignSelector_->hide();
+    cylinderMoveLabel_->hide(); cylinderMoveDirection_->hide();
+    cylinderMoveAngle_->hide(); cylinderBossBoundary_->hide();
     commandLayout_->removeWidget(dragDimension_);
     dragDimension_->setParent(this);
     resetModelingTools();
@@ -1603,7 +1610,7 @@ bool CadViewport::beginArrowDrag(const QPoint& origin) {
         primitivePullBefore_.beforeCone = part.cone;
         primitivePullBefore_.beforeRadius = cylindricalFacePull_ ? cylindricalPullRadius_
             : part.spherePrimitive ? part.sphereRadius : part.cylinderRadius;
-        primitivePullBefore_.beforeHeight = part.cylinderHeight;
+        primitivePullBefore_.beforeHeight = bossHeightPull_ ? bossPullHeight_ : part.cylinderHeight;
         primitivePullBefore_.beforeBaseOffset = part.cylinderBaseOffset;
         dragIndex_ = arrowPartIndex_;
         dragStart_ = origin;
@@ -1834,7 +1841,7 @@ double CadViewport::primitivePullStartDimension() const {
                                      : primitivePullBefore_.beforeHeight;
 }
 bool CadViewport::primitivePullIsDiameter() const {
-    if (cylindricalFacePull_) return true;
+    if (cylindricalFacePull_) return !bossHeightPull_;
     if (boxes_[dragIndex_].conePrimitive)
         return conePullTarget_ == ConePullTarget::BottomDiameter
             || conePullTarget_ == ConePullTarget::TopDiameter;
@@ -1844,7 +1851,7 @@ bool CadViewport::primitivePullIsDiameter() const {
 QString CadViewport::primitivePullDimensionText() const {
     const auto& part = boxes_[dragIndex_];
     const bool diameter = primitivePullIsDiameter();
-    const double dimension = cylindricalFacePull_ ? 2.0*cylindricalPullRadius_
+    const double dimension = cylindricalFacePull_ ? (bossHeightPull_ ? bossPullHeight_ : 2.0*cylindricalPullRadius_)
         : part.conePrimitive
         ? (diameter ? 2.0*(conePullTarget_ == ConePullTarget::BottomDiameter
             ? part.cone.bottomRadius : part.cone.topRadius) : part.cone.height)
@@ -1906,10 +1913,16 @@ bool CadViewport::isPartVisible(size_t index) const {
 void CadViewport::fitSelection(const std::vector<size_t>& indices) {
     if (view_.IsNull()) return;
     Bnd_Box bounds;
-    for (const auto index : indices) {
-        if (!isPartVisible(index)) continue;
-        const auto& part = boxes_[index];
-        BRepBndLib::Add(part.presentation->Shape().Moved(TopLoc_Location(part.orientation)), bounds);
+    try {
+        for (const auto index : indices) {
+            if (!isPartVisible(index)) continue;
+            const auto& part = boxes_[index];
+            // Topological locations cannot represent scale on all supported OCCT
+            // versions. Apply the placement to geometry when scale requires it.
+            BRepBndLib::Add(BRepBuilderAPI_Transform(part.presentation->Shape(),part.orientation).Shape(), bounds);
+        }
+    } catch(const Standard_Failure&) {
+        emit statusMessage(tr("Open CASCADE could not compute the selected Part bounds."));return;
     }
     if (bounds.IsVoid()) return;
     view_->FitAll(bounds, 0.1, Standard_False);
@@ -2071,43 +2084,22 @@ bool CadViewport::applyPrimitivePull(double distance) {
 bool CadViewport::applyCylindricalFacePull(double distance) {
     if (dragIndex_ >= boxes_.size() || cylindricalPullFace_.IsNull()
         || primitivePullBefore_.beforeShape.IsNull() || !std::isfinite(distance)) return false;
-    const double radius = primitivePullBefore_.beforeRadius + distance;
-    if (radius <= 0.01) {
-        if (commandSession_) commandSession_->geometryError = tr("Cylinder radius must be greater than 0.01 mm.");
+    const double dimension = (bossHeightPull_?primitivePullBefore_.beforeHeight:primitivePullBefore_.beforeRadius) + distance;
+    if (dimension <= 0.01) {
+        if (commandSession_) commandSession_->geometryError = (bossHeightPull_?tr("Boss height must be greater than 0.01 mm."):tr("Cylinder radius must be greater than 0.01 mm."));
         return false;
     }
     try {
-        const double offsetDistance = cylindricalPullFace_.Orientation()==TopAbs_REVERSED ? -distance : distance;
-        BRepOffset_MakeOffset offset;
-        // Isolate kernel work from the source snapshot, including tolerances
-        // and surface data. Every preview starts from the original geometry.
-        BRepBuilderAPI_Copy isolated(primitivePullBefore_.beforeShape,true,false);
-        const auto target=TopoDS::Face(isolated.ModifiedShape(cylindricalPullFace_));
-        offset.Initialize(isolated.Shape(),0.0,1.0e-7,
-                          BRepOffset_Skin,true,false,GeomAbs_Intersection);
-        offset.SetOffsetOnFace(target,offsetDistance);
-        offset.MakeOffsetShape();
-        double volume=0.0;
-        TopoDS_Shape candidate = offset.Shape();
-        // MakeOffset returns a closed shell for some cut solids.  Promote that
-        // single closed shell to a solid; no new faces or volumes are created.
-        if (offset.IsDone()) {
-            int solids=0, shells=0;
-            TopoDS_Shell shell;
-            for (TopExp_Explorer e(candidate,TopAbs_SOLID);e.More();e.Next()) ++solids;
-            for (TopExp_Explorer e(candidate,TopAbs_SHELL);e.More();e.Next()) {
-                ++shells; shell=TopoDS::Shell(e.Current());
-            }
-            if (solids==0 && shells==1 && BRep_Tool::IsClosed(shell)) {
-                BRepBuilderAPI_MakeSolid makeSolid;
-                makeSolid.Add(shell);
-                if (makeSolid.IsDone()) candidate=makeSolid.Solid();
-            }
-        }
-        if (!offset.IsDone() || !BRepReconstruction::validSolid(candidate,volume)) {
-            if (commandSession_) commandSession_->geometryError = tr("The cylindrical face could not be resized while preserving a closed solid.");
+        // Reconstruct a current cylindrical wall or boss cap from the immutable
+        // pre-drag B-Rep; neither route falls back to global offset.
+        const auto resized=bossHeightPull_
+            ? CylindricalMoveGeometry::resizeBossHeight(primitivePullBefore_.beforeShape,cylindricalPullFace_,dimension)
+            : CylindricalMoveGeometry::resizeRadius(primitivePullBefore_.beforeShape,cylindricalPullFace_,dimension);
+        if(!resized) {
+            if(commandSession_) commandSession_->geometryError=QString::fromStdString(resized.message);
             return false;
         }
+        const auto candidate=resized.shape;
         auto& part=boxes_[dragIndex_];
         part.shape=candidate;
         part.geometryKind=CadPart::GeometryKind::GeneralBRep;
@@ -2116,8 +2108,8 @@ bool CadViewport::applyCylindricalFacePull(double distance) {
         BRepBndLib::AddOptimal(part.shape,bounds,false,false);
         bounds.Get(part.min[0],part.min[1],part.min[2],part.max[0],part.max[1],part.max[2]);
         part.baseMin=part.min;part.baseMax=part.max;
-        primitiveArrowOrigin_.Translate(gp_Vec(primitiveArrowDirection_)*(radius-cylindricalPullRadius_));
-        cylindricalPullRadius_=radius;
+        primitiveArrowOrigin_.Translate(gp_Vec(primitiveArrowDirection_)*(dimension-(bossHeightPull_?bossPullHeight_:cylindricalPullRadius_)));
+        if(bossHeightPull_) bossPullHeight_=dimension;else cylindricalPullRadius_=dimension;
         context_->ClearSelected(Standard_False);
         part.presentation->SetShape(part.shape);
         part.presentation->SetLocalTransformation(part.orientation);
@@ -2605,7 +2597,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
 void CadViewport::updateSelectedFaceArrow(const QPoint& point) {
     // Keep one manipulation arrow as an anchor for a multi-face selection.
     // The grouped drag operation will use all selected face owners.
-    cylindricalFacePull_=false;
+    cylindricalFacePull_=false;bossHeightPull_=false;bossPullHeight_=0;
     cylindricalPullFace_.Nullify();
     cylindricalPullRadius_=0.0;
     if (context_->NbSelected() >= 1) {
@@ -2618,6 +2610,16 @@ void CadViewport::updateSelectedFaceArrow(const QPoint& point) {
             for (size_t i = 0; i < boxes_.size(); ++i) {
                 if (boxes_[i].presentation != selected) continue;
                 const BRepAdaptor_Surface surf(TopoDS::Face(arrowOwner->Shape()));
+                if(!movePartMode_&&surf.GetType()==GeomAbs_Plane&&!boxes_[i].cylinderPrimitive&&!boxes_[i].spherePrimitive&&!boxes_[i].conePrimitive) {
+                    const auto reference=CylindricalMoveGeometry::bossHeightReference(boxes_[i].shape,TopoDS::Face(arrowOwner->Shape()));
+                    if(reference) {
+                        cylindricalFacePull_=true;bossHeightPull_=true;cylindricalPullFace_=TopoDS::Face(arrowOwner->Shape());
+                        cylindricalPullRadius_=reference.radius;bossPullHeight_=reference.height;
+                        GProp_GProps p;BRepGProp::SurfaceProperties(cylindricalPullFace_,p);primitiveArrowOrigin_=p.CentreOfMass();primitiveArrowDirection_=reference.axis.Direction();
+                        arrowPartIndex_=i;arrowVisible_=true;updateFaceArrow();
+                        emit statusMessage(tr("Boss cap: drag the arrow or enter the final height in mm."));break;
+                    }
+                }
                 if (!movePartMode_ && surf.GetType()==GeomAbs_Cylinder
                     && !boxes_[i].cylinderPrimitive && !boxes_[i].spherePrimitive
                     && !boxes_[i].conePrimitive) {

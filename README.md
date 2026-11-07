@@ -2,7 +2,28 @@
 
 OpenDesigner is an open-source cross-platform 3D direct-modeling application inspired by classic CoCreate SolidDesigner.
 
-**Status:** v0.4.8 Unified Extrude & Revolve; not a packaged distribution.
+**Status:** v0.4.9 Cylindrical Move Face; not a packaged distribution.
+
+Move supported cylindrical holes and bosses from their current B-Rep, with explicit
+lateral directions and boss Trim/Extend policies. Supported boundary features also
+have Delete Face and diameter/height Pull workflows. No feature history is needed.
+The user reports **47/47 manual desktop checks passed** across the recent geometry
+and crash-fix phases; these are user-reported acceptance results. Native persistence,
+identity and history checks are recorded in [Phase 9E](docs/FACE_HISTORY_PERSISTENCE.md).
+Final build/test results and release limitations are recorded in the
+[v0.4.9 integration review](docs/V049_INTEGRATION_REVIEW.md).
+
+Delete Face now supports the certified sloped cylindrical opening in `hole2.odc`,
+including elliptical planar rims, native Save/Open and cached history. See
+[sloped-opening deletion](docs/SLOPED_OPENING_DELETE_FACE.md) for verification and
+remaining reconstruction limits, and
+[Pull/Resize limits](docs/PULL_RESIZE_GAPS.md#unsupported-versus-ambiguous-versus-invalid).
+Move Face also moves a certified planar face containing cylindrical openings along
+its normal, rebuilding elliptical rims while keeping cylinder axes and radii fixed.
+See [planar opening movement](docs/SLOPED_PLANAR_OPENING_MOVE.md).
+Phase 9F.2 corrects production cross-screen HiDPI panel placement and delayed
+native geometry handling. Synthetic 100–200% screen tests exercise the production
+positioner; [real multi-monitor acceptance remains pending](docs/CROSS_SCREEN_HIDPI.md).
 
 Both commands support New Solid, Add Material and Remove Material with shared
 Active Part targeting, live previews, Undo/Redo and native Save/Open. The user
@@ -62,7 +83,7 @@ Construction sources, and does not validate closed/extrudable profiles.
 - Box, Cylinder, Sphere and Cone primitives with direct Pull and exact dimensions
 - Move/Rotate gizmos centered on B-Rep volume centroids, selection and duplication
 - Interactive Move/Rotate preview with OK/Enter, Cancel/Esc and one shared Undo/Redo step
-- General Move Face for supported planar faces, with validated B-Rep preview and Undo/Redo
+- Move Face for supported planar faces and cylindrical holes/bosses, with validated B-Rep preview and Undo/Redo
 - Rotate Face about a straight target edge or projected world axis
 - Align Face as Coplanar or Parallel to a selected planar reference face
 - Delete Face for certified analytic holes, bosses, convex planar chamfers and
@@ -116,7 +137,7 @@ Selection shortcuts, explicit context actions and eligibility: [Selection and co
 Face removal, conservative reconstruction limits and shared geometry error
 popups: [Delete Face](docs/DELETE_FACE.md).
 
-Native document storage, `.odc` schema v3/v4 with v1/v2/v3/v4 read compatibility, transaction-safe Save/Open and
+Native document storage, `.odc` schema v3/v4/v5 with v1–v5 read compatibility, transaction-safe Save/Open and
 round-trip tests: [Native documents](docs/NATIVE_DOCUMENTS.md).
 
 The v0.3.6 interaction workflow retains passive selection: click Faces, Alt+click Parts,

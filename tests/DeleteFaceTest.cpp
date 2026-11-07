@@ -1,9 +1,22 @@
 #include "CadViewport.h"
 #include "MainWindow.h"
 #include "DeleteFaceGeometry.h"
+#include "CylindricalMoveGeometry.h"
+#include "MoveFaceGeometry.h"
+#include "BooleanGeometry.h"
+#include <QFile>
+#include <BRepAdaptor_Curve.hxx>
+#include <BRepPrimAPI_MakeHalfSpace.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
+#include <BRepFeat_SplitShape.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include "DebugModel.h"
 #include <QApplication>
 #include <QAction>
+#include <QComboBox>
 #include <QMenu>
 #include <QDialogButtonBox>
 #include <QPushButton>
@@ -24,6 +37,7 @@
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepLProp_SLProps.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepGProp.hxx>
 #include <BRepTools.hxx>
@@ -117,7 +131,7 @@ void checkInclinedStep(const TopoDS_Shape& shape) {
             }
     }
 }
-void accepted(const TopoDS_Shape& source,const std::vector<TopoDS_Face>& faces,const TopoDS_Shape& expected) {
+BRepReconstruction::Result accepted(const TopoDS_Shape& source,const std::vector<TopoDS_Face>& faces,const TopoDS_Shape& expected) {
     require(!faces.empty(),"empty valid fixture selection");const auto before=stamp(source);
     QString error;BRepReconstruction::Result result;
     if(!DeleteFaceGeometry::remove(source,faces,result,error)) throw std::runtime_error(error.toStdString());
@@ -137,12 +151,72 @@ void accepted(const TopoDS_Shape& source,const std::vector<TopoDS_Face>& faces,c
         const gp_Pnt p(x+0.13,y+0.17,z+0.19);actual.Perform(p,1.e-7);oracle.Perform(p,1.e-7);
         require(actual.State()==oracle.State(),"material probe differs from independent stock oracle");
     }
+    return result;
 }
 void refused(const TopoDS_Shape& source,const std::vector<TopoDS_Face>& faces) {
     const auto before=stamp(source);QString error;BRepReconstruction::Result result;result.solid=source;
     require(!DeleteFaceGeometry::remove(source,faces,result,error),"impossible or ambiguous deletion accepted");
     require(result.solid.IsNull()&&result.history.empty()&&!error.isEmpty(),"failure retained a result or omitted reason");
     require(stamp(source)==before,"refused delete mutated source");
+}
+TopoDS_Face radiusFace(const TopoDS_Shape& shape,double radius) {
+    const auto faces=select(shape,[&](const auto& f){const BRepAdaptor_Surface s(f);return s.GetType()==GeomAbs_Cylinder&&std::abs(s.Cylinder().Radius()-radius)<1.e-7;});
+    if(faces.empty()) {
+        std::ostringstream message;message<<"Missing fixture cylinder R="<<radius<<"; current cylinders:";
+        for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {const BRepAdaptor_Surface s(TopoDS::Face(it.Current()));if(s.GetType()==GeomAbs_Cylinder) message<<" R="<<s.Cylinder().Radius()<<" at ("<<s.Cylinder().Location().X()<<","<<s.Cylinder().Location().Y()<<","<<s.Cylinder().Location().Z()<<")";}
+        throw std::runtime_error(message.str());
+    }return faces.front();
+}
+struct BoundaryFixture {TopoDS_Shape source,expected;double radius;};
+BoundaryFixture boundaryFixture(int kind) {
+    const auto box=BRepPrimAPI_MakeBox(163,80,60).Shape();
+    const auto tool=[](double x,double y,double z,double r,double height) {return BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(x,y,z),gp_Dir(0,0,1)),r,height).Shape();};
+    if(kind==0) {
+        auto body=BooleanGeometry::combine<BRepAlgoAPI_Cut>(box,tool(90,65,0,7,60));
+        body=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(body,tool(121,36,60,18,55));
+        return {BooleanGeometry::combine<BRepAlgoAPI_Cut>(body,tool(0,36,0,17,60)),body,17};
+    }
+    auto body=BooleanGeometry::combine<BRepAlgoAPI_Cut>(box,tool(54,36,0,17,60));
+    body=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(body,tool(90,65,60,7,20));
+    auto boss=tool(158,36,60,18,55);
+    if(kind==1) boss=BooleanGeometry::combine<BRepAlgoAPI_Common>(boss,BRepPrimAPI_MakeBox(gp_Pnt(0,0,60),163,80,55).Shape());
+    return {BooleanGeometry::combine<BRepAlgoAPI_Fuse>(body,boss),body,18};
+}
+void boundaryGeometry() {
+    for(int kind=0;kind<3;++kind) for(bool split:{false,true}) {
+        auto f=boundaryFixture(kind);
+        if(split) {
+            const auto patch=radiusFace(f.source,f.radius);const BRepAdaptor_Surface surface(patch);
+            const double u=surface.FirstUParameter()+.37*(surface.LastUParameter()-surface.FirstUParameter());
+            BRepFeat_SplitShape builder(f.source);builder.Add(BRepBuilderAPI_MakeEdge(surface.Value(u,surface.FirstVParameter()),surface.Value(u,surface.LastVParameter())).Edge(),patch);builder.Build();
+            require(builder.IsDone(),"cannot split boundary mantle");TopTools_IndexedMapOfShape before,after;TopExp::MapShapes(f.source,TopAbs_FACE,before);TopExp::MapShapes(builder.Shape(),TopAbs_FACE,after);
+            require(after.Extent()>before.Extent(),"boundary mantle was not split");f.source=builder.Shape();
+            gp_Trsf placement;placement.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.53);placement.SetTranslationPart(gp_Vec(130,-70,25));
+            f.source=BRepBuilderAPI_Transform(f.source,placement,true).Shape();f.expected=BRepBuilderAPI_Transform(f.expected,placement,true).Shape();
+        }
+        const auto result=accepted(f.source,{radiusFace(f.source,f.radius)},f.expected);
+        // Removal must agree with independent analytic volume, not just an
+        // oracle built from production healing. Occupancy covers the full Part.
+        GProp_GProps mass;BRepGProp::VolumeProperties(result.solid,mass);
+        const double pi=std::acos(-1.);const double expected=kind==0?163*80*60-pi*49*60+pi*324*55:163*80*60-pi*289*60+pi*49*20;
+        require(std::abs(mass.Mass()-expected)<1.e-7*expected,"boundary delete analytic volume mismatch");
+        BRepClass3d_SolidClassifier actual(result.solid),oracle(f.expected);
+        for(int x=-10;x<190;x+=17) for(int y=-5;y<90;y+=17) for(double z:{-1.,15.,59.,61.,90.,114.,116.}) {
+            gp_Pnt point(x+.27,y+.41,z);
+            if(split) {gp_Trsf placement;placement.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.53);placement.SetTranslationPart(gp_Vec(130,-70,25));point.Transform(placement);}
+            actual.Perform(point,1.e-7);oracle.Perform(point,1.e-7);require(actual.State()==oracle.State(),"boundary deletion changed independent occupancy");
+        }
+    }
+    const auto box=BRepPrimAPI_MakeBox(163,80,60).Shape();
+    const auto corner=BooleanGeometry::combine<BRepAlgoAPI_Cut>(box,BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(5,5,0),gp_Dir(0,0,1)),17,60).Shape());
+    // Two planar side trims are now certified by the shared rim intersection;
+    // this corner opening has one unique healed solid, not an ambiguous closure.
+    accepted(corner,{radiusFace(corner,17)},box);
+    const auto blind=BooleanGeometry::combine<BRepAlgoAPI_Cut>(box,BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0,36,20),gp_Dir(0,0,1)),17,40).Shape());
+    refused(blind,{radiusFace(blind,17)});
+    const auto f=boundaryFixture(1);const auto invalid=BooleanGeometry::combine<BRepAlgoAPI_Cut>(f.source,BRepPrimAPI_MakeBox(gp_Pnt(150,25,80),20,20,20).Shape());
+    refused(invalid,{radiusFace(invalid,18)});
+    refused(f.source,{radiusFace(boundaryFixture(2).source,18)});
 }
 void geometry() {
     const auto box=stock(),through=hole();const auto wall=walls(through);
@@ -292,6 +366,213 @@ struct DeleteFaceTest {
         require(!v.context_->HasDetected()&&v.context_->MainSelector()->NbPicked()==0,"history retained detection/picks");
         require(tree->selectedItems().isEmpty()&&!tree->currentItem(),"history retained browser selection/current item");
         require(!v.commandSession_&&v.moveFaceArrow_.IsNull()&&v.faceRotationManipulator_.IsNull(),"history retained command tools");
+    }
+    static void slopedOpening(const QString& path,bool geometryOnly=false) {
+        NativeDocumentSnapshot snapshot;QString error;QTemporaryDir temporary;QByteArray original;
+        require(temporary.isValid(),"cannot create sloped Delete test directory");
+        if(!path.isEmpty()) {
+            QFile file(path);require(file.open(QIODevice::ReadOnly),"cannot read native sloped opening");original=file.readAll();
+            require(NativeDocumentStorage::load(path,snapshot,error),qPrintable(error));
+        } else {
+            TopoDS_Shape body=BRepPrimAPI_MakeBox(163,80,200).Shape();
+            const double angle=std::acos(-1.)/12;
+            for(const auto& plane:{gp_Pln(gp_Pnt(56.4275,36,125.439),gp_Dir(std::sin(angle),0,std::cos(angle))),
+                                  gp_Pln(gp_Pnt(155.654,0,-6.49658),gp_Dir(std::cos(angle),0,std::sin(angle)))})
+                body=BooleanGeometry::combine<BRepAlgoAPI_Common>(body,BRepPrimAPI_MakeHalfSpace(BRepBuilderAPI_MakeFace(plane).Face(),plane.Location().Translated(gp_Vec(plane.Axis().Direction())*-100)).Solid());
+            NativePartState p;p.id="sloped-opening";p.name="Sloped rim";
+            p.shape=BooleanGeometry::combine<BRepAlgoAPI_Cut>(body,BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(84,36,-60),gp_Dir(0,0,1)),21,300).Shape());snapshot.parts={p};
+        }
+        require(!snapshot.parts.empty(),"empty native sloped opening");
+        const auto source=snapshot.parts[0].shape;
+        const auto candidates=select(source,[](const auto& face) {
+            if(BRepAdaptor_Surface(face).GetType()!=GeomAbs_Cylinder||face.Orientation()!=TopAbs_REVERSED) return false;
+            for(TopExp_Explorer edge(face,TopAbs_EDGE);edge.More();edge.Next()) if(BRepAdaptor_Curve(TopoDS::Edge(edge.Current())).GetType()==GeomAbs_Ellipse) return true;
+            return false;
+        });
+        require(candidates.size()==1,"select one current inward cylinder with an elliptical rim");
+        const auto target=candidates.front();const auto cylinder=BRepAdaptor_Surface(target).Cylinder();const double radius=cylinder.Radius();
+        std::cout<<"Sloped native/current opening R="<<radius<<" selected from its actual rims"<<std::endl;
+        bool ellipse=false,circle=false;for(TopExp_Explorer it(target,TopAbs_EDGE);it.More();it.Next()) {const auto type=BRepAdaptor_Curve(TopoDS::Edge(it.Current())).GetType();ellipse|=type==GeomAbs_Ellipse;circle|=type==GeomAbs_Circle;}
+        require(ellipse&&circle,"sloped regression must have elliptical and circular rims");
+        // Independent oracle intersects ALL physical retained planes. It never
+        // uses the production local fill or its clipped-cylinder tool.
+        std::vector<gp_Cylinder> bosses;std::vector<TopoDS_Shape> bossVolumes;
+        for(TopExp_Explorer it(source,TopAbs_FACE);it.More();it.Next()) {const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface surface(face);if(surface.GetType()==GeomAbs_Cylinder&&face.Orientation()==TopAbs_FORWARD) {const auto c=surface.Cylinder();bosses.push_back(c);bossVolumes.push_back(BRepPrimAPI_MakeCylinder(gp_Ax2(c.Location().Translated(gp_Vec(c.Axis().Direction())*surface.FirstVParameter()),c.Axis().Direction()),c.Radius(),surface.LastVParameter()-surface.FirstVParameter()).Shape());}}
+        std::vector<gp_Pln> planes;TopoDS_Shape body=BRepPrimAPI_MakeBox(gp_Pnt(-1000,-1000,-1000),2000,2000,2000).Shape();
+        for(TopExp_Explorer it(source,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface surface(face);if(surface.GetType()!=GeomAbs_Plane) continue;
+            GProp_GProps area;BRepGProp::SurfaceProperties(face,area);
+            const bool bossCap=std::any_of(bosses.begin(),bosses.end(),[&](const auto& c) {return surface.Plane().Axis().Direction().IsParallel(c.Axis().Direction(),1.e-8)&&gp_Vec(c.Location(),area.CentreOfMass()).Crossed(gp_Vec(c.Axis().Direction())).Magnitude()<1.e-6&&std::abs(area.Mass()-std::acos(-1.)*c.Radius()*c.Radius())<1.e-7*area.Mass();});
+            if(bossCap) continue;
+            auto normal=surface.Plane().Axis().Direction();if(face.Orientation()==TopAbs_REVERSED) normal.Reverse();const gp_Pln plane(surface.Plane().Location(),normal);planes.push_back(plane);
+            body=BooleanGeometry::combine<BRepAlgoAPI_Common>(body,BRepPrimAPI_MakeHalfSpace(BRepBuilderAPI_MakeFace(plane).Face(),plane.Location().Translated(gp_Vec(normal)*-100)).Solid());
+        }
+        for(TopExp_Explorer it(body,TopAbs_FACE);it.More();it.Next()) {const BRepAdaptor_Surface s(TopoDS::Face(it.Current()));require(s.GetType()==GeomAbs_Plane&&std::any_of(planes.begin(),planes.end(),[&](const auto& p){return p.Axis().Direction().IsParallel(s.Plane().Axis().Direction(),1.e-8)&&p.Distance(s.Plane().Location())<1.e-6;}),"oracle retained a seed support");}
+        for(const auto& boss:bossVolumes) body=BooleanGeometry::combine<BRepAlgoAPI_Fuse>(body,boss);
+        const auto longTool=[&](const gp_Pnt& p,double radius) {return BRepPrimAPI_MakeCylinder(gp_Ax2(p.Translated(gp_Vec(cylinder.Axis().Direction())*-1000),cylinder.Axis().Direction()),radius,2000).Shape();};
+        require(BRepReconstruction::equivalent(source,BooleanGeometry::combine<BRepAlgoAPI_Cut>(body,longTool(cylinder.Location(),radius))),"native source differs from independent planar material oracle");
+        GProp_GProps sourceMass,bodyMass;BRepGProp::VolumeProperties(source,sourceMass);BRepGProp::VolumeProperties(body,bodyMass);
+        const double filledVolume=bodyMass.Mass()-sourceMass.Mass();require(filledVolume>0,"oracle has no missing opening material");
+        if(path.isEmpty()) {
+            double lower=-1.e100,upper=1.e100;
+            for(const auto& plane:planes) {const double dot=plane.Axis().Direction().Dot(cylinder.Axis().Direction());if(std::abs(dot)<1.e-8) continue;const double t=gp_Vec(cylinder.Location(),plane.Location()).Dot(gp_Vec(plane.Axis().Direction()))/dot;if(dot>0) upper=std::min(upper,t);else lower=std::max(lower,t);}
+            const double analytic=std::acos(-1.)*radius*radius*(upper-lower);
+            require(std::abs(filledVolume-analytic)<1.e-7*analytic,"portable sloped oracle differs from analytic disk-area times affine axial height");
+        }
+        const auto verify=[](const TopoDS_Shape& actual,const TopoDS_Shape& expected) {
+            double a=0,b=0;require(BRepReconstruction::validSolid(actual,a)&&BRepReconstruction::validSolid(expected,b),"sloped deletion did not produce valid closed solids");
+            require(std::abs(a-b)<1.e-7*std::max(1.,b)&&BRepReconstruction::equivalent(actual,expected),"sloped deletion volume/material differs from independent oracle");
+            for(const auto type:{TopAbs_SOLID,TopAbs_SHELL,TopAbs_FACE,TopAbs_WIRE,TopAbs_EDGE,TopAbs_VERTEX}) {TopTools_IndexedMapOfShape x,y;TopExp::MapShapes(actual,type,x);TopExp::MapShapes(expected,type,y);require(x.Extent()==y.Extent(),"sloped deletion topology differs from oracle");}
+            TopTools_IndexedMapOfShape edges;TopExp::MapShapes(actual,TopAbs_EDGE,edges);for(int i=1;i<=edges.Extent();++i) {int uses=0;for(TopExp_Explorer f(actual,TopAbs_FACE);f.More();f.Next()) for(TopExp_Explorer e(f.Current(),TopAbs_EDGE);e.More();e.Next()) if(e.Current().IsSame(edges(i))) ++uses;require(uses==2,"sloped deletion is not manifold");}
+            Bnd_Box bounds;BRepBndLib::AddOptimal(expected,bounds,false,false);double x,y,z,X,Y,Z;bounds.Get(x,y,z,X,Y,Z);
+            BRepClass3d_SolidClassifier result(actual),oracle(expected);
+            for(int i=-1;i<=9;++i) for(int j=-1;j<=9;++j) for(int k=-1;k<=9;++k) {const gp_Pnt p(x+(X-x)*(i+.37)/9,y+(Y-y)*(j+.41)/9,z+(Z-z)*(k+.29)/9);result.Perform(p,1.e-7);oracle.Perform(p,1.e-7);require(result.State()==oracle.State(),"sloped deletion changed independent material occupancy");}
+        };
+        const auto otherTool=longTool(gp_Pnt(30,16,0),4);
+        const auto withOther=BooleanGeometry::combine<BRepAlgoAPI_Cut>(source,otherTool),expectedOther=BooleanGeometry::combine<BRepAlgoAPI_Cut>(body,otherTool);
+        for(int variant=0;variant<3;++variant) {
+            auto current=variant?withOther:source,expected=variant?expectedOther:body;
+            if(variant==2) {gp_Trsf transform;transform.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.43);transform.SetTranslationPart(gp_Vec(170,-55,32));current=BRepBuilderAPI_Transform(current,transform,true).Shape();expected=BRepBuilderAPI_Transform(expected,transform,true).Shape();}
+            const auto deleted=accepted(current,{radiusFace(current,radius)},expected);verify(deleted.solid,expected);
+            GProp_GProps oldMass,newMass;BRepGProp::VolumeProperties(current,oldMass);BRepGProp::VolumeProperties(deleted.solid,newMass);
+            require(std::abs(newMass.Mass()-oldMass.Mass()-filledVolume)<1.e-7*std::max(1.,filledVolume),"sloped deletion added the wrong independently measured volume");
+        }
+        // Intersecting cylindrical supports have no certified local planar closure.
+        const auto interacting=BooleanGeometry::combine<BRepAlgoAPI_Cut>(source,longTool(cylinder.Location().Translated(gp_Vec(cylinder.XAxis().Direction())*(radius*.8)),radius*.3));
+        refused(interacting,{radiusFace(interacting,radius)});
+        if(geometryOnly) return;
+        snapshot.parts[0].shape=withOther;snapshot.parts[0].geometryKind=1;
+        snapshot.parts[0].cylinderPrimitive=true;snapshot.parts[0].cylinderRadius=999; // Deliberately stale metadata.
+        snapshot.parts[0].color=QColor(23,85,172);snapshot.parts[0].transform.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.31);
+        snapshot.parts[0].transform.SetTranslationPart(gp_Vec(45,-20,15));
+        NativePartState hidden;hidden.id="sloped-hidden";hidden.name="Hidden witness";hidden.shape=BRepPrimAPI_MakeBox(5,6,7).Shape();hidden.visible=false;snapshot.parts.push_back(hidden);snapshot.activePartId=hidden.id;
+        MainWindow window;window.show();QApplication::processEvents();auto& v=*window.findChild<CadViewport*>();
+        // Opening a freshly written source must retain its deletion capability.
+        const auto sourcePath=temporary.filePath("source.odc");require(NativeDocumentStorage::save(sourcePath,snapshot,error),qPrintable(error));NativeDocumentSnapshot loaded;
+        require(NativeDocumentStorage::load(sourcePath,loaded,error)&&v.importDocumentSnapshot(loaded,error),qPrintable(error));v.fitSelection({0});
+        const auto before=v.boxes_[0];auto* tree=window.findChild<QTreeWidget*>();auto* row=tree->topLevelItem(0)->child(0);const auto active=v.activePartId();
+        const auto identity=[&](bool samePresentation) {
+            const auto& p=v.boxes_[0];require(p.persistentId==before.persistentId&&p.name==before.name&&p.color==before.color&&p.visible==before.visible&&v.activePartId()==active,"sloped Delete changed Part identity/appearance/Active Part");
+            for(int r=1;r<=3;++r) for(int c=1;c<=4;++c) require(std::abs(p.orientation.Value(r,c)-before.orientation.Value(r,c))<1.e-12,"sloped Delete changed placement");
+            if(samePresentation) require(p.presentation==before.presentation&&tree->topLevelItem(0)->child(0)==row,"sloped Delete replaced presentation/browser row");
+            require(!v.boxes_.back().visible&&!v.context_->IsDisplayed(v.boxes_.back().presentation),"sloped Delete displayed hidden witness");
+        };
+        const auto saved=[&](const TopoDS_Shape& expected,bool reopen) {
+            NativeDocumentSnapshot captured,restored;require(v.exportDocumentSnapshot(captured),"sloped snapshot capture failed");
+            const auto file=temporary.filePath("result.odc");const auto history=v.undoStack_.size(),redo=v.redoStack_.size();require(NativeDocumentStorage::save(file,captured,error)&&NativeDocumentStorage::load(file,restored,error),qPrintable(error));verify(restored.parts[0].shape,expected);
+            require(v.undoStack_.size()==history&&v.redoStack_.size()==redo,"sloped Save changed history");
+            if(reopen) {require(v.importDocumentSnapshot(restored,error),qPrintable(error));require(v.undoStack_.empty()&&v.redoStack_.empty()&&!v.commandSession_&&v.context_->NbSelected()==0,"sloped Open retained history/session/selection");identity(false);}
+        };
+        pick(v,0,{radiusFace(v.boxes_[0].shape,radius)});v.deleteFace();require(v.commandSession_&&v.commandSession_->valid,"sloped Delete preview missing after Save/Open");
+        const auto preview=v.commandSession_->facePreviews.front();verify(preview->Shape(),expectedOther);saved(withOther,false);
+        TColStd_ListOfInteger modes;v.context_->ActivatedModes(preview,modes);require(modes.IsEmpty(),"sloped Delete preview selectable");
+        v.cancelCommandSession();require(v.boxes_[0].shape.IsSame(before.shape)&&v.undoStack_.empty()&&v.context_->DisplayStatus(preview)==PrsMgr_DisplayStatus_None,"sloped Cancel changed source/history or leaked preview");identity(true);
+        pick(v,0,{radiusFace(v.boxes_[0].shape,radius)});v.deleteFace();require(v.commandSession_&&v.commandSession_->valid,"sloped Delete restart failed");
+        const auto committed=v.commandSession_->changes.front().faceChange->after.shape;v.confirmCommandSession();verify(v.boxes_[0].shape,expectedOther);
+        require(!v.commandSession_&&v.boxes_[0].shape.IsSame(committed)&&v.undoStack_.size()==1,"sloped Delete did not commit one cached transaction");identity(true);
+        v.undoPull();emptySelection(v,tree);require(v.boxes_[0].shape.IsSame(before.shape),"sloped Undo lost exact source");identity(true);saved(withOther,false);
+        v.redoPull();emptySelection(v,tree);require(v.boxes_[0].shape.IsSame(committed),"sloped Redo rebuilt geometry");identity(true);saved(expectedOther,true);
+        // Undo the deletion, reopen that saved B-Rep, then delete again with new owners.
+        require(NativeDocumentStorage::load(sourcePath,loaded,error)&&v.importDocumentSnapshot(loaded,error),qPrintable(error));pick(v,0,{radiusFace(v.boxes_[0].shape,radius)});v.deleteFace();require(v.commandSession_&&v.commandSession_->valid,"fresh reopened sloped face lost Delete capability");v.confirmCommandSession();verify(v.boxes_[0].shape,expectedOther);
+        if(!path.isEmpty()) {QFile file(path);require(file.open(QIODevice::ReadOnly)&&file.readAll()==original,"sloped Delete modified private source document");}
+        std::cout<<"Sloped opening Delete Face: independent geometry, native persistence, preview, Cancel, history and identity passed\n";
+    }
+    static void boundarySession(const QString& path) {
+        NativeDocumentSnapshot native;QString error;QByteArray bytes;std::vector<BoundaryFixture> fixtures;double remainingRadius=17;
+        if(path.isEmpty()) for(int kind=0;kind<3;++kind) fixtures.push_back(boundaryFixture(kind));
+        else {
+            QFile file(path);require(file.open(QIODevice::ReadOnly),"cannot read native boundary document");bytes=file.readAll();file.close();
+            require(NativeDocumentStorage::load(path,native,error),qPrintable(error));require(!native.parts.empty(),"empty native boundary document");
+            const auto original=native.parts[0].shape;TopoDS_Face holeFace,bossFace;
+            for(TopExp_Explorer it(original,TopAbs_FACE);it.More();it.Next()) {
+                const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface surface(face);if(surface.GetType()!=GeomAbs_Cylinder) continue;
+                const double u=(surface.FirstUParameter()+surface.LastUParameter())/2,v=(surface.FirstVParameter()+surface.LastVParameter())/2;
+                BRepLProp_SLProps props(surface,u,v,1,1.e-7);require(props.IsNormalDefined(),"undefined native cylinder normal");
+                auto normal=props.Normal();if(face.Orientation()==TopAbs_REVERSED) normal.Reverse();const auto c=surface.Cylinder();
+                auto radial=gp_Vec(c.Location(),surface.Value(u,v));radial-=gp_Vec(c.Axis().Direction())*radial.Dot(gp_Vec(c.Axis().Direction()));
+                if(normal.Dot(gp_Dir(radial))<0) holeFace=face;else bossFace=face;
+            }
+            require(!holeFace.IsNull()&&!bossFace.IsNull(),"native fixture needs a hole and boss");
+            const BRepAdaptor_Surface hs(holeFace),bs(bossFace);const auto hole=hs.Cylinder(),boss=bs.Cylinder();remainingRadius=hole.Radius();
+            require(hole.Axis().Direction().IsParallel(gp_Dir(0,0,1),1.e-8)&&boss.Axis().Direction().IsParallel(gp_Dir(0,0,1),1.e-8),"native replay expects axial stock fixture");
+            const double bottom=std::min(hs.Value(0,hs.FirstVParameter()).Z(),hs.Value(0,hs.LastVParameter()).Z());
+            const double top=std::max(hs.Value(0,hs.FirstVParameter()).Z(),hs.Value(0,hs.LastVParameter()).Z());
+            const double base=std::min(bs.Value(0,bs.FirstVParameter()).Z(),bs.Value(0,bs.LastVParameter()).Z());
+            const double cap=std::max(bs.Value(0,bs.FirstVParameter()).Z(),bs.Value(0,bs.LastVParameter()).Z());
+            require(std::abs(base-top)<1.e-7,"native boss has a different support height");
+            double left=1.e100,right=-1.e100,front=1.e100,back=-1.e100;
+            for(TopExp_Explorer it(original,TopAbs_FACE);it.More();it.Next()) {
+                const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(face);if(s.GetType()!=GeomAbs_Plane) continue;
+                auto n=s.Plane().Axis().Direction();if(face.Orientation()==TopAbs_REVERSED) n.Reverse();
+                if(n.X()<-.99) left=std::min(left,s.Plane().Location().X());if(n.X()>.99) right=std::max(right,s.Plane().Location().X());
+                if(n.Y()<-.99) front=std::min(front,s.Plane().Location().Y());if(n.Y()>.99) back=std::max(back,s.Plane().Location().Y());
+            }
+            if(!(left<right&&front<back&&bottom<top&&std::max({std::abs(left),std::abs(right),std::abs(front),std::abs(back),std::abs(bottom),std::abs(top)})<1.e9))
+                throw std::runtime_error("Native replay fixture requires bounded axis-aligned planar stock; current document does not match this independent box oracle.");
+            const auto box=BRepPrimAPI_MakeBox(gp_Pnt(left,front,bottom),right-left,back-front,top-bottom).Shape();
+            const auto bore=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(hole.Location().X(),hole.Location().Y(),bottom),gp_Dir(0,0,1)),hole.Radius(),top-bottom).Shape();
+            const auto stockHole=BooleanGeometry::combine<BRepAlgoAPI_Cut>(box,bore);
+            const auto bossTool=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(boss.Location().X(),boss.Location().Y(),base),gp_Dir(0,0,1)),boss.Radius(),cap-base).Shape();
+            const auto oldBoss=BooleanGeometry::combine<BRepAlgoAPI_Common>(original,bossTool);
+            require(BRepReconstruction::equivalent(original,BooleanGeometry::combine<BRepAlgoAPI_Fuse>(stockHole,oldBoss)),"native fixture differs from independent stock oracle");
+            const auto notch=CylindricalMoveGeometry::moveThroughHole(original,holeFace,gp_Vec(left-hole.Location().X(),0,0));
+            require(bool(notch),notch.message.c_str());fixtures.push_back({notch.shape,BooleanGeometry::combine<BRepAlgoAPI_Fuse>(box,oldBoss),hole.Radius()});
+            const double innerX=std::clamp(boss.Location().X(),left+boss.Radius()+1,right-boss.Radius()-1),innerY=(front+back)/2;
+            const auto interior=CylindricalMoveGeometry::moveBoss(original,bossFace,gp_Vec(innerX-boss.Location().X(),innerY-boss.Location().Y(),0),CylindricalMoveGeometry::BossBoundaryMode::Extend);
+            require(bool(interior),interior.message.c_str());
+            for(auto policy:{CylindricalMoveGeometry::BossBoundaryMode::Trim,CylindricalMoveGeometry::BossBoundaryMode::Extend}) {
+                const auto moved=CylindricalMoveGeometry::moveBoss(interior.shape,radiusFace(interior.shape,boss.Radius()),gp_Vec(0,front+.4*boss.Radius()-innerY,0),policy);
+                require(bool(moved),moved.message.c_str());fixtures.push_back({moved.shape,stockHole,boss.Radius()});
+            }
+        }
+        MainWindow window;window.resize(1200,900);window.show();QApplication::processEvents();auto& v=*window.findChild<CadViewport*>();auto* tree=window.findChild<QTreeWidget*>();
+        for(size_t kind=0;kind<fixtures.size();++kind) {
+            const auto& f=fixtures[kind];auto snapshot=native;
+            if(snapshot.parts.empty()) {NativePartState part;part.id="delete-boundary";part.name="Boundary removal";snapshot.parts.push_back(part);}
+            snapshot.parts[0].shape=f.source;
+            if(path.isEmpty()) {snapshot.parts[0].transform.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),.4);snapshot.parts[0].transform.SetScaleFactor(1.5);snapshot.parts[0].transform.SetTranslationPart(gp_Vec(40,-30,25));}
+            if(snapshot.parts.size()==1) {NativePartState other;other.id="delete-other";other.name="Other Part";other.shape=stock();other.transform.SetTranslation(gp_Vec(250,0,0));snapshot.parts.push_back(other);}
+            require(v.importDocumentSnapshot(snapshot,error),qPrintable(error));v.view_->SetProj(V3d_XnegYnegZpos);v.fitSelection({0});
+            const auto before=v.boxes_[0],other=v.boxes_[1];const auto originalStamp=stamp(before.shape);auto* row=tree->topLevelItem(0)->child(0);const auto history=v.undoStack_.size();
+            pick(v,0,{radiusFace(before.shape,f.radius)});std::unique_ptr<QMenu> menu(v.createSelectionMenu(QPoint()));
+            auto* action=menu->findChild<QAction*>("context.delete_face");require(action&&action->isEnabled(),"boundary Delete Face context action missing");action->trigger();
+            require(v.commandSession_&&v.commandSession_->valid&&v.commandSession_->facePreviews.size()==1,"boundary Delete preview absent");
+            const auto preview=v.commandSession_->facePreviews.front();require(BRepReconstruction::equivalent(preview->Shape(),f.expected),"boundary preview changed unrelated material");
+            Quantity_Color blue;preview->Color(blue);require(blue.Blue()>.9&&blue.Red()<.3&&std::abs(preview->Transparency()-.25)<1.e-6,"boundary preview is not translucent blue");
+            TColStd_ListOfInteger modes;v.context_->ActivatedModes(preview,modes);require(modes.IsEmpty(),"boundary preview is selectable");
+            require(v.boxes_[0].shape.IsSame(before.shape)&&v.undoStack_.size()==history,"boundary preview changed canonical state");
+            v.cancelCommandSession();require(v.boxes_[0].shape.IsSame(before.shape)&&v.context_->DisplayStatus(preview)==PrsMgr_DisplayStatus_None,"boundary Cancel changed source or leaked preview");
+            v.deleteFace();require(v.commandSession_&&v.commandSession_->valid,"boundary Delete lost activation after Cancel");
+            const auto cached=v.commandSession_->changes.front().faceChange->after.shape;v.commandButtons_->button(QDialogButtonBox::Ok)->click();
+            require(!v.commandSession_&&v.boxes_[0].shape.IsSame(cached)&&v.undoStack_.size()==history+1,"boundary Delete was not one cached transaction");
+            require(v.selectionContext().kind!=CadViewport::SelectionContext::Kind::Faces,"boundary commit retained deleted face owners");
+            require(v.moveFaceArrow_.IsNull()&&!v.commandSession_,"boundary commit retained command tools");
+            require(v.boxes_[0].persistentId==before.persistentId&&v.boxes_[0].name==before.name&&v.boxes_[0].color==before.color&&v.boxes_[0].visible==before.visible&&v.boxes_[0].presentation==before.presentation&&tree->topLevelItem(0)->child(0)==row,"boundary deletion lost Part/browser identity");
+            for(int r=1;r<=3;++r) for(int c=1;c<=4;++c) require(std::abs(v.boxes_[0].orientation.Value(r,c)-before.orientation.Value(r,c))<1.e-12,"boundary deletion changed placement");
+            require(v.boxes_[1].shape.IsSame(other.shape),"boundary deletion changed another Part");
+            v.undoPull();emptySelection(v,tree);require(v.boxes_[0].shape.IsSame(before.shape),"boundary Undo lost exact source");
+            v.redoPull();emptySelection(v,tree);require(v.boxes_[0].shape.IsSame(cached),"boundary Redo rebuilt geometry");
+            const auto remainingHoles=select(cached,[](const auto& face){const BRepAdaptor_Surface s(face);return s.GetType()==GeomAbs_Cylinder&&center(face).Z()<60;});
+            if(!remainingHoles.empty()) {
+                require(v.startMoveFace(0,remainingHoles.front()),"unaffected hole lost editing after Delete");v.cylinderMoveDirection_->setCurrentIndex(1);
+                require(v.previewMoveFace(1),"unaffected hole cannot preview after Delete");v.cancelCommandSession();
+            }
+            const auto remainingBosses=select(cached,[](const auto& face){const BRepAdaptor_Surface s(face);return s.GetType()==GeomAbs_Cylinder&&center(face).Z()>60;});
+            if(!remainingBosses.empty()) {require(v.startMoveFace(0,remainingBosses.front()),"unaffected boss lost editing after Delete");v.cancelCommandSession();}
+            double floor=1.e100;for(TopExp_Explorer it(cached,TopAbs_FACE);it.More();it.Next()) {const auto face=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(face);if(s.GetType()!=GeomAbs_Plane) continue;auto n=s.Plane().Axis().Direction();if(face.Orientation()==TopAbs_REVERSED) n.Reverse();if(n.Z()<-.99) floor=std::min(floor,s.Plane().Location().Z());}
+            const auto bottom=select(cached,[&](const auto& face){const BRepAdaptor_Surface s(face);return s.GetType()==GeomAbs_Plane&&std::abs(center(face).Z()-floor)<1.e-7;});
+            require(!bottom.empty()&&v.startMoveFace(0,bottom.front()),"unaffected planar face lost editing after Delete");require(v.previewMoveFace(1),"unaffected plane cannot preview after Delete");v.cancelCommandSession();
+            if(!remainingHoles.empty()) {pick(v,0,{remainingHoles.front()});v.deleteFace();require(v.commandSession_&&v.commandSession_->valid,"repeated Delete on remaining hole failed");v.confirmCommandSession();v.undoPull();require(v.boxes_[0].shape.IsSame(cached),"repeated Delete Undo lost cached boundary result");}
+            require(stamp(before.shape)==originalStamp,"boundary session mutated original B-Rep");
+        }
+        // Multi-Part refusal must not apply a valid first candidate partially.
+        v.addBox();const auto badIndex=v.boxes_.size()-1;auto bad=v.boxes_[badIndex];
+        bad.shape=BRepAlgoAPI_Cut(stock(),cylinder(0,20,40)).Shape();v.applyFaceState(badIndex,bad);
+        const auto before=v.boxes_[0].shape;const auto history=v.undoStack_.size();
+        pick(v,0,{radiusFace(before,remainingRadius)});pick(v,badIndex,walls(bad.shape),false);v.deleteFace();
+        require(!v.commandSession_&&v.boxes_[0].shape.IsSame(before)&&v.undoStack_.size()==history,"invalid multi-Part Delete partially committed");dismiss(window);
+        if(!path.isEmpty()) {QFile file(path);require(file.open(QIODevice::ReadOnly)&&file.readAll()==bytes,"native Delete replay modified original document");}
+        std::cout<<"Boundary Delete preview, identity, Cancel, cached history and follow-up editing passed\n";
     }
     static void reportedStep() {
         MainWindow window;window.show();QApplication::processEvents();
@@ -493,7 +774,11 @@ int main(int argc,char** argv) {
     if(qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")&&!qEnvironmentVariableIsEmpty("DISPLAY")) qputenv("QT_QPA_PLATFORM","xcb");
 #endif
     try {
-        if(argc>1&&std::string(argv[1])=="--geometry") geometry();
+        if(argc>1&&std::string(argv[1])=="--sloped-opening-geometry") DeleteFaceTest::slopedOpening(argc>2?QString::fromLocal8Bit(argv[2]):QString(),true);
+        else if(argc>1&&std::string(argv[1])=="--sloped-opening") {QApplication app(argc,argv);DeleteFaceTest::slopedOpening(argc>2?QString::fromLocal8Bit(argv[2]):QString());}
+        else if(argc>1&&std::string(argv[1])=="--boundary-geometry") boundaryGeometry();
+        else if(argc>1&&std::string(argv[1])=="--geometry") geometry();
+        else if(argc>1&&std::string(argv[1])=="--boundary-session") {QApplication app(argc,argv);DeleteFaceTest::boundarySession(argc>2?QString::fromLocal8Bit(argv[2]):QString());}
         else {QApplication app(argc,argv);DeleteFaceTest::run();DeleteFaceTest::reportedStep();DeleteFaceTest::sequentialStep();DeleteFaceTest::inclinedStep();}
         std::cout<<"Delete Face passed.\n";return 0;
     } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}

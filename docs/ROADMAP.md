@@ -1,6 +1,6 @@
 # OpenDesigner roadmap
 
-Versioned sections below are ordered by development history, from early foundations to v0.4.8. The older `v0.20` milestone names are retained as originally recorded. Planned and in-progress items follow separately; proposed milestone numbers and order are not release commitments.
+Versioned sections below are ordered by development history, from early foundations to v0.4.9. The older `v0.20` milestone names are retained as originally recorded. Planned and in-progress items follow separately; proposed milestone numbers and order are not release commitments.
 
 ## Cross-cutting principle — Geometry-first, history-independent B-Rep editing
 
@@ -632,29 +632,92 @@ See [Extrude](EXTRUDE_PROFILE.md), [Revolve](REVOLVE.md),
 [Revolve geometry](REVOLVE_GEOMETRY.md) and
 [shared architecture](SHARED_MODELING_ARCHITECTURE.md).
 
-## Planned after Workplanes & Sketches — Move cylindrical faces (holes & bosses, Issue #51)
+## v0.4.9 — Cylindrical Move Face and certified boundary editing
 
-- [ ] **Move Cylindrical Face:** extend direct face editing beyond existing
+- [x] Geometry-first cylindrical hole/boss movement from current analytic
+  supports, connected face patches, adjacency and material occupancy, independent
+  of creation metadata or feature history. Explicit lateral directions/angles,
+  manipulator or numeric input and boss **Trim / Extend** reuse Command Panels.
+- [x] Certified repeated open-notch/boundary-boss moves, independent features and
+  local planar-neighborhood reconstruction preserve unrelated material. See
+  [Move Face](MOVE_FACE.md), [local reconstruction](GEOMETRY_DRIVEN_MOVE_FACE.md),
+  [open notches](OPEN_CYLINDRICAL_NOTCH_MOVE.md),
+  [boundary follow-up](BOSS_BOUNDARY_FOLLOW_UP.md) and
+  [repeated boundary bosses](REPEATED_BOUNDARY_BOSS_MOVE.md).
+- [x] Certified diameter/height Pull and boundary Delete Face derive capability
+  from current geometry; unsafe global cylindrical-offset paths are avoided.
+  See [post-Trim Pull](PULL_AFTER_BOSS_TRIM.md),
+  [Pull/Resize scope](PULL_RESIZE_GAPS.md), [Delete Face](DELETE_FACE.md) and the
+  [reproduced planar/cylindrical crash correction](CRASH_03112026.md).
+- [x] Phase 9F.1: Delete Face on certified sloped planar-rim cylindrical openings.
+  Phase 9F.1B: normal movement of a certified planar face containing openings
+  recomputes elliptical boundaries while cylinder axes/radii stay fixed. See
+  [sloped-opening deletion](SLOPED_OPENING_DELETE_FACE.md),
+  [planar opening movement](SLOPED_PLANAR_OPENING_MOVE.md) and
+  [rotated-rim movement/Pull](ROTATED_RIM_CYLINDER.md).
+- [x] Shared live preview, numeric input, Cancel, one-step cached Undo/Redo,
+  Part identity/appearance/placement/browser continuity and native Save/Open.
+  Phase 9E verifies confirmed-only Save and fresh editing after Open; history
+  remains session-local. See [history/persistence](FACE_HISTORY_PERSISTENCE.md).
+- [x] Existing integration validation: complete Release build passed; the single
+  full CTest run initially passed **82/86**, followed by targeted corrections and
+  passing results for **all 86 cases across those runs**. This is not one clean
+  full-suite pass on every later commit. User-reported geometry/crash-phase
+  desktop acceptance: **47/47 passed**. See the
+  [integration review](V049_INTEGRATION_REVIEW.md) for dated scope and limitations.
+- [x] Phase 9F.1B documented **5/5** focused passes. Phase 9F.2 corrects production
+  panel positioning for asynchronous native/widget geometry and screen/DPR
+  changes, with **8/8** focused passes, synthetic **100%, 125%, 150%, 200%** Qt
+  screens and available single-monitor KDE/xcb verification. See
+  [cross-screen HiDPI results](CROSS_SCREEN_HIDPI.md). These are existing results;
+  roadmap conflict resolution does not rerun builds, tests or manual acceptance.
+- [ ] Physical mixed-DPI multi-monitor acceptance: real KWin boundary/spanning
+  behavior, decoration timing, focus, scale changes and hotplug remain pending.
+  Native Wayland positioning, Windows/macOS and a standalone bundled distribution
+  are not certified by this phase.
+
+Implementation is complete within the documented analytic certificates; broader
+blind/unproved closures, interacting or freeform geometry and reconstruction
+outside numerical/topology budgets remain safe diagnostic refusals. Advanced
+joint Pull/Resize and boss-transition extensions remain planned below.
+
+### Original cylindrical-face requirements (Issue #51)
+
+The following retains the original Workplane/Sketch-to-9A–9E rollout requirements,
+including the boundary-policy design. These historical requirements are not a
+claim of unrestricted implementation; the delivered scope and acceptance are
+recorded above. Blind holes and uncertified analytic/Boolean extensions remain
+future work.
+
+- **Move Cylindrical Face:** extend direct face editing beyond existing
   planar Move Face and cylinder Pull/Resize. Translate a selected **internal
   cylindrical face (hole)** or **external cylindrical face (boss / cylindrical
   protrusion on a planar face)** laterally, perpendicular to its own axis, by
   manipulator or exact numeric input; preserve diameter, direction and height.
-- [ ] **Reposition holes:** move the complete hole axis/inner wall and openings
+- **Reposition holes:** move the complete hole axis/inner wall and openings
   without changing the exterior Part or other features. Rebuild the adjacent
   planar faces and any affected edges to obtain a valid B-Rep solid.
-- [ ] **Reposition bosses:** move a complete **attached cylinder on a face**,
+- **Reposition bosses:** move a complete **attached cylinder on a face**,
   including its cylindrical mantle, cap and footprint on the support face, so
   the support face closes at the old location and opens at the new one. The
   cylinder remains attached to the Part, not a detached separate solid.
-- [ ] Start with exact and tractable examples: a complete circular **through-hole
+- **Boss boundary policy:** offer explicit **Trim / Extend** in the existing
+  Move Face Command Panel. Trim clips against extended original exterior
+  boundary surfaces; Extend preserves the complete translated cylinder and
+  reconstructs connected supporting material. Allow legitimate topology changes,
+  validate B-Rep and material connectivity, and refuse ambiguous/invalid results
+  atomically without switching modes. Plan geometry, live preview and transaction/
+  Save/Open tests in **9C–9E**, with no implementation during architecture **9A**;
+  see the [phase 9 boundary reconstruction plan](CYLINDRICAL_MOVE_PLAN.md).
+- Start with exact and tractable examples: a complete circular **through-hole
   in a block** and a complete circular **boss on a planar block face**.
   Subsequently consider blind holes, multiple features and more complex analytic
   Boolean B-Reps. Refuse ambiguous trims, collisions or invalid transitions
   atomically and preserve the original solid.
-- [ ] Reuse CoCreate SolidDesigner/Modeling 2008 v16.0 selection/workflow as a
+- Reuse CoCreate SolidDesigner/Modeling 2008 v16.0 selection/workflow as a
   reference, OpenDesigner's live preview, exact numeric input, OK/Cancel,
   Undo/Redo, native Save/Open and Part-placement handling.
-- [ ] Add tests for moved holes **and** moved attached bosses, exact geometry,
+- Add tests for moved holes **and** moved attached bosses, exact geometry,
   connected/manifold solids, unaffected faces, transformed Parts, safe refusal
   and GUI/history regressions. Plan this **after** Workplane (6B) and Sketch
   improvements, not as part of the current v0.4.2 delivery.
@@ -694,7 +757,7 @@ regardless of creation method, trims or neighboring geometry.
 ## Next milestones
 - CAD document ownership, persistent save/load and robust selection
 - Direct face modeling and workplanes
-- After Workplanes and Sketches: move cylindrical faces (holes and bosses)
+- Broader cylindrical-face movement (holes and bosses) beyond the certified v0.4.9 scope
 - Assemblies and 3D copilot
 - STEP, IGES, STL
 - GLB/glTF and FBX import/export
@@ -866,8 +929,8 @@ duplicated.
 
 ### Related future milestones (provisional ordering)
 
-- [ ] **Move Cylindrical Face** (proposed v0.4.9): relocate complete holes and
-  attached bosses as described in Issue #51 below.
+- [ ] **Broader Move Cylindrical Face reconstruction:** extend the certified
+  v0.4.9 hole/boss implementation to the remaining Issue #51 cases described above.
 - [ ] **Assemblies and Structure Browser** (proposed v0.5.3):
   hierarchical single-file Parts/subassemblies with optional externally stored
   components and explicit assembly-level transforms.
@@ -881,4 +944,3 @@ duplicated.
 - [ ] **Platform-independent Touch Mode** in Settings for desktop and future
   iPadOS/Android tablet targets; keep conventional desktop controls available.
 - [ ] **3D copilot/local AI** as a later, separately scoped milestone.
-

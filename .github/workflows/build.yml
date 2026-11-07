@@ -28,7 +28,7 @@ jobs:
           mkdir -p dist/OpenDesigner
           cp build/OpenDesigner dist/OpenDesigner/
           cat > dist/OpenDesigner/README.txt <<'EOF'
-          OpenDesigner v0.4.8 Unified Extrude and Revolve Linux prototype
+          OpenDesigner v0.4.9 Cylindrical Move Face Linux prototype
           This is an unbundled executable, NOT a standalone AppImage.
           Requires compatible Qt 6, Open CASCADE and graphics runtime libraries.
           On Ubuntu 24.04 the build dependencies from .github/workflows/build.yml

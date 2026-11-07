@@ -19,6 +19,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QScreen>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QTreeWidget>
@@ -357,7 +358,18 @@ struct SketchProjectionSessionTest {
         check(!v.commandSession_ && v.sketchPreviews_.empty() && !v.sketchProjectionPanel_,"closing the document left an active projection");w.documentDirty_=false;
     }
     static void panelAndNavigation() {
-        MainWindow w;setup(w);auto& v=*w.viewport_;v.startSketchProjection();auto* panel=v.sketchProjectionPanel_;
+        MainWindow w;setup(w);
+        if(w.devicePixelRatioF()>1 && QGuiApplication::screens().size()>1) {
+            // Qt scaling can leave gaps between screens' logical coordinates.
+            // Keep this single-viewport placement fixture on one screen rather
+            // than depending on the WM's smart placement across such a gap.
+            auto* screen=QGuiApplication::primaryScreen();
+            w.windowHandle()->setScreen(screen);
+            const auto origin=screen->availableGeometry().topLeft();
+            w.windowHandle()->setFramePosition(origin);
+            waitForPanelPosition(w,origin,"projection fixture did not settle on its screen");
+        }
+        auto& v=*w.viewport_;v.startSketchProjection();auto* panel=v.sketchProjectionPanel_;
         CommandPanelTest::waitForInitialAnchor(*panel,v,"projection panel not anchored to viewport +12");
         const auto bounds=[&]{return QRect(v.mapToGlobal(QPoint()),v.size());};
         const auto frame=panel->frameGeometry();

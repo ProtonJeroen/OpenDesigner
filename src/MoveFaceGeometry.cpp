@@ -1,8 +1,10 @@
 #include "MoveFaceGeometry.h"
 #include "BRepReconstruction.h"
+#include "CylindricalMoveGeometry.h"
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
+#include <BRep_Builder.hxx>
 #include <BRepLib.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepOffset_MakeOffset.hxx>
@@ -14,6 +16,7 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Solid.hxx>
+#include <TopoDS_Compound.hxx>
 #include <Standard_Failure.hxx>
 #include <QDebug>
 #include <QStringList>
@@ -75,8 +78,10 @@ bool MoveFaceGeometry::reference(const TopoDS_Shape& solid, const TopoDS_Face& f
             return false;
         }
         double volume=0;
-        if (!supported(solid) || !BRepReconstruction::validSolid(solid,volume)) {
-            error=QStringLiteral("Move Face needs one valid solid and shell (up to 64 faces); faces must be planes, cylinders or cones.");
+        // Recognize the selected plane independently of unrelated surfaces.
+        // Reconstruction routes certify their own local supports separately.
+        if (count(solid,TopAbs_FACE)>64 || !BRepReconstruction::validSolid(solid,volume)) {
+            error=QStringLiteral("Move Face needs one valid solid and shell (up to 64 faces).");
             qWarning().noquote()<<"Move Face unsupported topology:"<<error<<topologyDetails(solid,face)
                                <<"valid="<<BRepCheck_Analyzer(solid).IsValid();
             return false;
@@ -97,6 +102,9 @@ static TopoDS_Shape offsetMove(const TopoDS_Shape& source, const TopoDS_Face& so
     if (!std::isfinite(distance)) { error=QStringLiteral("Enter a finite face offset."); return {}; }
     if (!MoveFaceGeometry::reference(source,sourceFace,center,normal,error)) return {};
     if (std::abs(distance)<tolerance) return source;
+    // This kernel route retains its existing surface budget. It is not a
+    // recognition rule for the selected plane or for local reconstruction.
+    if(!supported(source)) {error=QStringLiteral("The global offset route cannot certify these retained surfaces; a local reconstruction is required.");return {};}
     BRepReconstruction::Prepared prepared;
     if(!BRepReconstruction::prepare(source,sourceFace,prepared,error)) return {};
     const auto& solid=prepared.solid;
@@ -110,7 +118,10 @@ static TopoDS_Shape offsetMove(const TopoDS_Shape& source, const TopoDS_Face& so
         // Intersection mode is essential here: the neighboring face supports
         // stay fixed while their trimming curves are recomputed against the
         // translated target plane.
-        offset.Initialize(copy.Shape(),0,tolerance,BRepOffset_Skin,true,false,GeomAbs_Intersection);
+        // Boolean edits may wrap their single solid in a compound. The offset
+        // builder requires the certified solid, not its presentation container.
+        TopExp_Explorer solidInput(copy.Shape(),TopAbs_SOLID);
+        offset.Initialize(solidInput.Current(),0,tolerance,BRepOffset_Skin,true,false,GeomAbs_Intersection);
         offset.SetOffsetOnFace(copiedFace,distance);
         offset.MakeOffsetShape();
         const auto fail=[&](const QString& reason) -> TopoDS_Shape {
@@ -137,6 +148,23 @@ static TopoDS_Shape offsetMove(const TopoDS_Shape& source, const TopoDS_Face& so
             if (!BRepLib::OrientClosedSolid(solidResult)) return fail(QStringLiteral("the offset shell cannot bound a solid."));
             result=solidResult;
         }
+        // Older offset builders assign coarse edge/vertex tolerances even to
+        // analytic intersections. Recompute from the curve representations and
+        // their endpoints; never cap tolerances to make a candidate acceptable.
+        BRepLib::SameParameter(result,tolerance,true);
+        TopTools_IndexedMapOfShape edges;TopExp::MapShapes(result,TopAbs_EDGE,edges);
+        BRep_Builder builder;TopoDS_Compound network;builder.MakeCompound(network);
+        for(int i=1;i<=edges.Extent();++i) builder.Add(network,edges(i));
+        // Only the edge network: face-size heuristics in UpdateTolerances(true)
+        // must not replace the existing surface tolerances.
+        BRepLib::UpdateTolerances(network,true);
+        for(const auto type:{TopAbs_FACE,TopAbs_EDGE,TopAbs_VERTEX})
+            for(TopExp_Explorer it(result,type);it.More();it.Next()) {
+                const double t=type==TopAbs_FACE?BRep_Tool::Tolerance(TopoDS::Face(it.Current())):
+                    type==TopAbs_EDGE?BRep_Tool::Tolerance(TopoDS::Edge(it.Current())):BRep_Tool::Tolerance(TopoDS::Vertex(it.Current()));
+                if(!std::isfinite(t)||t>1.e-6)
+                    return fail(QStringLiteral("the offset result exceeds the local reconstruction tolerance limit."));
+            }
         double volume=0;
         if (result.IsNull() || !supported(result) || !BRepReconstruction::validSolid(result,volume)) {
             const QString details=QStringLiteral("solids=%1 shells=%2 faces=%3 edges=%4 vertices=%5 valid=%6 supported=%7")
@@ -163,13 +191,34 @@ static TopoDS_Shape offsetMove(const TopoDS_Shape& source, const TopoDS_Face& so
 
 TopoDS_Shape MoveFaceGeometry::move(const TopoDS_Shape& source,const TopoDS_Face& face,
                                   double distance,QString& error) {
+    gp_Pnt center;gp_Dir normal;
+    if(!std::isfinite(distance)) {error=QStringLiteral("Enter a finite face offset.");return {};}
+    if(!reference(source,face,center,normal,error)) return {};
+    if(std::abs(distance)<tolerance) return source;
+    BRepReconstruction::Result local;QString localError;
+    if(BRepReconstruction::movePlanarLocal(source,face,distance,local,localError)) {error.clear();return local.solid;}
+    const auto preserved=CylindricalMoveGeometry::movePlanarPreservingExterior(source,face,distance);
+    if(preserved) {error.clear();return preserved.shape;}
+    // OCCT 7.9's global offset intersection can SIGSEGV at a planar cut through
+    // a cylinder. A failed local certificate must refuse, never retry that path.
+    BRepReconstruction::Neighborhood contact;QString contactError;
+    if(!BRepReconstruction::neighborhood(source,face,contact,contactError)) {
+        error=QStringLiteral("Cannot certify the selected neighborhood for offset fallback: %1").arg(contactError);return {};
+    }
+    for(const auto& adjacent:contact.neighbors) {
+        const BRepAdaptor_Surface s(adjacent);
+        if(s.GetType()!=GeomAbs_Cylinder||s.Cylinder().Axis().Direction().IsParallel(normal,1.e-8)) continue;
+        error=QStringLiteral("Move Face refused at a transverse cylindrical intersection. %1 %2")
+            .arg(localError,QString::fromStdString(preserved.message));return {};
+    }
     const auto offset=offsetMove(source,face,distance,error);
     if(!offset.IsNull()) return offset;
-    gp_Pnt center;gp_Dir normal;
-    if(!std::isfinite(distance)||!reference(source,face,center,normal,error)) return {};
+    const QString offsetError=error;
     auto expected=BRepAdaptor_Surface(face).Plane();expected.Translate(gp_Vec(normal)*distance);
     BRepReconstruction::Result rebuilt;
-    if(!BRepReconstruction::rebuildPlanar(source,face,expected,rebuilt,error)) return {};
+    if(!BRepReconstruction::rebuildPlanar(source,face,expected,rebuilt,error)) {
+        error=QStringLiteral("%1 Local route: %2 Planar-cell route: %3").arg(offsetError,localError,error);return {};
+    }
     GProp_GProps before,after;BRepGProp::VolumeProperties(source,before);BRepGProp::VolumeProperties(rebuilt.solid,after);
     if((after.Mass()-before.Mass())*distance<=0) {
         error=QStringLiteral("Reconstructed volume did not change in the requested direction.");return {};

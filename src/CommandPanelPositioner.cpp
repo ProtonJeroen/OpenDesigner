@@ -6,6 +6,8 @@
 #include <QLabel>
 #include <QLayout>
 #include <QMouseEvent>
+#include <QMoveEvent>
+#include <QScreen>
 #include <QPointer>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -17,6 +19,12 @@
 #include <algorithm>
 
 namespace {
+QRect panelFrame(QWidget* widget) {
+    return widget->windowHandle()?widget->windowHandle()->frameGeometry():widget->frameGeometry();
+}
+QPoint clientOrigin(QWidget* widget) {
+    return widget->windowHandle()?widget->windowHandle()->geometry().topLeft():widget->geometry().topLeft();
+}
 QSize naturalSize(QWidget* content) {
     content->ensurePolished();
     if(content->layout()) content->layout()->activate();
@@ -37,9 +45,10 @@ struct CommandPanelPositioner::Panel {
     QPointer<QLabel> handle;
     QPointer<QScrollArea> scroll;
     QSize natural;
+    QMargins frameMargins;
     QPoint localPosition,lastFramePosition,lastViewportOrigin,dragOffset;
     std::vector<QPoint> nativePositions;
-    bool anchor=true,placing=false,dragging=false,opening=true,settling=false;
+    bool anchor=true,placing=false,dragging=false,systemDragging=false,opening=true,settling=false;
     void expectNativePosition(const QPoint& position) {
         // Native configure notifications can arrive after a later resize/move
         // has already updated QWidget's geometry. Keep their client origins,
@@ -50,8 +59,56 @@ struct CommandPanelPositioner::Panel {
 };
 CommandPanelPositioner::CommandPanelPositioner(QWidget* viewport):QObject(viewport),viewport_(viewport) {
     for(auto* ancestor=viewport_;ancestor;ancestor=ancestor->parentWidget()) ancestor->installEventFilter(this);
+    reconcileTimer_.setInterval(50);
+    connect(&reconcileTimer_,&QTimer::timeout,this,[this] {
+        update();
+        if(--reconcilePasses_<=0) {reconcileTimer_.stop();screenTransition_=false;}
+    });
+    watchWindows();
 }
 CommandPanelPositioner::~CommandPanelPositioner() = default;
+QRect CommandPanelPositioner::viewportBounds() const {
+    // Keep the complete rectangle in the owning window's logical coordinate
+    // system. mapToGlobal() can select a different screen for an individual
+    // point in a mixed-DPI desktop gap, while size() remains window-local.
+    auto* ancestor=viewport_;
+    while(!ancestor->windowHandle() && ancestor->parentWidget()) ancestor=ancestor->parentWidget();
+    if(auto* native=ancestor->windowHandle()) {
+        auto origin=viewport_->mapTo(ancestor,QPoint());
+        for(auto* window=native;window;window=window->parent()) origin+=window->position();
+        // CadViewport is a native child. Its platform size/offset can precede
+        // the corresponding QWidget configure just like a Tool window's can.
+        return {origin,ancestor==viewport_?native->size():viewport_->size()};
+    }
+    return {ancestor->geometry().topLeft()+viewport_->mapTo(ancestor,QPoint()),viewport_->size()};
+}
+void CommandPanelPositioner::reconcile(bool screenTransition) {
+    // Screen/DPR, frame margins and KWin configure events need not arrive in
+    // one event-loop turn. Re-read geometry on every pass; never replay an old
+    // target. Late Move/Resize events also schedule a fresh fit after this
+    // bounded retry period, so there is no permanent polling timer.
+    reconcilePasses_=8;
+    screenTransition_=screenTransition_ || screenTransition;
+    reconcileTimer_.start();
+    schedule();
+}
+void CommandPanelPositioner::watchWindows() {
+    std::erase_if(windows_,[](const auto& item){return !item;});
+    std::erase_if(screens_,[](const auto& item){return !item;});
+    const auto watch=[this](QWindow* window) {
+        if(!window || std::find(windows_.begin(),windows_.end(),window)!=windows_.end()) return;
+        windows_.push_back(window);window->installEventFilter(this);
+        connect(window,&QWindow::screenChanged,this,[this] {watchWindows();reconcile(true);});
+    };
+    for(auto* ancestor=viewport_;ancestor;ancestor=ancestor->parentWidget()) watch(ancestor->windowHandle());
+    for(const auto& panel:panels_) if(panel->widget) watch(panel->widget->windowHandle());
+    for(auto* screen:QGuiApplication::screens()) {
+        if(std::find(screens_.begin(),screens_.end(),screen)!=screens_.end()) continue;
+        screens_.push_back(screen);
+        connect(screen,&QScreen::geometryChanged,this,[this] {reconcile(true);});
+        connect(screen,&QScreen::logicalDotsPerInchChanged,this,[this] {reconcile(true);});
+    }
+}
 QRect CommandPanelPositioner::boundedFrame(const QRect& viewport,const QSize& size,const QPoint& requested,bool anchor) {
     const int mx=anchor?std::min(Margin,std::max(0,(viewport.width()-size.width())/2)):0;
     const int my=anchor?std::min(Margin,std::max(0,(viewport.height()-size.height())/2)):0;
@@ -100,7 +157,7 @@ void CommandPanelPositioner::show(QWidget* widget) {
     // Mapping a native tool window is asynchronous. Wait for its first expose
     // before placing it, so the WM's initial placement cannot overwrite ours.
     widget->show();
-    if(widget->windowHandle()) widget->windowHandle()->installEventFilter(this);
+    watchWindows();
     update();schedule();
 }
 void CommandPanelPositioner::schedule() {
@@ -108,13 +165,16 @@ void CommandPanelPositioner::schedule() {
     pending_=true;QTimer::singleShot(0,this,[this]{pending_=false;update();});
 }
 void CommandPanelPositioner::moveFrame(Panel& p,const QPoint& position) {
-    p.lastFramePosition=position;p.lastViewportOrigin=viewport_->mapToGlobal(QPoint());
+    p.lastFramePosition=position;p.lastViewportOrigin=viewportBounds().topLeft();
     p.localPosition=position-p.lastViewportOrigin;
-    auto* w=p.widget.data();const auto delta=position-w->frameGeometry().topLeft();
+    auto* w=p.widget.data();const auto delta=position-panelFrame(w).topLeft();
     if(!delta.isNull()) {
-        p.expectNativePosition(w->mapToGlobal(QPoint()));
-        w->move(w->pos()+delta);
-        p.expectNativePosition(w->mapToGlobal(QPoint()));
+        p.expectNativePosition(clientOrigin(w));
+        // An absolute native frame request avoids adding a delta from a stale
+        // QWidget geometry cache to a position converted on a different screen.
+        if(auto* window=w->windowHandle()) window->setFramePosition(position);
+        else w->move(position);
+        p.expectNativePosition(clientOrigin(w));
     }
     if(qEnvironmentVariableIsSet("OPENDESIGNER_PANEL_TRACE")) {
         QString trace;QDebug(&trace)<<"after move"<<w->frameGeometry()<<w->pos()<<"requested"<<position;
@@ -125,6 +185,14 @@ void CommandPanelPositioner::fit(Panel& p) {
     if(!p.widget || !p.widget->isVisible() || !p.content || p.placing) return;
     if(p.opening) return;
     p.placing=true;auto* w=p.widget.data();
+    // Select the target screen before measuring decorations or issuing a native
+    // frame move: setFramePosition uses the window's current screen conversion.
+    auto* owner=viewport_->window()->windowHandle();
+    auto* native=w->windowHandle();
+    if(native && owner && owner->screen() && native->screen()!=owner->screen()) {
+        native->setScreen(owner->screen());
+        reconcile(true);
+    }
     if(p.handle) p.handle->setText(w->windowTitle());
     // Do not measure w->sizeHint(): the outer layout caches the scroll area's
     // old hint when fields are shown/inserted or wrapped prompts grow. In
@@ -138,8 +206,10 @@ void CommandPanelPositioner::fit(Panel& p) {
         p.natural=natural;p.scroll->updateGeometry();
         w->layout()->invalidate();
     }
-    const auto decorations=w->frameGeometry().size()-w->size();
-    const auto available=(viewport_->size()-decorations-QSize(2*Margin,2*Margin)).expandedTo(QSize(1,1));
+    const auto bounds=viewportBounds();
+    p.frameMargins=native?native->frameMargins():QMargins();
+    const auto decorations=panelFrame(w).size()-(native?native->size():w->size());
+    const auto available=(bounds.size()-decorations-QSize(2*Margin,2*Margin)).expandedTo(QSize(1,1));
     w->setMaximumSize(available);
     // Reserve room for a necessary scrollbar before deciding whether the other
     // dimension overflows. Otherwise a vertical bar can needlessly cause a
@@ -152,28 +222,35 @@ void CommandPanelPositioner::fit(Panel& p) {
         vertical=natural.height()>available.height()-(horizontal?barHeight:0);
     }
     const auto desired=(natural+QSize(vertical?barWidth:0,horizontal?barHeight:0)).boundedTo(available);
-    if(w->size()!=desired) {
-        p.expectNativePosition(w->mapToGlobal(QPoint()));
+    if(w->size()!=desired || (native && native->size()!=desired)) {
+        p.expectNativePosition(clientOrigin(w));
         w->resize(desired);
+        // QWidget::resize can be a no-op while its cache still has the old
+        // requested size and the platform has already configured a new one.
+        if(native && native->size()!=desired) native->resize(desired);
     }
     w->layout()->activate();
-    const QRect bounds(viewport_->mapToGlobal(QPoint()),viewport_->size());
-    const auto target=boundedFrame(bounds,w->frameGeometry().size(),bounds.topLeft()+p.localPosition,p.anchor);
+    const auto target=boundedFrame(bounds,panelFrame(w).size(),bounds.topLeft()+p.localPosition,p.anchor);
     if(qEnvironmentVariableIsSet("OPENDESIGNER_PANEL_TRACE")) {
         QString trace; QDebug(&trace)<<"fit"<<w->windowTitle()<<"bounds"<<bounds<<"frame"<<w->frameGeometry()
-            <<"pos"<<w->pos()<<"global"<<w->mapToGlobal(QPoint())<<"dpr"<<w->devicePixelRatioF()
+            <<"pos"<<w->pos()<<"global"<<clientOrigin(w)<<"dpr"<<w->devicePixelRatioF()
             <<"anchor"<<p.anchor<<"local"<<p.localPosition<<"target"<<target;
         fprintf(stderr,"%s\n",qPrintable(trace));
     }
     moveFrame(p,target.topLeft());p.placing=false;
 }
-void CommandPanelPositioner::update() {for(const auto& p:panels_) fit(*p);}
+void CommandPanelPositioner::update() {watchWindows();for(const auto& p:panels_) fit(*p);}
 bool CommandPanelPositioner::eventFilter(QObject* watched,QEvent* event) {
 #if QT_VERSION >= QT_VERSION_CHECK(6,6,0)
-    if(event->type()==QEvent::DevicePixelRatioChange) schedule();
+    if(event->type()==QEvent::DevicePixelRatioChange) reconcile(true);
 #endif
     for(const auto& entry:panels_) {
         auto& p=*entry;if(!p.widget) continue;
+        if(watched==p.widget || watched==p.widget->windowHandle()) {
+            if(event->type()==QEvent::NonClientAreaMouseButtonPress)
+                p.systemDragging=static_cast<QMouseEvent*>(event)->button()==Qt::LeftButton;
+            if(event->type()==QEvent::NonClientAreaMouseButtonRelease) p.systemDragging=false;
+        }
         if(watched==p.widget->windowHandle() && event->type()==QEvent::Expose) {
             if(p.opening && !p.settling && p.widget->windowHandle()->isExposed()) {
                 p.settling=true;
@@ -187,6 +264,7 @@ bool CommandPanelPositioner::eventFilter(QObject* watched,QEvent* event) {
                         item->settling=false;
                         item->opening=!widget->windowHandle() || !widget->windowHandle()->isExposed();
                     }
+                    reconcile();
                     update();
                 });
             }
@@ -195,14 +273,14 @@ bool CommandPanelPositioner::eventFilter(QObject* watched,QEvent* event) {
         if(watched==p.handle && event->type()==QEvent::MouseButtonPress) {
             auto* mouse=static_cast<QMouseEvent*>(event);
             if(mouse->button()==Qt::LeftButton) {
-                p.dragging=true;p.anchor=false;p.dragOffset=mouse->globalPosition().toPoint()-p.widget->frameGeometry().topLeft();
+                p.dragging=true;p.anchor=false;p.dragOffset=mouse->globalPosition().toPoint()-panelFrame(p.widget).topLeft();
                 p.handle->grabMouse();return true;
             }
         }
         if(p.dragging && watched==p.handle && event->type()==QEvent::MouseMove) {
             auto* mouse=static_cast<QMouseEvent*>(event);
-            const QRect bounds(viewport_->mapToGlobal(QPoint()),viewport_->size());
-            p.placing=true;moveFrame(p,boundedFrame(bounds,p.widget->frameGeometry().size(),mouse->globalPosition().toPoint()-p.dragOffset,false).topLeft());p.placing=false;
+            const auto bounds=viewportBounds();
+            p.placing=true;moveFrame(p,boundedFrame(bounds,panelFrame(p.widget).size(),mouse->globalPosition().toPoint()-p.dragOffset,false).topLeft());p.placing=false;
             return true;
         }
         if(p.dragging && watched==p.handle && event->type()==QEvent::MouseButtonRelease) {
@@ -211,18 +289,26 @@ bool CommandPanelPositioner::eventFilter(QObject* watched,QEvent* event) {
         if(watched==p.widget) {
             // Native Tool windows can temporarily hide on application/dialog
             // activation changes. That must not reset a user's command position.
-            if(event->type()==QEvent::Hide) {p.dragging=false;if(p.handle && QWidget::mouseGrabber()==p.handle) p.handle->releaseMouse();}
+            if(event->type()==QEvent::Hide) {p.dragging=false;p.systemDragging=false;if(p.handle && QWidget::mouseGrabber()==p.handle) p.handle->releaseMouse();}
             if(event->type()==QEvent::Move && !p.placing && p.widget->isVisible()) {
                 if(qEnvironmentVariableIsSet("OPENDESIGNER_PANEL_TRACE")) {
-                    QString trace; QDebug(&trace)<<"move"<<p.widget->windowTitle()<<"frame"<<p.widget->frameGeometry()<<"last"<<p.lastFramePosition<<"origin"<<viewport_->mapToGlobal(QPoint())<<"last origin"<<p.lastViewportOrigin<<"spontaneous"<<event->spontaneous();
+                    QString trace; QDebug(&trace)<<"move"<<p.widget->windowTitle()<<"frame"<<panelFrame(p.widget)<<"last"<<p.lastFramePosition<<"origin"<<viewportBounds().topLeft()<<"last origin"<<p.lastViewportOrigin<<"spontaneous"<<event->spontaneous();
                     fprintf(stderr,"%s\n",qPrintable(trace));
                 }
-                const auto origin=viewport_->mapToGlobal(QPoint());
-                const auto native=std::find(p.nativePositions.begin(),p.nativePositions.end(),p.widget->mapToGlobal(QPoint()));
+                const auto origin=viewportBounds().topLeft();
+                const auto native=std::find(p.nativePositions.begin(),p.nativePositions.end(),static_cast<QMoveEvent*>(event)->pos());
                 const bool acknowledgement=event->spontaneous() && native!=p.nativePositions.end();
                 if(acknowledgement) p.nativePositions.erase(native);
-                if(!p.opening && !acknowledgement && origin==p.lastViewportOrigin && p.widget->frameGeometry().topLeft()!=p.lastFramePosition) {
-                    p.anchor=false;p.localPosition=p.widget->frameGeometry().topLeft()-origin;
+                const auto delta=panelFrame(p.widget).topLeft()-p.lastFramePosition;
+                const bool moved=event->spontaneous()?(std::abs(delta.x())>1 || std::abs(delta.y())>1):!delta.isNull();
+                // Fractional native frame rounding is not a drag. During a
+                // screen/configure transaction keep the requested anchor/local
+                // offset, while allowing an actual title-bar drag to take over.
+                const bool marginsChanged=p.widget->windowHandle() && p.widget->windowHandle()->frameMargins()!=p.frameMargins;
+                const bool configuring=event->spontaneous() && ((reconcileTimer_.isActive() && screenTransition_) || marginsChanged)
+                    && !p.systemDragging && !(QGuiApplication::mouseButtons() & Qt::LeftButton);
+                if(!p.opening && !acknowledgement && !configuring && origin==p.lastViewportOrigin && moved) {
+                    p.anchor=false;p.localPosition=panelFrame(p.widget).topLeft()-origin;
                     p.nativePositions.clear();
                 }
                 schedule();
@@ -233,9 +319,19 @@ bool CommandPanelPositioner::eventFilter(QObject* watched,QEvent* event) {
         }
         if(watched==p.content && event->type()==QEvent::LayoutRequest) schedule();
     }
+    if(event->type()==QEvent::ScreenChangeInternal) reconcile(true);
+    // Observe native geometry as well as QWidget events. The native window can
+    // be updated before QWidget's cached geometry/layout catches up.
+    if(auto* window=qobject_cast<QWindow*>(watched)) {
+        if(event->type()==QEvent::Move || event->type()==QEvent::Resize) {
+            bool panelWindow=false;
+            for(const auto& p:panels_) if(p->widget && p->widget->windowHandle()==window) {panelWindow=true;break;}
+            if(panelWindow) schedule();else reconcile();
+        }
+    }
     if(event->type()==QEvent::Move || event->type()==QEvent::Resize || event->type()==QEvent::Show
        || event->type()==QEvent::LayoutRequest || event->type()==QEvent::ParentChange || event->type()==QEvent::ScreenChangeInternal) {
-        for(auto* ancestor=viewport_;ancestor;ancestor=ancestor->parentWidget()) if(watched==ancestor) {schedule();break;}
+        for(auto* ancestor=viewport_;ancestor;ancestor=ancestor->parentWidget()) if(watched==ancestor) {reconcile();break;}
     }
     if(watched==viewport_ && event->type()==QEvent::ParentChange)
         for(auto* ancestor=viewport_;ancestor;ancestor=ancestor->parentWidget()) ancestor->installEventFilter(this);

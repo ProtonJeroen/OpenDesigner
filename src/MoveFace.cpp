@@ -1,5 +1,12 @@
 #include "CadViewport.h"
 #include "MoveFaceGeometry.h"
+#include "CylindricalMoveGeometry.h"
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QLabel>
+#include <QSignalBlocker>
+#include <QStandardItemModel>
+#include <QVBoxLayout>
 #include <QLineEdit>
 #include <QDialogButtonBox>
 #include <QPushButton>
@@ -7,6 +14,7 @@
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <BRep_Tool.hxx>
 #include <Poly_Triangulation.hxx>
 #include <TopExp_Explorer.hxx>
@@ -19,6 +27,86 @@
 #include <cmath>
 #include <algorithm>
 
+void CadViewport::initializeCylindricalMoveControls() {
+    cylinderMoveLabel_=new QLabel(commandPanel_);
+    cylinderMoveLabel_->setObjectName("cylinderMoveAxis");
+    cylinderMoveDirection_=new QComboBox(commandPanel_);
+    cylinderMoveDirection_->setObjectName("cylinderMoveDirection");
+    cylinderMoveDirection_->addItems({tr("Choose lateral reference…"),tr("Part X projected into lateral plane"),
+        tr("Part Y projected into lateral plane"),tr("Part Z projected into lateral plane")});
+    cylinderMoveDirection_->setToolTip(tr("Choose a Part coordinate axis. Its perpendicular projection defines angle zero; the orange arrow shows the positive movement direction."));
+    cylinderMoveAngle_=new QDoubleSpinBox(commandPanel_);
+    cylinderMoveAngle_->setObjectName("cylinderMoveAngle");
+    cylinderMoveAngle_->setRange(-360,360);cylinderMoveAngle_->setDecimals(6);
+    cylinderMoveAngle_->setPrefix(tr("Direction angle: "));cylinderMoveAngle_->setSuffix(tr("°"));
+    cylinderMoveAngle_->setToolTip(tr("Rotate the chosen reference in the lateral plane. Positive angles follow the right-hand rule about the displayed cylinder axis (Part coordinates)."));
+    cylinderBossBoundary_=new QComboBox(commandPanel_);
+    cylinderBossBoundary_->setObjectName("cylinderBossBoundary");
+    cylinderBossBoundary_->addItems({tr("Extend — full round boss"),tr("Trim — original stock boundaries")});
+    cylinderBossBoundary_->setToolTip(tr("Extend preserves the full boss and valid overhangs. Trim clips it against the original stock side surfaces. Invalid or disconnected results are refused."));
+    for(QWidget* widget:std::array<QWidget*,4>{cylinderMoveLabel_,cylinderMoveDirection_,cylinderMoveAngle_,cylinderBossBoundary_}) {
+        commandLayout_->addWidget(widget);widget->hide();
+    }
+    connect(cylinderMoveDirection_,qOverload<int>(&QComboBox::currentIndexChanged),this,[this]{updateCylindricalMoveParameters();});
+    connect(cylinderMoveAngle_,qOverload<double>(&QDoubleSpinBox::valueChanged),this,[this]{updateCylindricalMoveParameters();});
+    connect(cylinderMoveAngle_->findChild<QLineEdit*>(),&QLineEdit::textEdited,this,[this]{
+        if(!cylinderMoveAngle_->hasAcceptableInput() || (commandSession_&&!commandSession_->lateralDirectionReady))
+            updateCylindricalMoveParameters();
+    });
+    connect(cylinderBossBoundary_,qOverload<int>(&QComboBox::currentIndexChanged),this,[this]{updateCylindricalMoveParameters();});
+}
+
+bool CadViewport::moveFaceReference(const TopoDS_Shape& shape,const TopoDS_Face& face,
+        MoveFaceFeature& feature,gp_Pnt& center,gp_Dir& axis,QString& error) const {
+    feature=MoveFaceFeature::Planar;
+    if(face.IsNull()) {error=tr("Select one member face.");return false;}
+    if(BRepAdaptor_Surface(face).GetType()!=GeomAbs_Cylinder)
+        return MoveFaceGeometry::reference(shape,face,center,axis,error);
+    // The unchanged geometry APIs certify recognition at zero displacement.
+    auto reference=CylindricalMoveGeometry::moveThroughHole(shape,face,gp_Vec(0,0,0));
+    if(reference) feature=MoveFaceFeature::ThroughHole;
+    else {
+        const QString holeError=QString::fromStdString(reference.message);
+        reference=CylindricalMoveGeometry::moveBoss(shape,face,gp_Vec(0,0,0),CylindricalMoveGeometry::BossBoundaryMode::Extend);
+        if(!reference) {
+            const auto bossError=QString::fromStdString(reference.message);
+            error=holeError==bossError ? tr("Move Face unavailable: %1").arg(holeError)
+                : tr("Cylindrical surface recognized; Move Face reconstruction unavailable. Hole: %1 Boss: %2").arg(holeError,bossError);
+            return false;
+        }
+        feature=MoveFaceFeature::Boss;
+    }
+    axis=reference.axis.Direction();
+    center=reference.axis.Location().Translated(gp_Vec(axis)*(reference.height/2));
+    error.clear();return true;
+}
+
+void CadViewport::updateCylindricalMoveParameters() {
+    if(!commandSession_||commandSession_->kind!=CommandSession::Kind::MoveFace||
+       commandSession_->moveFeature==MoveFaceFeature::Planar) return;
+    auto& session=*commandSession_;
+    draggingFace_=false;
+    const int choice=cylinderMoveDirection_->currentIndex();
+    session.lateralDirectionReady=false;
+    cylinderMoveAngle_->setEnabled(choice>0);
+    if(choice>=1&&choice<=3) {
+        const gp_Vec reference(choice==1?1:0,choice==2?1:0,choice==3?1:0);
+        const gp_Vec axis(session.cylinderAxisLocal);
+        auto direction=reference-axis*reference.Dot(axis);
+        if(direction.Magnitude()>1.e-8 && cylinderMoveAngle_->hasAcceptableInput()) {
+            direction.Rotate(gp_Ax1(gp_Pnt(0,0,0),session.cylinderAxisLocal),cylinderMoveAngle_->value()*std::acos(-1.)/180.);
+            session.direction=gp_Dir(direction.Transformed(session.faceBefore->orientation));
+            session.lateralDirectionReady=true;
+        }
+    }
+    if(session.moveFeature==MoveFaceFeature::Boss&&cylinderBossBoundary_->currentIndex()>=0)
+        session.bossTrim=cylinderBossBoundary_->currentIndex()==1;
+    if(!session.lateralDirectionReady&&!moveFaceArrow_.IsNull()) {
+        context_->Remove(moveFaceArrow_,Standard_False);moveFaceArrow_.Nullify();
+    }
+    updateCommandParameter(false);
+}
+
 void CadViewport::moveFace() {
     endSketchEditing();
     cancelCommandSession();
@@ -28,22 +116,17 @@ void CadViewport::moveFace() {
     emit transformModesChanged(false,false,false);
     hideFaceArrow(); hideMoveAxes(); hideRotationRings();
     moveFacePicking_=true;
-    if (context_->NbSelected()==1) {
-        context_->InitSelected();
-        const auto owner=Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
-        if (!owner.IsNull() && !owner->Shape().IsNull() && owner->Shape().ShapeType()==TopAbs_FACE) {
-            const auto selected=context_->SelectedInteractive();
-            for (size_t i=0;i<boxes_.size();++i)
-                if (boxes_[i].presentation==selected) { startMoveFace(i,TopoDS::Face(owner->Shape())); return; }
-        }
+    const auto selection=selectionContext();
+    if(selection.kind==SelectionContext::Kind::Faces&&selection.faces.size()==1) {
+        startMoveFace(selection.faces.front().partIndex,selection.faces.front().face);return;
     }
-    emit statusMessage(tr("Move Face: select one planar face; move its normal arrow or enter an offset in mm."));
+    emit statusMessage(tr("Move Face: select one planar face or a supported cylindrical hole, notch or boss wall."));
 }
 bool CadViewport::startMoveFace(size_t index, const TopoDS_Face& face) {
     if (!isPartVisible(index)) return false;
     const auto& part=boxes_[index];
-    gp_Pnt center; gp_Dir normal; QString error;
-    if (!MoveFaceGeometry::reference(part.shape,face,center,normal,error)) {
+    gp_Pnt center; gp_Dir normal; QString error;MoveFaceFeature feature;
+    if (!moveFaceReference(part.shape,face,feature,center,normal,error)) {
         emit statusMessage(error); resetModelingTools(); return false;
     }
     const gp_Pnt worldCenter=center.Transformed(part.orientation);
@@ -52,16 +135,41 @@ bool CadViewport::startMoveFace(size_t index, const TopoDS_Face& face) {
     beginCommandSession(CommandSession::Kind::MoveFace,{index},worldNormal,worldCenter);
     commandSession_->face=face;
     commandSession_->faceBefore=std::make_shared<CadPart>(part);
+    commandSession_->moveFeature=feature;
+    moveFacePicking_=false;
     commandPanel_->setWindowTitle(tr("Move Face Preview"));
     dragDimension_->setToolTip(tr("Signed face offset in mm; positive is outward"));
-    commandButtons_->button(QDialogButtonBox::Ok)->setEnabled(true);
-    displayPullArrow(moveFaceArrow_,worldCenter,gp_Vec(worldNormal));
-    context_->SetZLayer(moveFaceArrow_,Graphic3d_ZLayerId_Topmost);
+    if(feature==MoveFaceFeature::Planar) {
+        commandButtons_->button(QDialogButtonBox::Ok)->setEnabled(true);
+        displayPullArrow(moveFaceArrow_,worldCenter,gp_Vec(worldNormal));
+        context_->SetZLayer(moveFaceArrow_,Graphic3d_ZLayerId_Topmost);
+    } else {
+        commandSession_->cylinderAxisLocal=normal;
+        const QSignalBlocker directionBlock(cylinderMoveDirection_),angleBlock(cylinderMoveAngle_),policyBlock(cylinderBossBoundary_);
+        cylinderMoveDirection_->setCurrentIndex(0);cylinderMoveAngle_->setValue(0);cylinderMoveAngle_->setEnabled(false);
+        cylinderBossBoundary_->setCurrentIndex(0);
+        cylinderMoveLabel_->setText(tr("%1 — axis in Part coordinates\n(%2, %3, %4)")
+            .arg(feature==MoveFaceFeature::Boss?tr("Boss"):tr("Through-hole / open notch"))
+            .arg(normal.X(),0,'g',9).arg(normal.Y(),0,'g',9).arg(normal.Z(),0,'g',9));
+        auto* model=qobject_cast<QStandardItemModel*>(cylinderMoveDirection_->model());
+        for(int i=1;i<=3;++i) {
+            const gp_Vec ref(i==1?1:0,i==2?1:0,i==3?1:0);
+            model->item(i)->setEnabled((ref-gp_Vec(normal)*ref.Dot(gp_Vec(normal))).Magnitude()>1.e-8);
+        }
+        cylinderMoveLabel_->show();cylinderMoveDirection_->show();cylinderMoveAngle_->show();
+        cylinderBossBoundary_->setVisible(feature==MoveFaceFeature::Boss);
+        dragDimension_->setToolTip(tr("Signed displacement in mm along the orange lateral arrow. Choose a lateral reference and direction angle first."));
+        commandSession_->valid=false;commandButtons_->button(QDialogButtonBox::Ok)->setEnabled(false);
+        showCommandPanel(commandPanel_);
+    }
     context_->MoveTo(-1,-1,view_,Standard_False);
     view_->Redraw();
     commandPanel_->activateWindow();
-    dragDimension_->setFocus(); dragDimension_->selectAll();
-    emit statusMessage(tr("Move Face: drag the normal arrow or type signed mm. OK/Enter applies; Cancel/Esc discards."));
+    if(feature==MoveFaceFeature::Planar) {dragDimension_->setFocus();dragDimension_->selectAll();}
+    else cylinderMoveDirection_->setFocus();
+    emit statusMessage(feature==MoveFaceFeature::Planar
+        ? tr("Move Face: drag the normal arrow or type signed mm. OK/Enter applies; Cancel/Esc discards.")
+        : tr("Move Face: choose a lateral reference and angle, then drag the orange arrow or type signed mm. Cancel/Esc discards."));
     return true;
 }
 void CadViewport::redrawFacePreview() {
@@ -129,7 +237,21 @@ bool CadViewport::previewMoveFace(double value) {
     const auto& before=*session.faceBefore;
     QString error;
     const double localDistance=value/std::abs(before.orientation.ScaleFactor());
-    const auto candidate=MoveFaceGeometry::move(before.shape,session.face,localDistance,error);
+    TopoDS_Shape candidate;
+    if(session.moveFeature==MoveFaceFeature::Planar) candidate=MoveFaceGeometry::move(before.shape,session.face,localDistance,error);
+    else if(!session.lateralDirectionReady||!cylinderMoveAngle_->hasAcceptableInput())
+        error=tr("Choose a reference with a nonzero lateral projection and a valid direction angle.");
+    else if(session.moveFeature==MoveFaceFeature::Boss&&cylinderBossBoundary_->currentIndex()<0)
+        error=tr("Choose Trim or Extend explicitly.");
+    else {
+        auto localDelta=(gp_Vec(session.direction)*value).Transformed(before.orientation.Inverted());
+        const auto moved=session.moveFeature==MoveFaceFeature::Boss
+            ? CylindricalMoveGeometry::moveBoss(before.shape,session.face,localDelta,session.bossTrim
+                ? CylindricalMoveGeometry::BossBoundaryMode::Trim:CylindricalMoveGeometry::BossBoundaryMode::Extend)
+            : CylindricalMoveGeometry::moveThroughHole(before.shape,session.face,localDelta);
+        candidate=moved.shape;
+        if(!moved) error=QString::fromStdString(moved.message);
+    }
     session.valid=!candidate.IsNull();
     session.candidate=candidate;
     commandButtons_->button(QDialogButtonBox::Ok)->setEnabled(session.valid);
@@ -148,9 +270,10 @@ bool CadViewport::previewMoveFace(double value) {
         change.afterMin=after.min; change.afterMax=after.max;
         change.faceChange=std::make_shared<FaceChange>(FaceChange{before,after});
         displayPullArrow(moveFaceArrow_,session.pivot.Translated(gp_Vec(session.direction)*value),gp_Vec(session.direction));
-    } else {
+    } else if(session.moveFeature==MoveFaceFeature::Planar||session.lateralDirectionReady) {
         displayPullArrow(moveFaceArrow_,session.pivot,gp_Vec(session.direction));
     }
+    if(!moveFaceArrow_.IsNull()) context_->SetZLayer(moveFaceArrow_,Graphic3d_ZLayerId_Topmost);
     presentFacePreview(before,std::abs(value)>=1.e-7,error);
     session.state=session.valid ? CommandSession::State::Preview : CommandSession::State::Parameters;
     if (!session.valid) reportGeometryFailure(tr("Move Face"),error,false);
@@ -160,6 +283,7 @@ bool CadViewport::previewMoveFace(double value) {
 bool CadViewport::beginMoveFaceDrag(const QPoint& point) {
     if (!commandSession_ || commandSession_->kind!=CommandSession::Kind::MoveFace) return false;
     const auto& session=*commandSession_;
+    if(session.moveFeature!=MoveFaceFeature::Planar&&!session.lateralDirectionReady) return false;
     const gp_Pnt origin=session.pivot.Translated(gp_Vec(session.direction)*(session.valid?session.value:0));
     const auto tip=origin.Translated(gp_Vec(session.direction)*31);
     Standard_Integer x0,y0,x1,y1;

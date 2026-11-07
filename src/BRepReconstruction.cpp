@@ -1,11 +1,15 @@
 #include "BRepReconstruction.h"
+#include "BooleanGeometry.h"
 #include <BRepAdaptor_Surface.hxx>
 #include <BOPAlgo_Splitter.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
@@ -25,6 +29,7 @@
 #include <TopoDS.hxx>
 #include <gp_Cylinder.hxx>
 #include <gp_Cone.hxx>
+#include <gp_Lin.hxx>
 #include <Standard_Failure.hxx>
 #include <algorithm>
 #include <cmath>
@@ -49,7 +54,10 @@ bool sameSupport(const TopoDS_Face& original, const TopoDS_Face& result,
     }
     if(a.GetType()==GeomAbs_Cylinder) {
         const auto p=a.Cylinder(),q=b.Cylinder();
-        return p.Axis().IsCoaxial(q.Axis(),1.e-7,1.e-5)
+        // Surface support is an unoriented axis line. Sweeping a circular trim
+        // can reverse its parameter axis without changing the cylinder.
+        return p.Axis().Direction().IsParallel(q.Axis().Direction(),1.e-7)
+            && gp_Lin(p.Axis()).Distance(q.Location())<1.e-5
             && std::abs(p.Radius()-q.Radius())<1.e-5;
     }
     if(a.GetType()==GeomAbs_Cone) {
@@ -80,22 +88,218 @@ bool BRepReconstruction::validSolid(const TopoDS_Shape& shape,double& volume) {
 bool BRepReconstruction::sameAnalyticSupport(const TopoDS_Face& a,const TopoDS_Face& b) {
     return sameSupport(a,b);
 }
-bool BRepReconstruction::normalize(const TopoDS_Shape& candidate,TopoDS_Shape& result,QString& error) {
+bool BRepReconstruction::neighborhood(const TopoDS_Shape& source,const TopoDS_Face& target,
+                                      Neighborhood& result,QString& error) {
+    result={};error.clear();
+    const auto fail=[&](const QString& reason){result={};error=reason;return false;};
+    try {
+        TopTools_IndexedMapOfShape faces;TopExp::MapShapes(source,TopAbs_FACE,faces);
+        if(target.IsNull()||!faces.Contains(target)||faces.Extent()>64||count(source,TopAbs_EDGE)>256||count(source,TopAbs_VERTEX)>256)
+            return fail(QStringLiteral("Select a member face within the local reconstruction complexity budget."));
+        BRepBuilderAPI_Copy copy(source,true,false);result.solid=copy.Shape();
+        double volume=0;if(!validSolid(result.solid,volume)) return fail(QStringLiteral("Neighborhood needs one valid closed solid and shell."));
+        for(const auto type:{TopAbs_FACE,TopAbs_EDGE,TopAbs_VERTEX}) for(TopExp_Explorer it(result.solid,type);it.More();it.Next()) {
+            const double t=type==TopAbs_FACE?BRep_Tool::Tolerance(TopoDS::Face(it.Current())):
+                type==TopAbs_EDGE?BRep_Tool::Tolerance(TopoDS::Edge(it.Current())):BRep_Tool::Tolerance(TopoDS::Vertex(it.Current()));
+            if(!std::isfinite(t)||t>1.e-6) return fail(QStringLiteral("Source tolerance %1 exceeds the local reconstruction limit (1e-6).").arg(t,0,'g',15));
+        }
+        for(int i=1;i<=faces.Extent();++i) {
+            auto copied=TopoDS::Face(copy.ModifiedShape(faces(i)));copied.Orientation(faces(i).Orientation());
+            result.history.push_back({TopoDS::Face(faces(i)),{copied}});
+            if(faces(i).IsSame(target)) result.target=copied;
+        }
+        TopTools_IndexedDataMapOfShapeListOfShape adjacency;
+        TopExp::MapShapesAndAncestors(result.solid,TopAbs_EDGE,TopAbs_FACE,adjacency);
+        TopTools_IndexedMapOfShape patch,neighbors;patch.Add(result.target);
+        for(int i=1;i<=patch.Extent();++i) for(TopExp_Explorer edge(patch(i),TopAbs_EDGE);edge.More();edge.Next())
+            for(TopTools_ListIteratorOfListOfShape it(adjacency.FindFromKey(edge.Current()));it.More();it.Next())
+                if(sameAnalyticSupport(result.target,TopoDS::Face(it.Value()))) patch.Add(it.Value());
+        for(int i=1;i<=adjacency.Extent();++i) {
+            TopTools_IndexedMapOfShape inside,outside;
+            for(TopTools_ListIteratorOfListOfShape it(adjacency.FindFromIndex(i));it.More();it.Next())
+                (patch.Contains(it.Value())?inside:outside).Add(it.Value());
+            if(inside.IsEmpty()||outside.IsEmpty()) continue; // internal patch edges and periodic seams
+            if(inside.Extent()!=1||outside.Extent()!=1) return fail(QStringLiteral("Selected patch has ambiguous boundary adjacency."));
+            result.boundary.push_back(TopoDS::Edge(adjacency.FindKey(i)));neighbors.Add(outside(1));
+        }
+        for(int i=1;i<=patch.Extent();++i) result.patch.push_back(TopoDS::Face(patch(i)));
+        for(int i=1;i<=neighbors.Extent();++i) result.neighbors.push_back(TopoDS::Face(neighbors(i)));
+        return true;
+    } catch(const Standard_Failure&) {return fail(QStringLiteral("OCCT could not safely analyze the selected neighborhood."));}
+}
+
+bool BRepReconstruction::finishLocal(const Neighborhood& source,const TopoDS_Shape& candidate,
+        const TopoDS_Shape& editRegion,const std::vector<TopoDS_Face>& affected,
+        const std::vector<TopoDS_Face>& moved,const gp_Trsf& displacement,Result& result,QString& error) {
+    result={};error.clear();
+    const auto fail=[&](const QString& reason){result={};error=reason;return false;};
+    try {
+        double volume=0;size_t solids=0;
+        if(!BooleanGeometry::certifiedSolid(editRegion,volume,solids)) return fail(QStringLiteral("Local edit region must contain certified closed material volumes."));
+        for(const auto type:{TopAbs_SHELL,TopAbs_FACE,TopAbs_EDGE,TopAbs_VERTEX}) {
+            TopTools_IndexedMapOfShape all,owned;TopExp::MapShapes(editRegion,type,all);
+            for(TopExp_Explorer it(editRegion,TopAbs_SOLID);it.More();it.Next()) TopExp::MapShapes(it.Current(),type,owned);
+            if(all.Extent()!=owned.Extent()) return fail(QStringLiteral("Local edit region contains loose topology outside its solids."));
+        }
+        TopTools_IndexedMapOfShape members,affectedMap,movedMap;
+        TopExp::MapShapes(source.solid,TopAbs_FACE,members);
+        for(const auto& f:affected) {if(!members.Contains(f)) return fail(QStringLiteral("Affected face is not in the isolated source."));affectedMap.Add(f);}
+        for(const auto& f:moved) {if(!affectedMap.Contains(f)) return fail(QStringLiteral("Moved faces must be declared affected."));movedMap.Add(f);}
+        TopoDS_Shape normalized;if(!normalize(candidate,normalized,error,true)) return false;
+        const auto oldOutside=BooleanGeometry::combine<BRepAlgoAPI_Cut>(source.solid,editRegion);
+        const auto newOutside=BooleanGeometry::combine<BRepAlgoAPI_Cut>(normalized,editRegion);
+        if(!equivalent(oldOutside,newOutside)) return fail(QStringLiteral("Local reconstruction changed material outside its certified edit region."));
+        for(const auto& mapping:source.history) {
+            if(mapping.modified.size()!=1||!members.Contains(mapping.modified.front())) return fail(QStringLiteral("Invalid neighborhood copy correspondence."));
+            const auto copied=mapping.modified.front();
+            const auto expected=movedMap.Contains(copied)?TopoDS::Face(BRepBuilderAPI_Transform(copied,displacement,true).Shape()):copied;
+            FaceMapping final{mapping.original,{}};double covered=0;
+            for(TopExp_Explorer it(normalized,TopAbs_FACE);it.More();it.Next()) {
+                const auto face=TopoDS::Face(it.Current());
+                if(!sameAnalyticSupport(expected,face)) continue;
+                GProp_GProps overlap;BRepGProp::SurfaceProperties(BooleanGeometry::combine<BRepAlgoAPI_Common>(expected,face),overlap);
+                if(overlap.Mass()>1.e-12) {final.modified.push_back(face);covered+=overlap.Mass();}
+            }
+            if(!affectedMap.Contains(copied)) {
+                GProp_GProps area;BRepGProp::SurfaceProperties(copied,area);
+                if(std::abs(covered-area.Mass())>1.e-8*std::max(1.,area.Mass()))
+                    return fail(QStringLiteral("An unaffected trimmed face region changed during local reconstruction."));
+            }
+            if(copied.IsSame(source.target)&&final.modified.size()==1) result.target=final.modified.front();
+            result.history.push_back(std::move(final));
+        }
+        result.solid=normalized;return true;
+    } catch(const Standard_Failure&) {return fail(QStringLiteral("OCCT could not certify local reconstruction and face correspondence."));}
+      catch(const std::exception&) {return fail(QStringLiteral("Boolean local-material certification failed."));}
+}
+bool BRepReconstruction::movePlanarLocal(const TopoDS_Shape& source,const TopoDS_Face& target,
+                                        double distance,Result& result,QString& error) {
+    result={};error.clear();
+    const auto fail=[&](const QString& reason){result={};error=QStringLiteral("Local planar reconstruction refused: ")+reason;return false;};
+    try {
+        if(!std::isfinite(distance)||std::abs(distance)<1.e-7) return fail(QStringLiteral("requires a finite nonzero offset."));
+        Neighborhood local;
+        if(!neighborhood(source,target,local,error)) return false;
+        if(BRepAdaptor_Surface(local.target).GetType()!=GeomAbs_Plane)
+            return fail(QStringLiteral("requires a connected planar support patch."));
+        auto normal=BRepAdaptor_Surface(local.target).Plane().Axis().Direction();
+        if(local.target.Orientation()==TopAbs_REVERSED) normal.Reverse();
+        // These adjacent supports retain exactly the same cross section during
+        // the sweep. Sloped/curved intersections need another reconstruction.
+        for(const auto& face:local.neighbors) {
+            const BRepAdaptor_Surface surface(face);
+            const bool invariant=surface.GetType()==GeomAbs_Plane
+                ? std::abs(surface.Plane().Axis().Direction().Dot(normal))<1.e-8
+                : surface.GetType()==GeomAbs_Cylinder&&surface.Cylinder().Axis().Direction().IsParallel(normal,1.e-8);
+            if(!invariant) return fail(QStringLiteral("an adjacent support changes cross section along the requested direction."));
+        }
+        const gp_Vec delta=gp_Vec(normal)*distance;gp_Trsf shift;shift.SetTranslation(delta);
+        TopoDS_Shape region;
+        for(const auto& patch:local.patch) {
+            const auto swept=BRepPrimAPI_MakePrism(patch,delta,true,true).Shape();
+            region=region.IsNull()?swept:BooleanGeometry::combine<BRepAlgoAPI_Fuse>(region,swept);
+        }
+        double regionVolume=0;
+        if(!validSolid(region,regionVolume)) return fail(QStringLiteral("the trimmed-face sweep is not a valid closed volume."));
+        const auto overlap=BooleanGeometry::combine<BRepAlgoAPI_Common>(local.solid,region);
+        GProp_GProps common;BRepGProp::VolumeProperties(overlap,common);
+        if(distance>0 ? std::abs(common.Mass())>1.e-8*std::max(1.,regionVolume) : !equivalent(overlap,region))
+            return fail(QStringLiteral("the sweep meets other material or crosses a material boundary; contact-changing edits need a separate certificate."));
+        const auto candidate=distance>0?BooleanGeometry::combine<BRepAlgoAPI_Fuse>(local.solid,region)
+                                       :BooleanGeometry::combine<BRepAlgoAPI_Cut>(local.solid,region);
+        const auto actualChange=distance>0?BooleanGeometry::combine<BRepAlgoAPI_Cut>(candidate,local.solid)
+                                          :BooleanGeometry::combine<BRepAlgoAPI_Cut>(local.solid,candidate);
+        if(!equivalent(actualChange,region)) return fail(QStringLiteral("the actual material change differs from the trimmed-face sweep."));
+        auto affected=local.neighbors;affected.insert(affected.end(),local.patch.begin(),local.patch.end());
+        // Earlier edits may leave seams on an invariant wall. A sweep crossing
+        // such a seam changes the adjoining patch on the same analytic support.
+        // Only actual swept surface regions join the affected neighborhood.
+        for(TopExp_Explorer it(local.solid,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());
+            if(std::none_of(affected.begin(),affected.end(),[&](const auto& f){return f.IsSame(face);})&&
+               std::any_of(local.neighbors.begin(),local.neighbors.end(),[&](const auto& f){return sameAnalyticSupport(f,face);})) {
+                GProp_GProps overlapArea;BRepGProp::SurfaceProperties(BooleanGeometry::combine<BRepAlgoAPI_Common>(face,region),overlapArea);
+                if(overlapArea.Mass()>1.e-12) affected.push_back(face);
+            }
+        }
+        Result finished;
+        if(!finishLocal(local,candidate,region,affected,local.patch,shift,finished,error)) return false;
+        std::vector<TopoDS_Face> expectedPatch;
+        for(const auto& patch:local.patch) expectedPatch.push_back(TopoDS::Face(BRepBuilderAPI_Transform(patch,shift,true).Shape()));
+        const auto expected=expectedPatch.front();
+        const auto sameBoundary=[&](const TopoDS_Face& a,const TopoDS_Face& b) {
+            if(!sameAnalyticSupport(a,b)) return false;
+            if(BRepAdaptor_Surface(a).GetType()!=GeomAbs_Cylinder) return true;
+            const auto side=[](const TopoDS_Face& face) {
+                const BRepAdaptor_Surface s(face);gp_Pnt p;gp_Vec du,dv;
+                s.D1((s.FirstUParameter()+s.LastUParameter())/2,(s.FirstVParameter()+s.LastVParameter())/2,p,du,dv);
+                auto n=du.Crossed(dv);if(face.Orientation()==TopAbs_REVERSED) n.Reverse();
+                auto radial=gp_Vec(s.Cylinder().Location(),p);const gp_Vec axis(s.Cylinder().Axis().Direction());radial-=axis*radial.Dot(axis);
+                return n.Dot(radial);
+            };
+            // Extending past a remote cap must not invent an oppositely
+            // oriented cylindrical cavity on the same geometric support.
+            return side(a)*side(b)>0;
+        };
+        double covered=0,targetArea=0;for(const auto& patch:expectedPatch) {GProp_GProps area;BRepGProp::SurfaceProperties(patch,area);targetArea+=area.Mass();}
+        for(TopExp_Explorer it(finished.solid,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());bool allowed=sameBoundary(expected,face);
+            if(allowed) {
+                for(const auto& patch:expectedPatch) {GProp_GProps area;BRepGProp::SurfaceProperties(BooleanGeometry::combine<BRepAlgoAPI_Common>(patch,face),area);covered+=area.Mass();}
+            }
+            for(TopExp_Explorer old(local.solid,TopAbs_FACE);old.More()&&!allowed;old.Next())
+                if(std::none_of(local.patch.begin(),local.patch.end(),[&](const auto& patch){return patch.IsSame(old.Current());})) allowed=sameBoundary(TopoDS::Face(old.Current()),face);
+            if(!allowed) {
+                const BRepAdaptor_Surface s(face);GProp_GProps p;BRepGProp::SurfaceProperties(face,p);
+                return fail(QStringLiteral("the result introduced an unintended transition surface (type %1, center %2, %3, %4).")
+                    .arg(int(s.GetType())).arg(p.CentreOfMass().X()).arg(p.CentreOfMass().Y()).arg(p.CentreOfMass().Z()));
+            }
+        }
+        if(std::abs(covered-targetArea)>1.e-8*std::max(1.,targetArea))
+            return fail(QStringLiteral("the complete translated target patch did not survive."));
+        result=std::move(finished);error.clear();return true;
+    } catch(const Standard_Failure&) {return fail(QStringLiteral("OCCT could not reconstruct this neighborhood safely."));}
+      catch(const std::exception&) {return fail(QStringLiteral("local material certification failed."));}
+}
+
+bool BRepReconstruction::normalize(const TopoDS_Shape& candidate,TopoDS_Shape& result,QString& error,bool allowValidSplits) {
     result.Nullify();
     try {
         double volume=0;
         if(!validSolid(candidate,volume)) {
             error=QStringLiteral("Reconstruction did not produce one valid closed solid.");return false;
         }
-        BRepBuilderAPI_Copy isolated(candidate,true,false);
-        auto cleaned=isolated.Shape();
-        BRepTools::RemoveInternals(cleaned,false);
-        ShapeUpgrade_UnifySameDomain unify(cleaned,true,true,false);
-        unify.SetSafeInputMode(true);unify.Build();
-        if(!validSolid(unify.Shape(),volume)||!equivalent(candidate,unify.Shape())) {
-            error=QStringLiteral("Final unification changed material or invalidated the solid.");return false;
+        try {
+            BRepBuilderAPI_Copy isolated(candidate,true,false);
+            auto cleaned=isolated.Shape();
+            BRepTools::RemoveInternals(cleaned,false);
+            ShapeUpgrade_UnifySameDomain unify(cleaned,true,true,false);
+            if(allowValidSplits) {
+                // Preserve cylindrical trims during optional cleanup. Merging
+                // bands with different axial extents can throw or loop inside
+                // OCCT's same-domain unifier. Planar seams may still merge.
+                for(TopExp_Explorer f(cleaned,TopAbs_FACE);f.More();f.Next())
+                    if(BRepAdaptor_Surface(TopoDS::Face(f.Current())).GetType()==GeomAbs_Cylinder)
+                        for(TopExp_Explorer e(f.Current(),TopAbs_EDGE);e.More();e.Next()) unify.KeepShape(e.Current());
+            }
+            unify.SetSafeInputMode(true);unify.Build();
+            if(validSolid(unify.Shape(),volume)&&equivalent(candidate,unify.Shape())) {
+                result=unify.Shape();error.clear();return true;
+            }
+            error=QStringLiteral("Final unification changed material or invalidated the solid.");
+        } catch(const Standard_Failure&) {
+            error=QStringLiteral("OCCT could not safely unify the reconstructed solid.");
         }
-        result=unify.Shape();error.clear();return true;
+        // Optional same-domain merging can return bad geometry OR throw (in
+        // particular on OCCT 7.6). Both cases may retain the original split
+        // candidate, with exactly the same solid/material certification.
+        if(allowValidSplits) {
+            BRepBuilderAPI_Copy splitCopy(candidate,true,false);
+            if(validSolid(splitCopy.Shape(),volume)&&equivalent(candidate,splitCopy.Shape())) {
+                result=splitCopy.Shape();error.clear();return true;
+            }
+        }
+        return false;
     } catch(const Standard_Failure&) {
         error=QStringLiteral("OCCT could not safely unify the reconstructed solid.");return false;
     }
