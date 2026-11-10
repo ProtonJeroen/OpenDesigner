@@ -870,7 +870,12 @@ duplicated.
 - [ ] Future extensions: guide rails, tangent/continuity constraints and
   advanced surface lofts.
 
-### Fillet & Chamfer — 3D edge finishing (proposed milestone)
+### Fillet & Chamfer — v0.5.0 single-edge implementation
+
+Single-edge constant-radius Fillet and equal-distance Chamfer are implemented
+through the existing command panel, blue previews and FaceChange history.
+See [implementation, limitations and Fedora KDE checklist](FILLET_CHAMFER.md).
+The broader multi-edge milestone below remains future work.
 
 - [ ] Add separate **3D Modeling > Fillet** and **3D Modeling > Chamfer**
   commands, accessible from toolbar and appropriate edge context menus.

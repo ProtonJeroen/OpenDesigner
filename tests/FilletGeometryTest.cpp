@@ -7,6 +7,10 @@
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <iostream>
+#include <BRepTools.hxx>
+#include <sstream>
+#include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -16,6 +20,7 @@ int main() {try {
     auto source=BRepPrimAPI_MakeBox(20,20,20).Shape();
     auto edge=TopoDS::Edge(TopExp_Explorer(source,TopAbs_EDGE).Current());QString error;
     const double before=volume(source);
+    std::ostringstream originalBytes;BRepTools::Write(source,originalBytes);
     auto result=FilletGeometry::apply(source,edge,2,error);
     double measured=0;
     check(!result.IsNull(),error.toUtf8().constData());
@@ -28,7 +33,19 @@ int main() {try {
     for(const auto& invalid:{TopoDS_Edge(),foreign})
         check(FilletGeometry::apply(source,invalid,2,error).IsNull()&&!error.isEmpty(),"invalid edge accepted");
     check(FilletGeometry::apply({},edge,2,error).IsNull(),"null source accepted");
+    std::ostringstream finalBytes;BRepTools::Write(source,finalBytes);
+    check(originalBytes.str()==finalBytes.str(),"source topology/geometry modified");
     check(std::abs(volume(source)-before)<1.e-10,"source modified");
     check(BRepReconstruction::validSolid(source,measured),"source invalidated");
+    auto notch=BRepAlgoAPI_Cut(source,BRepPrimAPI_MakeBox(gp_Pnt(10,10,0),10,10,20).Shape()).Shape();
+    TopoDS_Edge concave;
+    for(TopExp_Explorer it(notch,TopAbs_EDGE);it.More();it.Next()) {
+        BRepAdaptor_Curve c(TopoDS::Edge(it.Current()));auto p=c.Value((c.FirstParameter()+c.LastParameter())/2);
+        if(p.Distance(gp_Pnt(10,10,10))<1.e-8) concave=TopoDS::Edge(it.Current());
+    }
+    check(!concave.IsNull(),"concave fixture missing");
+    auto concaveResult=FilletGeometry::apply(notch,concave,2,error);
+    check(!concaveResult.IsNull(),error.toUtf8().constData());
+    check(BRepReconstruction::validSolid(concaveResult,measured) && measured>volume(notch),"concave blend did not add valid material");
     return 0;
 } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}}
