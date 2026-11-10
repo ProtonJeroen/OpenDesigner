@@ -120,6 +120,8 @@ public:
     void fitAll();
     void pullSelectedFace();
     void startPrimitivePull();
+    void fillet();
+    void chamfer();
     void moveFace();
     void rotateFace();
     void alignFace();
@@ -197,6 +199,7 @@ private:
     friend struct DebugModelTest;
     friend struct DeleteFaceTest;
     friend struct DeletePartSessionTest;
+    friend struct EdgeBlendSessionTest;
     struct SelectedFace { size_t partIndex; TopoDS_Face face; };
     struct SelectionContext {
         enum class Kind { None, Parts, Faces, Constructions, Sketches };
@@ -374,7 +377,7 @@ private:
     enum class MoveFaceFeature { Planar, ThroughHole, Boss };
     struct CommandSession {
         enum class State { Selection, Parameters, Preview, Confirmed, Cancelled };
-        enum class Kind { Move, Rotate, MoveFace, RotateFace, AlignFace, Boolean, Pull, DeleteFace, Construction, Sketch, Extrude, Revolve };
+        enum class Kind { Move, Rotate, MoveFace, RotateFace, AlignFace, Boolean, Pull, DeleteFace, Construction, Sketch, Extrude, Revolve, Fillet, Chamfer };
         std::shared_ptr<ConstructionSessionState> construction;
         std::shared_ptr<SketchChange> sketch;
         std::vector<Sketch::Entity> sketchDisplayCandidates; // Transient view overlay, never saved/committed.
@@ -392,6 +395,7 @@ private:
         gp_Dir direction = gp_Dir(1,0,0);
         gp_Trsf delta;
         double value = 0;
+        TopoDS_Edge edge;
         TopoDS_Face face;
         MoveFaceFeature moveFeature = MoveFaceFeature::Planar;
         gp_Dir cylinderAxisLocal = gp_Dir(0,0,1);
@@ -527,6 +531,9 @@ private:
     void beginCommandSession(CommandSession::Kind kind, const std::vector<size_t>& indices,
                              const gp_Dir& direction, const gp_Pnt& pivot = gp_Pnt());
     bool previewCommand(double value);
+    void startEdgeBlend(bool chamfer);
+    bool pickEdgeBlend(const QPoint& point);
+    bool previewEdgeBlend(double value);
     bool startMoveFace(size_t index, const TopoDS_Face& face);
     bool previewMoveFace(double value);
     bool moveFaceReference(const TopoDS_Shape& shape, const TopoDS_Face& face,
