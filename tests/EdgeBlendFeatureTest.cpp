@@ -3,6 +3,9 @@
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
 #include <BRepTools.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <sstream>
 #include <QJsonDocument>
 #include <limits>
@@ -10,6 +13,7 @@
 #include "MoveFaceGeometry.h"
 #include "DeleteFaceGeometry.h"
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <TopExp_Explorer.hxx>
@@ -57,6 +61,7 @@ int main(int argc,char** argv){try{
  State first,second;TopoDS_Shape one,two;
  check(create(box,{},edgeAt(box,gp_Pnt(0,0,30)),Kind::Fillet,5,first,one,error),error.toUtf8().constData());
  check(create(one,first,edgeAt(one,gp_Pnt(100,80,30)),Kind::Chamfer,3,second,two,error),error.toUtf8().constData());
+ check(error.isEmpty(),"successful creation retained a failed recognition diagnostic");
  check(second.features.size()==2,"missing recipes");
  auto original=second;std::ostringstream source;BRepTools::Write(two,source);
  const auto fid=second.features[0].id,cid=second.features[1].id;
@@ -65,6 +70,11 @@ int main(int argc,char** argv){try{
  check(std::abs(imported.features[0].size-3)<1.e-6||std::abs(imported.features[0].size-5)<1.e-6,"import size wrong");
  for(const auto& shape:{one,ChamferGeometry::apply(box,edgeAt(box,gp_Pnt(100,80,30)),3,error)}) {
   State probe;check(resolve(shape,probe,error)&&probe.features.size()==1,"single feature recognition failed");
+  State movedState;TopoDS_Shape movedShape;auto cap=planeAt(shape,gp_Pnt(0,0,60),gp_Dir(0,0,1));
+  check(move(shape,probe,cap,20,true,movedState,movedShape,error),"single feature ordinary Move failed");
+  check(std::abs(volume(movedShape)-volume(shape)*80/60)<1.e-5,"single feature ordinary Move material wrong");
+  check(remove(shape,probe,{probe.features[0].faces.front()},movedState,movedShape,error)
+      &&BRepReconstruction::equivalent(movedShape,box),"single transition Delete did not recover sharp stock");
  }
  State changed;TopoDS_Shape result;
  check(edit(two,second,fid,7,changed,result,error),error.toUtf8().constData());valid(result);
@@ -103,7 +113,18 @@ int main(int argc,char** argv){try{
  State broken=second;broken.features[0].supports[0]=gp_Pln(gp_Pnt(500,0,0),gp_Dir(1,0,0));broken.certified.Nullify();
  check(resolve(two,broken,error),"invalid metadata should safely re-recognize current rectangular geometry");
  check(broken.features[0].id!=fid,"invalid metadata retained authoritative identity");
+ std::ostringstream beforeStray;BRepTools::Write(two,beforeStray);
+ check(source.str()==beforeStray.str(),"source changed before invalid-fixture construction");
+ // TopoDS_Builder::Add freezes child shapes. Isolate the invalid fixture so
+ // fixture construction itself cannot change the source's serialized flags.
+ BRepBuilderAPI_Copy strayCopy(two,true,false);
+ BRep_Builder builder;TopoDS_Compound stray;builder.MakeCompound(stray);builder.Add(stray,strayCopy.Shape());
+ builder.Add(stray,BRepBuilderAPI_MakeEdge(gp_Pnt(1000,0,0),gp_Pnt(1001,0,0)).Edge());
+ State invalidState;check(!resolve(stray,invalidState,error),"stray non-solid topology was recognized");
+ invalidState=second;invalidState.certified.Nullify();check(!resolve(stray,invalidState,error),"metadata certified stray topology");
  State none;check(!resolve(box,none,error),"ordinary stock misclassified as transition");
+ auto cylinder=BRepPrimAPI_MakeCylinder(20,30).Shape();check(!resolve(cylinder,none,error),"ordinary cylinder misclassified as Fillet");
+ check(!create(two,second,edgeAt(two,gp_Pnt(52.5,0,60)),Kind::Chamfer,3,changed,result,error)&&result.IsNull(),"interacting junction was not refused");
  check(!remove(two,second,{top},changed,result,error)&&result.IsNull(),"ordinary face misclassified as transition");
  check(!move(two,second,planeAt(box,gp_Pnt(),gp_Dir(1,0,0)),1,true,changed,result,error),"stale face accepted");
  std::ostringstream after;BRepTools::Write(two,after);check(source.str()==after.str(),"source geometry mutated");

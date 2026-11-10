@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QColor>
+#include <QJsonObject>
 #include <QString>
 #include <TopoDS_Shape.hxx>
 #include <gp_Trsf.hxx>
@@ -22,6 +23,7 @@ struct NativePartState {
     QString id;
     QString name;
     TopoDS_Shape shape;
+    QJsonObject edgeBlendRecipe;
     gp_Trsf transform;
     QColor color = QColor(211, 211, 211);
     bool visible = true;

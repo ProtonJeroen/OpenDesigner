@@ -387,3 +387,8 @@ if(OPENDESIGNER_BUILD_TESTS)
     add_test(NAME edge-blend-features COMMAND OpenDesignerEdgeBlendFeatureTests)
     set_tests_properties(edge-blend-features PROPERTIES TIMEOUT 90)
 endif()
+
+if(OPENDESIGNER_BUILD_TESTS)
+    add_test(NAME edge-blend-feature-sessions COMMAND OpenDesignerSelectionContextTests --edge-blend-features)
+    set_tests_properties(edge-blend-feature-sessions PROPERTIES TIMEOUT 120)
+endif()

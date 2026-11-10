@@ -77,6 +77,11 @@ std::vector<TopoDS_Face> neighbors(const TopoDS_Shape& shape,const TopoDS_Face& 
         if(!other.IsSame(face)&&std::none_of(result.begin(),result.end(),[&](const auto& f){return f.IsSame(other);})) result.push_back(TopoDS::Face(other));
     return result;
 }
+bool touches(const TopoDS_Shape& a,const TopoDS_Shape& b) {
+    for(TopExp_Explorer x(a,TopAbs_VERTEX);x.More();x.Next())
+        for(TopExp_Explorer y(b,TopAbs_VERTEX);y.More();y.Next()) if(x.Current().IsSame(y.Current())) return true;
+    return false;
+}
 bool bind(State& state,const TopoDS_Shape& current,QString& error) {
     // Prototypes from replay are carrier geometry, never saved topology IDs.
     for(auto& feature:state.features) {
@@ -88,14 +93,14 @@ bool bind(State& state,const TopoDS_Shape& current,QString& error) {
         }
         if(feature.faces.size()!=1) {error=QStringLiteral("Transition is missing, split or ambiguous; its recipe was invalidated.");return false;}
     }
-    for(const auto& feature:state.features) for(const auto& face:feature.faces) for(const auto& n:neighbors(current,face))
-        for(const auto& other:state.features) if(feature.id!=other.id&&std::any_of(other.faces.begin(),other.faces.end(),[&](const auto& f){return f.IsSame(n);})) {
+    for(const auto& feature:state.features) for(const auto& other:state.features) if(feature.id!=other.id)
+        for(const auto& f:feature.faces) for(const auto& g:other.faces) if(touches(f,g)) {
             error=QStringLiteral("Interacting transition junctions are not supported. Use separated edges.");return false;
         }
     state.certified=current;return true;
 }
 bool rebuild(State& state,TopoDS_Shape& result,QString& error) {
-    result.Nullify();
+    result.Nullify();error.clear();
     if(!strictSharp(state.sharp)) {error=QStringLiteral("The sharp supporting solid must be planar, valid, and within the existing 1e-6 tolerance limit.");return false;}
     auto shape=state.sharp;
     for(auto& feature:state.features) {
@@ -171,6 +176,8 @@ bool recover(const TopoDS_Shape& source,State& state,QString& error) {
         f.faces={face};candidate.features.push_back(f);
     }
     if(candidate.features.empty()||candidate.features.size()>8) return false;
+    double sourceVolume=0;
+    if(!BRepReconstruction::validSolid(source,sourceVolume)) return false;
     for(auto& values:bounds) {if(values.size()!=2) return false;std::sort(values.begin(),values.end());}
     candidate.sharp=BRepPrimAPI_MakeBox(gp_Pnt(bounds[0][0],bounds[1][0],bounds[2][0]),gp_Pnt(bounds[0][1],bounds[1][1],bounds[2][1])).Shape();
     TopoDS_Shape replay;
@@ -202,13 +209,17 @@ template<class Operation> bool changeSupport(const TopoDS_Shape& current,const S
 bool resolve(const TopoDS_Shape& current,State& state,QString& error) {
     error.clear();
     try {
-        if(!current.IsNull()&&!state.sharp.IsNull()&&state.certified.IsSame(current)) return true;
-        if(!state.sharp.IsNull()) {
+        if(!current.IsNull()&&!state.sharp.IsNull()&&!state.features.empty()&&state.certified.IsSame(current)) return true;
+        if(!state.sharp.IsNull()&&!state.features.empty()) {
+            double volume=0;
+            if(!BRepReconstruction::validSolid(current,volume)) {
+                state={};error=QStringLiteral("Transition editing requires one valid closed solid without stray topology.");return false;
+            }
             auto candidate=state;TopoDS_Shape replay;
             if(rebuild(candidate,replay,error)&&BRepReconstruction::equivalent(current,replay)&&bind(candidate,current,error)) {state=std::move(candidate);return true;}
         }
         state={};
-        if(recover(current,state,error)) return true;
+        if(recover(current,state,error)) {error.clear();return true;}
         error=QStringLiteral("No certified separated edge transitions were found. Imported recognition requires rectangular local stock and verified tangent/equal-distance supports.");return false;
     } catch(const Standard_Failure& e) {state={};error=QStringLiteral("Transition analysis failed: %1").arg(QString::fromUtf8(e.GetMessageString()));return false;}
 }
@@ -226,6 +237,10 @@ bool create(const TopoDS_Shape& current,const State& prior,const TopoDS_Edge& ed
         if(edge.IsNull()||!adjacency.Contains(edge)||adjacency.FindFromKey(edge).Extent()!=2) {error=QStringLiteral("Select one manifold sharp edge.");return false;}
         Feature f;f.kind=kind;f.size=size;f.id=QUuid::createUuid().toString(QUuid::WithoutBraces);int k=0;
         for(const auto& face:adjacency.FindFromKey(edge)) {BRepAdaptor_Surface s(TopoDS::Face(face));if(s.GetType()!=GeomAbs_Plane) {error=QStringLiteral("Editable transitions require two planar supports.");return false;}f.supports[k++]=s.Plane();}
+        if(state.features.size()>=8) {error=QStringLiteral("At most eight separated transitions can be certified on one Part.");return false;}
+        for(const auto& old:state.features) for(const auto& face:old.faces) if(touches(edge,face)) {
+            error=QStringLiteral("The selected edge touches an existing transition; junction reconstruction is unsupported.");return false;
+        }
         state.features.push_back(f);
         if(!rebuild(state,result,error)) return false;
         after=std::move(state);return true;

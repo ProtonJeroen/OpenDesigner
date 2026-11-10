@@ -30,6 +30,7 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QUuid>
+#include <QJsonDocument>
 
 #include <algorithm>
 #include <cmath>
@@ -66,6 +67,12 @@ int sketchTag(const Sketch::Geometry& geometry) {
 }
 
 void putMetadata(const TDF_Label& label, const NativePartState& part) {
+    if(!part.edgeBlendRecipe.isEmpty()) {
+        const auto recipe=label.NewChild();
+        TDataStd_Name::Set(recipe,TCollection_ExtendedString("OpenDesignerEdgeBlendRecipeV1"));
+        const auto data=QJsonDocument(part.edgeBlendRecipe).toJson(QJsonDocument::Compact);
+        TDataStd_AsciiString::Set(recipe,TCollection_AsciiString(data.constData()));
+    }
     auto meta = label.NewChild();
     TDataStd_Name::Set(meta, QStringLiteral("OpenDesignerPartMetadata").toStdU16String().c_str());
     TDataStd_AsciiString::Set(label, TCollection_AsciiString((QString(kPartIdPrefix) + ensureId(part.id)).toLatin1().constData()));
@@ -142,6 +149,15 @@ NativePartState readPart(const TDF_Label& label, const Handle(XCAFDoc_ColorTool)
         part.color = QColor::fromRgbF(color.Red(), color.Green(), color.Blue());
     part.visible = colors->IsVisible(label) != Standard_False;
     for (TDF_ChildIterator it(label); it.More(); it.Next()) {
+        Handle(TDataStd_Name) recipeName;Handle(TDataStd_AsciiString) recipe;
+        if(it.Value().FindAttribute(TDataStd_Name::GetID(),recipeName)
+            &&recipeName->Get().IsEqual(TCollection_ExtendedString("OpenDesignerEdgeBlendRecipeV1"))
+            &&it.Value().FindAttribute(TDataStd_AsciiString::GetID(),recipe)) {
+            // Optional hint only; viewport reconstruction certifies it against
+            // the authoritative current B-Rep after Open. Old readers ignore it.
+            const auto data=QByteArray(recipe->Get().ToCString());
+            if(data.size()<=4*1024*1024) part.edgeBlendRecipe=QJsonDocument::fromJson(data).object();
+        }
         Handle(TDataStd_RealArray) values;
         if (!it.Value().FindAttribute(TDataStd_RealArray::GetID(), values) || values->Lower()!=0 || values->Upper() < 7) continue;
         Handle(TDataStd_Integer) kind;

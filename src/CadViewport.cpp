@@ -11,6 +11,8 @@
 #include <QLineEdit>
 #include <QDoubleSpinBox>
 #include <QDoubleValidator>
+#include <QCheckBox>
+#include <QSignalBlocker>
 #include <QShortcut>
 #include <QAction>
 #include <QVBoxLayout>
@@ -145,6 +147,9 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     faceAxisSelector_->addItems({tr("Choose a straight edge…"),tr("World X axis"),tr("World Y axis"),tr("World Z axis")});
     faceAxisSelector_->hide(); commandLayout->addWidget(faceAxisSelector_);
     initializeCylindricalMoveControls();
+    keepBlends_=new QCheckBox(tr("Keep Fillet / Chamfer"),commandPanel_);
+    keepBlends_->setObjectName("keepFilletChamfer");keepBlends_->hide();commandLayout_->addWidget(keepBlends_);
+    connect(keepBlends_,&QCheckBox::toggled,this,[this]{if(commandSession_) updateCommandParameter(false);});
     faceAlignSelector_=new QComboBox(commandPanel_);
     faceAlignSelector_->setObjectName(QStringLiteral("alignFaceModeSelector"));
     faceAlignSelector_->addItems({tr("Coplanar"),tr("Parallel")});
@@ -193,6 +198,10 @@ void CadViewport::beginCommandSession(CommandSession::Kind kind,
     commandSession_.emplace();
     auto& session = *commandSession_;
     session.kind = kind;
+    {const QSignalBlocker block(keepBlends_);keepBlends_->setChecked(true);}
+    keepBlends_->setEnabled(true);
+    keepBlends_->setToolTip(tr("Preserve dependent transitions on a supporting face; OFF restores only affected sharp intersections."));
+    keepBlends_->setVisible(kind==CommandSession::Kind::MoveFace||kind==CommandSession::Kind::RotateFace||kind==CommandSession::Kind::Pull);
     auto* validator=const_cast<QDoubleValidator*>(qobject_cast<const QDoubleValidator*>(dragDimension_->validator()));
     validator->setDecimals(kind==CommandSession::Kind::Fillet || kind==CommandSession::Kind::Chamfer ? 17 : 2);
     session.selection = selectedPartIndices_;
@@ -738,6 +747,7 @@ void CadViewport::duplicateSelectedParts() {
         CadPart copy;
         copy.persistentId = QUuid::createUuid().toString(QUuid::WithoutBraces);
         copy.geometryKind = original.geometryKind;
+        copy.blends = original.blends;
         copy.cylinderPrimitive = original.cylinderPrimitive;
         copy.spherePrimitive = original.spherePrimitive;
         copy.conePrimitive = original.conePrimitive;
@@ -1202,6 +1212,7 @@ bool CadViewport::exportDocumentSnapshot(NativeDocumentSnapshot& snapshot) const
                 ? QStringLiteral("slot-%1").arg(i) : part.persistentId;
             state.name = part.name;
             state.shape = part.shape;
+            if(part.blends.certified.IsSame(part.shape)) state.edgeBlendRecipe = EdgeBlendFeatures::encode(part.blends);
             state.transform = part.orientation;
             state.color = part.color;
             state.visible = part.visible;
@@ -1417,6 +1428,8 @@ bool CadViewport::importDocumentSnapshot(const NativeDocumentSnapshot& snapshot,
             part.persistentId = state.id;
             part.name = state.name;
             part.shape = state.shape;
+            part.blends=EdgeBlendFeatures::decode(state.edgeBlendRecipe);
+            if(!part.blends.sharp.IsNull()) {QString diagnostic;EdgeBlendFeatures::resolve(part.shape,part.blends,diagnostic);}
             part.orientation = state.transform;
             part.color = state.color;
             part.visible = state.visible;
@@ -2460,7 +2473,9 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
         if(alignFacePickingReference_) { pickAlignReference(e->pos()); return; }
         if(commandSession_ && commandSession_->kind==CommandSession::Kind::RotateFace
            && beginFaceRotationDrag(e->pos())) return;
-        if (commandSession_ && commandSession_->kind==CommandSession::Kind::MoveFace && beginMoveFaceDrag(e->pos())) return;
+        if(commandSession_ && (commandSession_->kind==CommandSession::Kind::MoveFace
+            ||commandSession_->kind==CommandSession::Kind::Fillet||commandSession_->kind==CommandSession::Kind::Chamfer)
+            &&beginMoveFaceDrag(e->pos())) return;
         if (moveFacePicking_) {
             for (const auto& part : boxes_) if (part.active && part.visible) {
                 context_->Deactivate(part.presentation);
@@ -2847,15 +2862,18 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
     } else if (draggingFace_) {
         const double rawDistance = ((p.x() - dragStart_.x()) * dragScreenX_
                                   + (p.y() - dragStart_.y()) * dragScreenY_) * dragMmPerPixel_
-            + (commandSession_ && commandSession_->kind==CommandSession::Kind::MoveFace ? moveFaceDragStart_ : 0.0);
+            + (commandSession_ && (commandSession_->kind==CommandSession::Kind::MoveFace
+                ||commandSession_->kind==CommandSession::Kind::Fillet||commandSession_->kind==CommandSession::Kind::Chamfer) ? moveFaceDragStart_ : 0.0);
         const bool snapping = snapStepMm_ > 0.0 && !(e->modifiers() & Qt::ShiftModifier);
         const double requested = snapping
             ? std::round(rawDistance / snapStepMm_) * snapStepMm_
             : rawDistance;
         if (commandSession_) {
+            const bool blend=commandSession_->kind==CommandSession::Kind::Fillet||commandSession_->kind==CommandSession::Kind::Chamfer;
+            if(blend&&std::abs(requested-commandSession_->value)<dragMmPerPixel_*0.05) {previous_=p;return;}
             dragDistance_ = requested;
             previewCommand(requested);
-            dragDimension_->setText(commandSession_->kind==CommandSession::Kind::Pull && primitivePullDragging_ ? primitivePullDimensionText() : QLocale().toString(requested,'f',2));
+            dragDimension_->setText(commandSession_->kind==CommandSession::Kind::Pull && primitivePullDragging_ ? primitivePullDimensionText() : blend?QLocale().toString(requested,'g',17):QLocale().toString(requested,'f',2));
             showCommandControls(p);
             previous_ = p;
             return;
@@ -2874,6 +2892,7 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
         || commandSession_->kind==CommandSession::Kind::Construction || commandSession_->kind==CommandSession::Kind::Sketch)) return;
     if(e->button()==Qt::LeftButton && commandSession_
        && (commandSession_->kind==CommandSession::Kind::Fillet || commandSession_->kind==CommandSession::Kind::Chamfer)) {
+        draggingFace_=false;
         showCommandControls(e->pos());
         if(commandSession_->faceBefore) {
             commandPanel_->activateWindow();dragDimension_->setFocus();dragDimension_->selectAll();

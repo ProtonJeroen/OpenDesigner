@@ -3,6 +3,7 @@
 #include "MoveFaceGeometry.h"
 
 #include <QComboBox>
+#include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QLineEdit>
 #include <QLabel>
@@ -44,6 +45,14 @@ bool CadViewport::startRotateFace(size_t index,const TopoDS_Face& face) {
     auto& session=*commandSession_;
     session.face=face;
     session.faceBefore=std::make_shared<CadPart>(boxes_[index]);
+    session.blendSource=boxes_[index].blends;
+    QString blendError;
+    session.blendSupport=EdgeBlendFeatures::resolve(boxes_[index].shape,session.blendSource,blendError)
+        &&EdgeBlendFeatures::selected(session.blendSource,face)<0;
+    if(!session.blendSupport&&EdgeBlendFeatures::selected(session.blendSource,face)>=0) {
+        keepBlends_->setEnabled(false);
+        keepBlends_->setToolTip(tr("Direct Chamfer-face rotation edits its planar geometry and may cease to be equal-distance. Select a supporting face for Keep ON/OFF, or Edit Chamfer to change its distance."));
+    }
     session.state=CommandSession::State::Selection;
     session.valid=false;
     commandButtons_->button(QDialogButtonBox::Ok)->setEnabled(false);
@@ -234,7 +243,13 @@ bool CadViewport::previewFaceTransform(double value) {
     const auto& before=*session.faceBefore;
     QString error;
     TopoDS_Shape candidate;
-    if(session.kind==CommandSession::Kind::RotateFace)
+    EdgeBlendFeatures::State candidateBlends;
+    if(session.kind==CommandSession::Kind::RotateFace&&session.blendSupport) {
+        if(std::abs(value)<1.e-8) {candidate=before.shape;candidateBlends=before.blends;}
+        else EdgeBlendFeatures::rotate(before.shape,session.blendSource,session.face,session.faceAxis,value,
+            keepBlends_->isChecked(),candidateBlends,candidate,error);
+    }
+    else if(session.kind==CommandSession::Kind::RotateFace)
         candidate=FaceTransformGeometry::rotate(before.shape,session.face,session.faceAxis,value,error);
     else candidate=FaceTransformGeometry::align(before.shape,session.face,session.referencePlane,session.coplanar,error);
     bool valid=!candidate.IsNull();
@@ -256,6 +271,7 @@ bool CadViewport::previewFaceTransform(double value) {
     if(valid && session.changed) {
         CadPart after=before;
         after.shape=candidate;
+        after.blends=session.blendSupport?candidateBlends:EdgeBlendFeatures::State{};
         after.geometryKind=CadPart::GeometryKind::GeneralBRep;
         after.cylinderPrimitive=after.spherePrimitive=after.conePrimitive=false;
         Bnd_Box bounds;

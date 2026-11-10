@@ -2,6 +2,7 @@
 #include "MoveFaceGeometry.h"
 #include "CylindricalMoveGeometry.h"
 #include <QComboBox>
+#include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QLabel>
 #include <QSignalBlocker>
@@ -125,6 +126,10 @@ void CadViewport::moveFace() {
 bool CadViewport::startMoveFace(size_t index, const TopoDS_Face& face) {
     if (!isPartVisible(index)) return false;
     const auto& part=boxes_[index];
+    auto recipe=part.blends;QString recipeError;
+    const bool recognized=EdgeBlendFeatures::resolve(part.shape,recipe,recipeError);
+    if(recognized&&EdgeBlendFeatures::selected(recipe,face)>=0) return startEditEdgeBlend(index,face);
+    if(!recognized&&!part.blends.features.empty()) {emit statusMessage(recipeError);return false;}
     gp_Pnt center; gp_Dir normal; QString error;MoveFaceFeature feature;
     if (!moveFaceReference(part.shape,face,feature,center,normal,error)) {
         emit statusMessage(error); resetModelingTools(); return false;
@@ -136,6 +141,8 @@ bool CadViewport::startMoveFace(size_t index, const TopoDS_Face& face) {
     commandSession_->face=face;
     commandSession_->faceBefore=std::make_shared<CadPart>(part);
     commandSession_->moveFeature=feature;
+    commandSession_->blendSource=recipe;
+    commandSession_->blendSupport=recognized&&feature==MoveFaceFeature::Planar;
     moveFacePicking_=false;
     commandPanel_->setWindowTitle(tr("Move Face Preview"));
     dragDimension_->setToolTip(tr("Signed face offset in mm; positive is outward"));
@@ -238,7 +245,13 @@ bool CadViewport::previewMoveFace(double value) {
     QString error;
     const double localDistance=value/std::abs(before.orientation.ScaleFactor());
     TopoDS_Shape candidate;
-    if(session.moveFeature==MoveFaceFeature::Planar) candidate=MoveFaceGeometry::move(before.shape,session.face,localDistance,error);
+    EdgeBlendFeatures::State candidateBlends;
+    if(session.blendSupport) {
+        if(std::abs(value)<1.e-7) {candidate=before.shape;candidateBlends=before.blends;}
+        else EdgeBlendFeatures::move(before.shape,session.blendSource,session.face,localDistance,
+            keepBlends_->isChecked(),candidateBlends,candidate,error);
+    }
+    else if(session.moveFeature==MoveFaceFeature::Planar) candidate=MoveFaceGeometry::move(before.shape,session.face,localDistance,error);
     else if(!session.lateralDirectionReady||!cylinderMoveAngle_->hasAcceptableInput())
         error=tr("Choose a reference with a nonzero lateral projection and a valid direction angle.");
     else if(session.moveFeature==MoveFaceFeature::Boss&&cylinderBossBoundary_->currentIndex()<0)
@@ -260,6 +273,7 @@ bool CadViewport::previewMoveFace(double value) {
     if (session.valid && std::abs(value)>=1.e-7) {
         CadPart after=before;
         after.shape=candidate;
+        after.blends=session.blendSupport?candidateBlends:EdgeBlendFeatures::State{};
         // Directly edited topology must not subsequently be rebuilt by Primitive Pull.
         after.geometryKind=CadPart::GeometryKind::GeneralBRep;
         after.cylinderPrimitive=after.spherePrimitive=after.conePrimitive=false;
@@ -281,10 +295,12 @@ bool CadViewport::previewMoveFace(double value) {
     return session.valid;
 }
 bool CadViewport::beginMoveFaceDrag(const QPoint& point) {
-    if (!commandSession_ || commandSession_->kind!=CommandSession::Kind::MoveFace) return false;
+    if(!commandSession_||!commandSession_->faceBefore) return false;
+    const bool blend=commandSession_->kind==CommandSession::Kind::Fillet||commandSession_->kind==CommandSession::Kind::Chamfer;
+    if(commandSession_->kind!=CommandSession::Kind::MoveFace&&!blend) return false;
     const auto& session=*commandSession_;
     if(session.moveFeature!=MoveFaceFeature::Planar&&!session.lateralDirectionReady) return false;
-    const gp_Pnt origin=session.pivot.Translated(gp_Vec(session.direction)*(session.valid?session.value:0));
+    const gp_Pnt origin=session.pivot.Translated(gp_Vec(session.direction)*(blend?std::max(0.,session.value):(session.valid?session.value:0)));
     const auto tip=origin.Translated(gp_Vec(session.direction)*31);
     Standard_Integer x0,y0,x1,y1;
     view_->Convert(origin.X(),origin.Y(),origin.Z(),x0,y0);
@@ -294,7 +310,7 @@ bool CadViewport::beginMoveFaceDrag(const QPoint& point) {
     const double t=std::clamp(((point.x()-x0)*dx+(point.y()-y0)*dy)/len2,0.0,1.0);
     if (std::hypot(point.x()-x0-t*dx,point.y()-y0-t*dy)>12) return false;
     draggingFace_=true; dragStart_=point;
-    moveFaceDragStart_=session.valid?session.value:0;
+    moveFaceDragStart_=blend?std::max(0.,session.value):(session.valid?session.value:0);
     dragScreenX_=dx/std::sqrt(len2); dragScreenY_=dy/std::sqrt(len2);
     dragMmPerPixel_=31/std::sqrt(len2);
     return true;
@@ -303,6 +319,8 @@ void CadViewport::applyFaceState(size_t index, const CadPart& state) {
     auto& part=boxes_[index];
     context_->ClearSelected(Standard_False); // Owners from replaced topology must not be reused.
     part.shape=state.shape; part.geometryKind=state.geometryKind;
+    part.blends=state.blends;
+    if(!part.blends.certified.IsSame(part.shape)) part.blends={};
     part.persistentId=state.persistentId; part.name=state.name; part.color=state.color;
     part.visible=state.visible;
     part.min=state.min; part.max=state.max; part.baseMin=state.baseMin; part.baseMax=state.baseMax;

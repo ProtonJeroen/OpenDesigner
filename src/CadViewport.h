@@ -1,5 +1,6 @@
 #pragma once
 #include <functional>
+#include "EdgeBlendFeatures.h"
 #include <QWidget>
 #include <QPoint>
 #include <QColor>
@@ -8,6 +9,7 @@
 #include <memory>
 #include <optional>
 class QLineEdit;
+class QCheckBox;
 class QVBoxLayout;
 class QFormLayout;
 class CommandPanelPositioner;
@@ -232,6 +234,7 @@ private:
         GeometryKind geometryKind = GeometryKind::Box;
         // Canonical local-space B-Rep. Box bounds are temporary editing metadata.
         TopoDS_Shape shape;
+        EdgeBlendFeatures::State blends;
         Handle(AIS_Shape) presentation;
         std::array<double, 3> min;
         std::array<double, 3> max;
@@ -395,6 +398,9 @@ private:
         gp_Dir direction = gp_Dir(1,0,0);
         gp_Trsf delta;
         double value = 0;
+        EdgeBlendFeatures::State blendSource;
+        QString editBlendId;
+        bool blendSupport=false;
         TopoDS_Edge edge;
         TopoDS_Face face;
         MoveFaceFeature moveFeature = MoveFaceFeature::Planar;
@@ -531,6 +537,9 @@ private:
     void beginCommandSession(CommandSession::Kind kind, const std::vector<size_t>& indices,
                              const gp_Dir& direction, const gp_Pnt& pivot = gp_Pnt());
     bool previewCommand(double value);
+    QCheckBox* keepBlends_ = nullptr;
+    bool startEditEdgeBlend(size_t index,const TopoDS_Face& face);
+    void updateEdgeBlendArrow();
     void startEdgeBlend(bool chamfer);
     bool pickEdgeBlend(const QPoint& point);
     bool previewEdgeBlend(double value);
