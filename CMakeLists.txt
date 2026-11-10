@@ -358,3 +358,11 @@ foreach(viewport_target OpenDesigner OpenDesignerPullTests OpenDesignerBooleanTe
     endif()
 endforeach()
 install(TARGETS OpenDesignerDebugModel RUNTIME DESTINATION bin)
+
+add_library(OpenDesignerEdgeBlends STATIC src/FilletGeometry.cpp)
+target_link_libraries(OpenDesignerEdgeBlends PUBLIC OpenDesignerCylindricalMoveGeometry TKFillet)
+if(OPENDESIGNER_BUILD_TESTS)
+    add_executable(OpenDesignerFilletTests tests/FilletGeometryTest.cpp)
+    target_link_libraries(OpenDesignerFilletTests PRIVATE OpenDesignerEdgeBlends)
+    add_test(NAME Fillet-geometry COMMAND OpenDesignerFilletTests)
+endif()
