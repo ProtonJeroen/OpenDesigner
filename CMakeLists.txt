@@ -359,10 +359,16 @@ foreach(viewport_target OpenDesigner OpenDesignerPullTests OpenDesignerBooleanTe
 endforeach()
 install(TARGETS OpenDesignerDebugModel RUNTIME DESTINATION bin)
 
-add_library(OpenDesignerEdgeBlends STATIC src/FilletGeometry.cpp)
+add_library(OpenDesignerEdgeBlends STATIC src/FilletGeometry.cpp src/ChamferGeometry.cpp)
 target_link_libraries(OpenDesignerEdgeBlends PUBLIC OpenDesignerCylindricalMoveGeometry TKFillet)
 if(OPENDESIGNER_BUILD_TESTS)
     add_executable(OpenDesignerFilletTests tests/FilletGeometryTest.cpp)
     target_link_libraries(OpenDesignerFilletTests PRIVATE OpenDesignerEdgeBlends)
     add_test(NAME Fillet-geometry COMMAND OpenDesignerFilletTests)
+endif()
+
+if(OPENDESIGNER_BUILD_TESTS)
+    add_executable(OpenDesignerChamferTests tests/ChamferGeometryTest.cpp)
+    target_link_libraries(OpenDesignerChamferTests PRIVATE OpenDesignerEdgeBlends)
+    add_test(NAME Chamfer-geometry COMMAND OpenDesignerChamferTests)
 endif()
