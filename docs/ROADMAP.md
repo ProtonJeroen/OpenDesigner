@@ -870,10 +870,16 @@ duplicated.
 - [ ] Future extensions: guide rails, tangent/continuity constraints and
   advanced surface lofts.
 
-### Fillet & Chamfer — v0.5.0 single-edge implementation
+### Fillet & Chamfer — v0.5.0 creation and feature-aware editing
 
 Single-edge constant-radius Fillet and equal-distance Chamfer are implemented
 through the existing command panel, blue previews and FaceChange history.
+Separated transitions now support certified geometric recognition, Edit commands,
+orange dimension dragging, sharp Delete Face restoration and Keep ON/OFF during
+supported planar Move/Pull and supporting-cap Rotate. Optional native recipes
+retain sharp support geometry and are checked against the current B-Rep.
+Initial creation was manually accepted on Fedora KDE; new feature-aware controls
+still require manual acceptance. Targeted tests only were run for this update.
 See [implementation, limitations and Fedora KDE checklist](FILLET_CHAMFER.md).
 The broader multi-edge milestone below remains future work.
 
