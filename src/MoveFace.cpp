@@ -61,6 +61,12 @@ bool CadViewport::moveFaceReference(const TopoDS_Shape& shape,const TopoDS_Face&
         MoveFaceFeature& feature,gp_Pnt& center,gp_Dir& axis,QString& error) const {
     feature=MoveFaceFeature::Planar;
     if(face.IsNull()) {error=tr("Select one member face.");return false;}
+    if(BRepAdaptor_Surface(face).GetType()==GeomAbs_Cone) {
+        error=tr("Move Face cannot translate an ordinary conical wall or an uncertified conical transition. Select a planar cap; cone primitives also support Pull / Resize.");return false;
+    }
+    if(BRepAdaptor_Surface(face).GetType()==GeomAbs_Torus) {
+        error=tr("Move Face: this toroidal transition has no certified Fillet recipe or sharp source. Original geometry was kept.");return false;
+    }
     if(BRepAdaptor_Surface(face).GetType()!=GeomAbs_Cylinder)
         return MoveFaceGeometry::reference(shape,face,center,axis,error);
     // The unchanged geometry APIs certify recognition at zero displacement.

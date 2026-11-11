@@ -488,6 +488,8 @@ void runProfileRevolutionSessions();
 void runActivePartSessions();
 void runDeletePartSessions();
 void runEdgeBlendSessions();
+void runRegressionDocumentProbe();
+void runDirectModelingRecovery();
 void runEdgeBlendFeatureSessions();
 void runSketchEllipseSessions();
 void runSketchEllipseDrawing();
@@ -502,6 +504,8 @@ int main(int argc,char** argv) {
         if(app.arguments().contains("--contours")) runSelectionContours();
         else if(app.arguments().contains("--automatic-selection")) SelectionContextTest::automatic();
         else if(app.arguments().contains("--edge-blend-features")) runEdgeBlendFeatureSessions();
+        else if(app.arguments().contains("--direct-modeling-recovery")) runDirectModelingRecovery();
+        else if(app.arguments().contains("--regression-document")) runRegressionDocumentProbe();
         else if(app.arguments().contains("--edge-blends")) runEdgeBlendSessions();
         else if(app.arguments().contains("--delete-parts")) runDeletePartSessions();
         else if(app.arguments().contains("--active-part")) runActivePartSessions();

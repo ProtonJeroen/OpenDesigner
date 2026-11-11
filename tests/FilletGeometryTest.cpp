@@ -82,7 +82,15 @@ int main(int argc,char**) {try {
         for(TopExp_Explorer it(rounded,TopAbs_FACE);it.More();it.Next()) if(BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType()==GeomAbs_Plane) {support=TopoDS::Face(it.Current());break;}
         State refused;TopoDS_Shape refusal;
         for(bool keep:{false,true}) {
-            check(!move(rounded,recipe,support,1,keep,refused,refusal,error)&&refusal.IsNull()&&!error.isEmpty(),"unsupported circular Keep move accepted");
+            // The top through-hole cap cannot retain its round: replay has
+            // no unique support edge. Keep that geometric refusal explicit.
+            if(BRepAdaptor_Surface(support).Plane().Axis().Direction().IsParallel(gp_Dir(0,0,1),1.e-8)
+                &&!(fixture==4&&keep)) {
+                if(!move(rounded,recipe,support,1,keep,refused,refusal,error)||!BRepReconstruction::validSolid(refusal,measured))
+                    throw std::runtime_error("circular cap fixture "+std::to_string(fixture)+" keep "+std::to_string(keep)+": "+error.toStdString());
+                check(volume(refusal)>volume(rounded),"cap offset did not add material");
+                if(keep) check(refused.features.size()==1&&std::abs(refused.features[0].size-r)<1.e-10,"cap Keep changed radius");
+            } else check(!move(rounded,recipe,support,1,keep,refused,refusal,error)&&refusal.IsNull()&&!error.isEmpty(),"uncertified circular support move accepted");
             check(!rotate(rounded,recipe,support,gp_Ax1(gp_Pnt(),gp_Dir(1,0,0)),5,keep,refused,refusal,error)&&refusal.IsNull(),"unsupported circular Keep rotate accepted");
         }
         State imported;check(!resolve(rounded,imported,error),"unproven imported torus recognized");

@@ -609,6 +609,9 @@ struct CadViewportPullTest {
             0.0,"cone presentation transform out of sync");
     }
     static void pickCone(CadViewport& v, size_t index) {
+        // Independent Pull cases start with a fresh pick. Repeating the Face
+        // retained by Cancel intentionally promotes it to Part selection.
+        v.selectParts({});
         const gp_Pnt bottom = coneEnd(v,index,false);
         const gp_Pnt interior = bottom.Translated(gp_Vec(bottom,coneEnd(v,index,true))*0.4);
         click(v,project(v,interior));

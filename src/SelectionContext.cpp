@@ -150,8 +150,10 @@ bool CadViewport::supportsResize(const SelectionContext& selection) const {
         const bool primitive=recognizePullPrimitive(part);
         const BRepAdaptor_Surface surface(selected.face);
         if(selection.faces.size()==1 && primitive) return true;
-        if(selection.faces.size()==1&&surface.GetType()==GeomAbs_Plane)
-            return bool(CylindricalMoveGeometry::bossHeightReference(part.shape,selected.face));
+        if(selection.faces.size()==1&&surface.GetType()==GeomAbs_Plane) {
+            gp_Pnt center;gp_Dir normal;QString error;
+            return MoveFaceGeometry::reference(part.shape,selected.face,center,normal,error);
+        }
         if(selection.faces.size()==1 && surface.GetType()==GeomAbs_Cylinder) {
             double volume=0.0;
             return BRepReconstruction::validSolid(part.shape,volume);
@@ -309,9 +311,10 @@ void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection
     const bool moveSupported=blendIndex>=0 || supported || (selection.faces.size()==1 && moveFaceReference(
         boxes_[selection.faces.front().partIndex].shape,selection.faces.front().face,feature,center,direction,error));
     const bool cylinder=selection.faces.size()==1&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Cylinder;
-    if(!moveSupported&&!cylinder) { delete move; move=nullptr; }
+    const bool cone=selection.faces.size()==1&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Cone;
+    if(!moveSupported&&!cylinder&&!cone) { delete move; move=nullptr; }
     else {
-        move->setEnabled(moveSupported);move->setToolTip(error);move->setStatusTip(error);
+        move->setEnabled(moveSupported||cone);move->setToolTip(error);move->setStatusTip(error);
         if(!moveSupported) menu.setToolTipsVisible(true);
     }
     if(move) connect(move,&QAction::triggered,this,&CadViewport::moveFace);
@@ -338,7 +341,8 @@ void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection
         }
     }
     auto* resize=menu.addAction(tr("Pull / Resize"));resize->setObjectName(QStringLiteral("context.resize"));
-    if(!supportsResize(selection)) { delete resize; return; }
+    const bool conicalTarget=selection.faces.size()==1&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Cone;
+    if(!supportsResize(selection)&&!conicalTarget) { delete resize; return; }
     connect(resize,&QAction::triggered,this,[this,anchor]() { previous_=anchor; startPrimitivePull(); });
 }
 void CadViewport::contextMenuEvent(QContextMenuEvent* event) {
@@ -428,8 +432,27 @@ void CadViewport::startPrimitivePull() {
             }
         }
     }
+    if(selection.faces.size()==1) {
+        const auto& selected=selection.faces.front();auto part=boxes_[selected.partIndex];
+        if(BRepAdaptor_Surface(selected.face).GetType()==GeomAbs_Plane&&!recognizePullPrimitive(part)
+           &&!CylindricalMoveGeometry::bossHeightReference(part.shape,selected.face)) {
+            if(startMoveFace(selected.partIndex,selected.face)) commandPanel_->setWindowTitle(tr("Pull / Resize Preview"));
+            return;
+        }
+        auto state=part.blends;QString diagnostic;
+        if(BRepAdaptor_Surface(selected.face).GetType()==GeomAbs_Cylinder&&EdgeBlendFeatures::resolve(part.shape,state,diagnostic)
+           &&std::any_of(state.features.begin(),state.features.end(),[](const auto& feature){return feature.cylinders[0]||feature.cylinders[1];})) {
+            emit statusMessage(tr("Pull / Resize of a cylindrical support with circular Fillets is not certified. Planar cap Pull and Edit Fillet remain available."));return;
+        }
+    }
     if(!supportsResize(selection)) {
-        emit statusMessage(tr("Pull / Resize: the selected faces have no certified individual or joint reconstruction. No command started."));
+        if(selection.faces.size()==1&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Cone)
+            emit statusMessage(tr("Pull / Resize: this conical face is not a complete editable cone primitive or a certified transition. Conical support reconstruction with transitions is unsupported; original geometry was kept."));
+        else if(selection.faces.size()==1&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Torus)
+            emit statusMessage(tr("Pull / Resize: this toroidal transition has no certified Fillet recipe or sharp source. Original geometry was kept."));
+        else if(selection.kind==SelectionContext::Kind::Parts)
+            emit statusMessage(tr("Pull / Resize: select a Face first. Part selection does not identify a Face to resize. No command started."));
+        else emit statusMessage(tr("Pull / Resize: the selected faces have no certified individual or joint reconstruction. No command started."));
         return;
     }
     if(!selection.faces.empty()&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Cylinder) {

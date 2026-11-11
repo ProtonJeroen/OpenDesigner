@@ -219,17 +219,31 @@ bool affected(const Feature& feature,const TopoDS_Shape& source,const TopoDS_Fac
     return false;
 }
 template<class Operation> bool changeSupport(const TopoDS_Shape& current,const State& prior,const TopoDS_Face& target,
-        bool keep,State& after,TopoDS_Shape& result,QString& error,Operation operation,const gp_Pln& expected) {
+        bool keep,State& after,TopoDS_Shape& result,QString& error,Operation operation,const gp_Pln& expected,
+        bool translate=false) {
     result.Nullify();State state=prior;
     if(!resolve(current,state,error)||!member(current,target)||BRepAdaptor_Surface(target).GetType()!=GeomAbs_Plane) return false;
     auto original=BRepAdaptor_Surface(target).Plane();auto sharpFace=supportFace(state.sharp,original);
     if(sharpFace.IsNull()) {error=QStringLiteral("Choose a sharp supporting face, or use Edit Fillet / Chamfer to change a transition dimension.");return false;}
-    for(const auto& f:state.features) if(f.cylinders[0]||f.cylinders[1]) {
+    for(const auto& f:state.features) if(!translate&&(f.cylinders[0]||f.cylinders[1])) {
         error=QStringLiteral("Supporting-face edits on circular Fillets are not yet certified; remove the Fillet first.");return false;
     }
+    if(translate) for(const auto& f:state.features) for(const auto& cylinder:f.cylinders)
+        if(cylinder&&!original.Axis().Direction().IsParallel(cylinder->Axis().Direction(),angular)) {
+            error=QStringLiteral("Circular Fillet support translation requires a cap perpendicular to its cylinder axis.");return false;
+        }
+    const bool circular=std::any_of(state.features.begin(),state.features.end(),[](const auto& f){return f.cylinders[0]||f.cylinders[1];});
     if(!keep) std::erase_if(state.features,[&](const auto& f){return affected(f,current,target);});
     auto base=operation(state.sharp,sharpFace);
     if(base.IsNull()) return false;
+    // Local cap sweeps may retain cylindrical bands. Recipes require one
+    // unambiguous carrier per support; use the existing material-certified
+    // same-domain normalization, then enforce strictSharp again in rebuild.
+    if(translate&&circular) {
+        TopoDS_Shape normalized;
+        if(!BRepReconstruction::normalize(base,normalized,error)) return false;
+        base=normalized;
+    }
     if(!supportFace(base,expected).IsNull()) {
         for(auto& f:state.features) for(auto& plane:f.supports) if(planeEqual(plane,original)) plane=expected;
     } else {error=QStringLiteral("The requested face operation lost its supporting plane.");return false;}
@@ -253,6 +267,12 @@ bool resolve(const TopoDS_Shape& current,State& state,QString& error) {
         }
         state={};
         if(recover(current,state,error)) {error.clear();return true;}
+        for(TopExp_Explorer it(current,TopAbs_FACE);it.More();it.Next()) {
+            const auto type=BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType();
+            if(type==GeomAbs_Cone||type==GeomAbs_Torus) {
+                error=QStringLiteral("No certified transition recipe: conical supports and recipe-free toroidal transitions cannot be reconstructed by Edit Fillet / Chamfer. An ordinary cone is not a Chamfer.");return false;
+            }
+        }
         error=QStringLiteral("No certified separated edge transitions were found. Imported recognition requires rectangular local stock and verified tangent/equal-distance supports.");return false;
     } catch(const Standard_Failure& e) {state={};error=QStringLiteral("Transition analysis failed: %1").arg(QString::fromUtf8(e.GetMessageString()));return false;}
 }
@@ -307,7 +327,7 @@ bool remove(const TopoDS_Shape& current,const State& prior,const std::vector<Top
 bool move(const TopoDS_Shape& current,const State& prior,const TopoDS_Face& face,double distance,bool keep,State& after,TopoDS_Shape& result,QString& error) {
     result.Nullify();if(!member(current,face)||BRepAdaptor_Surface(face).GetType()!=GeomAbs_Plane||!std::isfinite(distance)) {error=QStringLiteral("Choose a current planar support and enter a finite distance.");return false;}
     auto expected=BRepAdaptor_Surface(face).Plane();auto normal=expected.Axis().Direction();if(face.Orientation()==TopAbs_REVERSED) normal.Reverse();expected.Translate(gp_Vec(normal)*distance);
-    return changeSupport(current,prior,face,keep,after,result,error,[&](const auto& s,const auto& f){return MoveFaceGeometry::move(s,f,distance,error);},expected);
+    return changeSupport(current,prior,face,keep,after,result,error,[&](const auto& s,const auto& f){return MoveFaceGeometry::move(s,f,distance,error);},expected,true);
 }
 bool rotate(const TopoDS_Shape& current,const State& prior,const TopoDS_Face& face,const gp_Ax1& axis,double degrees,bool keep,State& after,TopoDS_Shape& result,QString& error) {
     result.Nullify();if(!member(current,face)||BRepAdaptor_Surface(face).GetType()!=GeomAbs_Plane||!std::isfinite(degrees)) {error=QStringLiteral("Choose a current planar support and enter a finite angle.");return false;}

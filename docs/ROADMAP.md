@@ -1038,8 +1038,8 @@ Agreed targets (2026-11-11); these are planned deliverables, not certified build
 - [x] Plane/cylinder recipes for outer rims, through-hole rims and boss feet;
   unique toroidal transition recognition, absolute Edit Fillet and sharp deletion.
 - [x] Reuse orange radius Pull, blue preview, native recipes and history.
-- [x] Safely refuse supporting-face Keep ON/OFF reconstruction for circular recipes.
-- [ ] Certified circular Keep ON/OFF reconstruction (Move/Pull/Rotate).
+- [x] Certified perpendicular planar cap Move/Pull with circular recipes and Keep ON/OFF; preserve unaffected transitions.
+- [ ] Circular cylindrical-wall radial/lateral edits and supporting-face Rotate.
 - [ ] Imported circular transition recovery without native recipes.
 - [ ] Editable split supporting/transition face sets and general analytic carriers.
 - [ ] Manual DellJV Fedora KDE/Wayland acceptance (see FILLET_CHAMFER.md).
