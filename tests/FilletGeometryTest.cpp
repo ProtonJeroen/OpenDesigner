@@ -80,19 +80,71 @@ int main(int argc,char**) {try {
         check(selected(recipe,recipe.features[0].faces.front())==0,"circular recognition missing");
         TopoDS_Face support;
         for(TopExp_Explorer it(rounded,TopAbs_FACE);it.More();it.Next()) if(BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType()==GeomAbs_Plane) {support=TopoDS::Face(it.Current());break;}
+        std::ostringstream roundedBefore;BRepTools::Write(rounded,roundedBefore);
+        const auto recipeBefore=encode(recipe);
         State refused;TopoDS_Shape refusal;
         for(bool keep:{false,true}) {
-            // The top through-hole cap cannot retain its round: replay has
-            // no unique support edge. Keep that geometric refusal explicit.
-            if(BRepAdaptor_Surface(support).Plane().Axis().Direction().IsParallel(gp_Dir(0,0,1),1.e-8)
-                &&!(fixture==4&&keep)) {
-                if(!move(rounded,recipe,support,1,keep,refused,refusal,error)||!BRepReconstruction::validSolid(refusal,measured))
+            const bool cap=BRepAdaptor_Surface(support).Plane().Axis().Direction().IsParallel(gp_Dir(0,0,1),1.e-8);
+            const bool moved=move(rounded,recipe,support,1,keep,refused,refusal,error);
+            // OCCT versions differ in whether normalization leaves a unique
+            // circular support at this through-hole cap. A safe refusal is
+            // permitted there; an accepted move must pass independent material
+            // and recipe certification below, including Keep ON.
+            if(fixture==4&&keep&&!moved) {
+                check(refusal.IsNull()&&!error.isEmpty(),"failed circular cap move published geometry or no diagnostic");
+            } else if(cap) {
+                if(!moved||!BRepReconstruction::validSolid(refusal,measured))
                     throw std::runtime_error("circular cap fixture "+std::to_string(fixture)+" keep "+std::to_string(keep)+": "+error.toStdString());
+                for(const auto type:{TopAbs_VERTEX,TopAbs_EDGE,TopAbs_FACE})
+                    for(TopExp_Explorer it(refusal,type);it.More();it.Next()) {
+                        const double tolerance=type==TopAbs_VERTEX?BRep_Tool::Tolerance(TopoDS::Vertex(it.Current()))
+                            :type==TopAbs_EDGE?BRep_Tool::Tolerance(TopoDS::Edge(it.Current()))
+                            :BRep_Tool::Tolerance(TopoDS::Face(it.Current()));
+                        check(std::isfinite(tolerance)&&tolerance<=1.e-6,"cap move exceeded certification tolerance");
+                    }
                 check(volume(refusal)>volume(rounded),"cap offset did not add material");
                 if(keep) check(refused.features.size()==1&&std::abs(refused.features[0].size-r)<1.e-10,"cap Keep changed radius");
-            } else check(!move(rounded,recipe,support,1,keep,refused,refusal,error)&&refusal.IsNull()&&!error.isEmpty(),"uncertified circular support move accepted");
+                if(fixture==4) {
+                    // Independent stock: extend the box and bore to z=21,
+                    // then round its top rim. Analytic removed volume includes
+                    // the circular Fillet's radial first moment.
+                    auto expectedSharp=BRepAlgoAPI_Cut(BRepPrimAPI_MakeBox(gp_Pnt(-20,-20,0),40,40,21).Shape(),
+                                                       BRepPrimAPI_MakeCylinder(10,21).Shape()).Shape();
+                    TopoDS_Edge expectedRim;
+                    for(TopExp_Explorer it(expectedSharp,TopAbs_EDGE);it.More();it.Next()) {
+                        const auto e=TopoDS::Edge(it.Current());BRepAdaptor_Curve c(e);
+                        if(c.GetType()==GeomAbs_Circle&&std::abs(c.Circle().Location().Z()-21)<1.e-6) expectedRim=e;
+                    }
+                    check(!expectedRim.IsNull(),"independent cap rim missing");
+                    const auto expected=keep?FilletGeometry::apply(expectedSharp,expectedRim,r,error):expectedSharp;
+                    check(!expected.IsNull()&&BRepReconstruction::equivalent(refusal,expected),"cap move differs from independent material construction");
+                    check(std::abs(measured-((1600-pi*100)*21-(keep?delta:0)))<1.e-6,"cap move differs from analytic volume");
+                    if(keep) {
+                        auto replay=decode(encode(refused));
+                        check(resolve(refusal,replay,error),"moved circular cap recipe failed independent replay certification");
+                        State restored;TopoDS_Shape sharp;
+                        check(remove(refusal,replay,replay.features[0].faces,restored,sharp,error)
+                              &&BRepReconstruction::equivalent(sharp,expectedSharp),"moved circular cap lost sharp stock");
+                    }
+                }
+            } else check(!moved&&refusal.IsNull()&&!error.isEmpty(),"uncertified circular support move accepted");
             check(!rotate(rounded,recipe,support,gp_Ax1(gp_Pnt(),gp_Dir(1,0,0)),5,keep,refused,refusal,error)&&refusal.IsNull(),"unsupported circular Keep rotate accepted");
         }
+        // Side planes and cylindrical walls remain unsupported. Rejection must
+        // publish neither geometry nor a replacement feature state.
+        for(TopExp_Explorer it(rounded,TopAbs_FACE);it.More();it.Next()) {
+            const auto face=TopoDS::Face(it.Current());BRepAdaptor_Surface surface(face);
+            if(surface.GetType()!=GeomAbs_Cylinder && !(surface.GetType()==GeomAbs_Plane
+                &&!surface.Plane().Axis().Direction().IsParallel(gp_Dir(0,0,1),1.e-8))) continue;
+            for(bool keep:{false,true}) {
+                State after=recipe;TopoDS_Shape result=rounded;
+                const auto history=encode(after);
+                check(!move(rounded,recipe,face,1,keep,after,result,error)&&result.IsNull()&&!error.isEmpty(),"unsupported circular carrier move accepted");
+                check(encode(after)==history,"rejected circular move changed feature history");
+            }
+        }
+        std::ostringstream roundedAfter;BRepTools::Write(rounded,roundedAfter);
+        check(roundedBefore.str()==roundedAfter.str()&&encode(recipe)==recipeBefore,"circular support edit mutated source geometry/history");
         State imported;check(!resolve(rounded,imported,error),"unproven imported torus recognized");
         State loaded=decode(encode(recipe));check(resolve(rounded,loaded,error),error.toUtf8().constData());
         auto tampered=loaded;tampered.certified.Nullify();

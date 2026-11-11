@@ -109,8 +109,17 @@ struct CadViewportPullTest {
         require(orange,"Pull arrow is hidden in the rendered viewport");
     }
     static void pickSphere(CadViewport& v, size_t index) {
+        // Start a fresh Face pick: a second click on a selected Face promotes
+        // it to a Part in automatic selection mode.
+        v.selectParts({});
         // The center click also covers the screen-right radial fallback.
         click(v,project(v,center(v,index)));
+        const auto selection=v.selectionContext();
+        require(selection.kind==CadViewport::SelectionContext::Kind::Faces
+                && selection.faces.size()==1 && selection.faces.front().partIndex==index
+                && selection.edges.empty()
+                && BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Sphere,
+                "sphere surface picking did not select its owning Face");
         v.startPrimitivePull();
         require(v.arrowVisible_ && v.arrowPartIndex_ == index,
                 "sphere picking did not create a pull arrow");
