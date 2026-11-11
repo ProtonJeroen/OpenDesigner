@@ -497,11 +497,12 @@ void CadViewport::initializeViewer() {
 void CadViewport::stabilizeViewCamera() {if(!view_.IsNull()) stabilizeOrthographicCamera(view_->Camera());}
 void CadViewport::paintEvent(QPaintEvent*) {
     initializeViewer();
+    refreshActivePart(false);
     if (!view_.IsNull()) {updateConstructionLabels();view_->Redraw();}
 }
 void CadViewport::configureSelectionHighlights() {
     if(context_.IsNull()) return;
-    const Quantity_Color cyan(0.0,0.95,1.0,Quantity_TOC_RGB);
+    const Quantity_Color cyan(0.0,1.0,1.0,Quantity_TOC_sRGB);
     for(auto type:{Prs3d_TypeOfHighlight_Selected,Prs3d_TypeOfHighlight_LocalSelected,
                    Prs3d_TypeOfHighlight_Dynamic,Prs3d_TypeOfHighlight_LocalDynamic}) {
         auto style=context_->HighlightStyle(type);
@@ -2571,7 +2572,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             return;
         }
         // Use OCCT's additive selection scheme for Ctrl+click on faces.
-        // Highlight selected face boundaries, preserving their material.
+        // Face contours are drawn in the shaded Part without changing material.
         if (!context_->SelectionStyle().IsNull())
             context_->SelectionStyle()->SetDisplayMode(AIS_WireFrame);
         // Additive selection stays typed: Ctrl on a face starts a face set
@@ -2877,13 +2878,9 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
         if(!commandSession_&&!moveFacePicking_&&!faceAxisPicking_&&!alignFacePickingReference_&&!targetPicking()&&activeSketchWorkplaneId_.isEmpty())
             activateAutomaticSelection(e->modifiers()&Qt::AltModifier);
         context_->MoveTo(p.x(),p.y(),view_,Standard_True);
-        const auto global=[](const Handle(SelectMgr_EntityOwner)& owner) {
-            const auto brep=Handle(StdSelect_BRepOwner)::DownCast(owner);
-            return !brep.IsNull()&&!brep->ComesFromDecomposition();
-        };
-        if(before!=context_->DetectedOwner()&&(global(before)||global(context_->DetectedOwner()))) refreshActivePart();
+        if(before!=context_->DetectedOwner()) refreshActivePart();
     }
-    if(rotating_ || panning_) {updateConstructionLabels();view_->Redraw();}
+    if(rotating_ || panning_) {refreshActivePart();updateConstructionLabels();view_->Redraw();}
     previous_ = p;
 }
 void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
@@ -2953,17 +2950,17 @@ std::optional<bool> activeSilhouette(Aspect& aspect,bool enabled,const Quantity_
     return {};
 }
 }
-void CadViewport::refreshActivePart() {
+void CadViewport::refreshActivePart(bool redraw) {
     if(!activePartId_.isEmpty() && !partIndexForId(activePartId_)) {
         activePartId_.clear();emit activePartChanged();
     }
     if(context_.IsNull())return;
     const Quantity_Color green(167.0/255,212.0/255,0.0,Quantity_TOC_sRGB);
-    const Quantity_Color cyan(0.0,0.95,1.0,Quantity_TOC_RGB);
+    const Quantity_Color cyan(0.0,1.0,1.0,Quantity_TOC_sRGB);
     for(auto& part:boxes_) if(!part.presentation.IsNull()) {
         const bool active=part.active && part.persistentId==activePartId_;
-        // Only whole-object owners get the extra contour. Local face/edge
-        // selection and hover keep their existing OCCT highlight styles.
+        // Part silhouettes use the native renderer; local Face contours are
+        // generated below. Edge owners retain OCCT highlighting.
         const bool selected=part.active && context_->IsSelected(part.presentation->GlobalSelOwner());
         const auto detected=Handle(StdSelect_BRepOwner)::DownCast(context_->DetectedOwner());
         const bool hovered=!detected.IsNull()&&detected->Selectable()==part.presentation
@@ -2972,27 +2969,52 @@ void CadViewport::refreshActivePart() {
         const auto color=hovered?cyan:selected?Quantity_Color(135./255,206./255,250./255,Quantity_TOC_sRGB):green;
         const double outlineWidth=(hovered?4.:selected?2.:2.8)*devicePixelRatioF();
         auto drawer=part.presentation->Attributes();
-        if(!outlined && !drawer->HasOwnShadingAspect() && !drawer->HasOwnFaceBoundaryDraw())continue;
-        if(outlined)drawer->SetupOwnShadingAspect();
+
+        drawer->SetupOwnShadingAspect();
         auto changed=activeSilhouette(*drawer->ShadingAspect()->Aspect(),outlined,color,outlineWidth);
         // Generic face boundaries include seams/tangent joins. Feature edges
         // are classified geometrically by PartPresentation instead.
         const bool boundaryChanged=drawer->FaceBoundaryDraw();
         if(boundaryChanged)drawer->SetFaceBoundaryDraw(false);
         auto* presentation=dynamic_cast<PartPresentation*>(part.presentation.get());
+        bool faceChanged=false;
+        if(presentation && !view_.IsNull()) {
+            std::vector<PartPresentation::FaceContour> faces;
+            for(context_->InitSelected();context_->MoreSelected();context_->NextSelected()) {
+                const auto owner=Handle(StdSelect_BRepOwner)::DownCast(context_->SelectedOwner());
+                if(!owner.IsNull() && owner->Selectable()==part.presentation && owner->Shape().ShapeType()==TopAbs_FACE
+                    && owner!=detected)
+                    faces.push_back({TopoDS::Face(owner->Shape()),Quantity_Color(135./255,206./255,250./255,Quantity_TOC_sRGB),2.*devicePixelRatioF()});
+            }
+            if(!detected.IsNull() && detected->Selectable()==part.presentation && detected->Shape().ShapeType()==TopAbs_FACE)
+                faces.push_back({TopoDS::Face(detected->Shape()),cyan,4.*devicePixelRatioF()});
+            const auto camera=view_->Camera();
+            const auto inverse=part.presentation->Transformation().Inverted();
+            const gp_Ax2 axes(camera->Center().Transformed(inverse),camera->Direction().Reversed().Transformed(inverse),camera->SideRight().Transformed(inverse));
+            const HLRAlgo_Projector projector=camera->IsOrthographic()?HLRAlgo_Projector(axes):HLRAlgo_Projector(axes,camera->Distance());
+            faceChanged=presentation->setFaceContours(faces,projector);
+            std::vector<TopoDS_Face> fillets;
+            if(outlined && part.blends.certified.IsSame(part.shape))
+                for(const auto& feature:part.blends.features)if(feature.kind==EdgeBlendFeatures::Kind::Fillet)
+                    for(const auto& face:feature.faces) {
+                        if(std::none_of(fillets.begin(),fillets.end(),[&](const auto& f){return f.IsSame(face);}))fillets.push_back(face);
+                    }
+            presentation->setFilletFaces(fillets,selected||hovered);
+
+        }
         const bool featuresChanged=presentation && presentation->setFeatureHighlight(outlined,color,outlineWidth);
         if(outlined && !changed.has_value())
             emit statusMessage(tr("Native part silhouettes are unavailable in this OCCT build; only sharp feature edges are highlighted."));
         // Update only shaded rendering. Redisplay also rebuilds selection
         // presentations and can revive stale highlights during history cleanup.
-        if(part.active && (boundaryChanged || featuresChanged)) {
+        if(part.active && (boundaryChanged || featuresChanged || faceChanged)) {
             part.presentation->SetToUpdate(AIS_Shaded);
             context_->MainPrsMgr()->Update(part.presentation,AIS_Shaded);
         } else if(part.active && changed.value_or(false)) {
             part.presentation->SynchronizeAspects();
         }
     }
-    if(!view_.IsNull())view_->Redraw();
+    if(redraw && !view_.IsNull())view_->Redraw();
 }
 std::optional<size_t> CadViewport::detectedPart(const QPoint& position) {
     if(context_.IsNull())return {};

@@ -17,6 +17,8 @@
 #include <QEventLoop>
 #include <BRepAdaptor_Curve.hxx>
 #include <Prs3d_Drawer.hxx>
+#include <Graphic3d_Group.hxx>
+#include <PrsMgr_Presentation.hxx>
 #include <Prs3d_LineAspect.hxx>
 #include <QTreeWidget>
 #include <QLineEdit>
@@ -61,13 +63,26 @@ struct SelectionContextTest {
         auto hover=[&](const QPoint& p,Qt::KeyboardModifiers modifiers=Qt::NoModifier) {
             QMouseEvent event(QEvent::MouseMove,QPointF(p),QPointF(p),Qt::NoButton,Qt::NoButton,modifiers);v.mouseMoveEvent(&event);
         };
+        const auto contourStyle=[&](const Quantity_Color& color,double width) {
+            const auto presentation=v.context_->MainPrsMgr()->Presentation(v.boxes_[0].presentation,AIS_Shaded);
+            for(const auto& group:presentation->Groups()) {
+                const auto aspect=group->Aspects();
+                if(!group->IsClosed() && !aspect.IsNull() && aspect->Color().IsEqual(color)
+                    && std::abs(aspect->LineWidth()-width*v.devicePixelRatioF())<0.001)return true;
+            }
+            return false;
+        };
         hover(face);require(v.context_->HasDetected()&&v.context_->DetectedOwner()->IsSelected(),"selected Face could not be hovered");
         require(v.context_->ToHilightSelected(),"hover over selected geometry disabled");
+        require(contourStyle(Quantity_Color(0.,1.,1.,Quantity_TOC_sRGB),4),"Face hover contour missing from shaded presentation");
+        QEvent faceLeave(QEvent::Leave);v.leaveEvent(&faceLeave);
+        require(contourStyle(Quantity_Color(135./255,206./255,250./255,Quantity_TOC_sRGB),2),"Face selection contour not restored after hover");
+
         for(bool local:{false,true}) {
             auto chosen=v.context_->HighlightStyle(local?Prs3d_TypeOfHighlight_LocalSelected:Prs3d_TypeOfHighlight_Selected);
             auto dynamic=v.context_->HighlightStyle(local?Prs3d_TypeOfHighlight_LocalDynamic:Prs3d_TypeOfHighlight_Dynamic);
             require(chosen->Color()==Quantity_Color(135./255,206./255,250./255,Quantity_TOC_sRGB),"selection is not light blue");
-            require(dynamic->Color()==Quantity_Color(0.,0.95,1.,Quantity_TOC_RGB),"hover is not cyan");
+            require(dynamic->Color()==Quantity_Color(0.,1.,1.,Quantity_TOC_sRGB),"hover is not cyan");
             require(std::abs(chosen->LineAspect()->Aspect()->Width()-2*v.devicePixelRatioF())<0.01,"selected width not DPI aware");
             require(std::abs(dynamic->LineAspect()->Aspect()->Width()-4*v.devicePixelRatioF())<0.01,"hover width not DPI aware");
             require(chosen->ZLayer()==Graphic3d_ZLayerId_Top&&dynamic->ZLayer()==Graphic3d_ZLayerId_Top,"highlight lost depth-tested layer");
@@ -447,6 +462,7 @@ void runEdgeBlendSessions();
 void runEdgeBlendFeatureSessions();
 void runSketchEllipseSessions();
 void runSketchEllipseDrawing();
+void runSelectionContours();
 int main(int argc,char** argv) {
 #if defined(Q_OS_LINUX)
     if(qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM") && !qEnvironmentVariableIsEmpty("DISPLAY"))qputenv("QT_QPA_PLATFORM","xcb");
@@ -454,7 +470,8 @@ int main(int argc,char** argv) {
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc,argv);
     try {
-        if(app.arguments().contains("--automatic-selection")) SelectionContextTest::automatic();
+        if(app.arguments().contains("--contours")) runSelectionContours();
+        else if(app.arguments().contains("--automatic-selection")) SelectionContextTest::automatic();
         else if(app.arguments().contains("--edge-blend-features")) runEdgeBlendFeatureSessions();
         else if(app.arguments().contains("--edge-blends")) runEdgeBlendSessions();
         else if(app.arguments().contains("--delete-parts")) runDeletePartSessions();

@@ -626,7 +626,7 @@ private:
     QString activePartId_;
     TargetEligibility targetEligibility_;
     std::function<void(const QString&)> targetAccepted_;
-    void refreshActivePart();
+    void refreshActivePart(bool redraw=true);
     std::optional<size_t> detectedPart(const QPoint& position);
 
     void applyBoxBounds(size_t index, const std::array<double, 3>& min,

@@ -32,6 +32,7 @@ target_include_directories(OpenDesigner PRIVATE ${OpenCASCADE_INCLUDE_DIR})
 # Use only the libraries required by our current modeling and display code.
 set(OPENDESIGNER_LIBRARIES
     Qt6::Widgets
+    TKHLR
     TKOpenGl
     TKV3d
     TKService
@@ -265,6 +266,7 @@ if(OPENDESIGNER_BUILD_TESTS)
     add_test(NAME profile-extrusion-sessions COMMAND OpenDesignerSelectionContextTests --extrusion)
     add_test(NAME profile-extrusion-sessions-hidpi COMMAND OpenDesignerSelectionContextTests --extrusion)
     set_tests_properties(profile-extrusion-sessions-hidpi PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=2")
+    add_test(NAME selection-contours COMMAND OpenDesignerSelectionContextTests --contours)
     add_test(NAME automatic-selection COMMAND OpenDesignerSelectionContextTests --automatic-selection)
     add_test(NAME automatic-selection-hidpi COMMAND OpenDesignerSelectionContextTests --automatic-selection)
     set_tests_properties(automatic-selection automatic-selection-hidpi PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE)

@@ -231,17 +231,25 @@ Subelement selection is passive. A selected Edge's context menu offers the
 existing Fillet/Chamfer commands, which then request their command-specific edge.
 Structure Browser selection remains whole-Part selection.
 
-Hover and selected geometry share cyan. Initial line-width targets are 4 logical
-pixels for hover and 2 for selection, scaled by Qt's device pixel ratio for line
-rendering. Hover is enabled over already-selected owners. Edge highlights use
-that edge; Face highlights use its wire boundary without changing material.
-Part highlights reuse the existing native silhouette plus sharp feature edges;
-seams and tangent joins are excluded. On OCCT builds without native silhouette
-support, only sharp feature edges are available, as in the existing Part renderer.
-All highlight drawers use scene-depth-tested layers. Whole-Part AIS wireframes
-are suppressed to avoid duplicate seams/highlights. Moving to another owner,
-leaving the viewport or resetting tools clears transient hover. Active Part green
-remains independent and returns when cyan whole-Part highlighting ends.
+Selected contours are light blue `#87CEFA`, approximately 2 logical pixels;
+hover contours are cyan `#00FFFF`, approximately 4 logical pixels. Widths scale
+with Qt's device pixel ratio. Hover overrides a selected Face/Part and pointer
+exit restores the selection. Edges retain OCCT's individual-edge highlighting.
+
+Faces use exact, visible 3D HLR outlines and visible trimmed-region boundaries,
+excluding seams, isoparameters and overlapping silhouette segments. The contours
+are drawn in the owning shaded Part presentation, preserving its material and
+scene occlusion. Camera projection and Part placement enter the HLR projector;
+contours are cached until the Face, camera, placement or appearance changes.
+The complete Part retains its native silhouette renderer and adds only geometric
+Fillet transition edges for selection/hover. Certified feature face membership
+and analytic tangent-support classification retain cylindrical/toroidal Fillet
+boundaries even at smooth joins; seams and unrelated sharp edges are excluded.
+The independent Active Part presentation retains its existing green features.
+Face/Part owners suppress OCCT's stock full wireframe while retaining their
+sensitive geometry and selection semantics. On OCCT builds without native Part
+silhouette support, only classified transition edges are available for selected
+Parts. Active Part green returns when whole-Part selection/hover ends.
 
 Promotion compares the current selected and detected AIS owners' actual topology
 and owning presentation. No last-click TopoDS pointer, face index or timer is
@@ -255,8 +263,8 @@ stale Edge owners are rejected by the same membership policy as Faces.
 2. Select a Part in the Structure Browser; click an Edge or Face to return to it.
    Check Alt immediate Part selection, Ctrl typed multi-selection, Ctrl+Alt Part
    multi-selection, and clearing on empty space.
-3. Hover a selected Edge/Face and an Alt-hovered Part: cyan should thicken from
-   approximately 2 to 4 logical pixels. Check circular rims, occluded geometry,
+3. Hover a selected Edge/Face and an Alt-hovered Part: light blue should become
+   cyan and thicken from approximately 2 to 4 logical pixels. Check circular rims, occluded geometry,
    orbiting, leaving the viewport, and moving between screens at different scale.
 4. Run Fillet and Chamfer Edge picking and preview, then Move Face, Pull, Rotate
    Face and Part transform drags. Check command picking never promotes to Part.
@@ -267,7 +275,33 @@ Manual KDE/Wayland visual acceptance remains pending. The automated normal and
 `QT_SCALE_FACTOR=2` tests check selection semantics and highlight configuration;
 line rasterization and native silhouette support still depend on OCCT/driver.
 
-### Targeted automated validation — 2026-11-11
+### Corrected contour validation — 2026-11-11
+
+Incremental builds of `OpenDesigner` and `OpenDesignerSelectionContextTests`
+passed with Ninja `-j2`. The exact focused CTest command was:
+
+```sh
+ctest --test-dir build -R '^(selection-contours|automatic-selection|automatic-selection-hidpi|selection-context|active-part-sessions)$' --output-on-failure -j 1
+```
+
+| Test | Result | Seconds |
+| --- | --- | ---: |
+| active-part-sessions | PASS | 2.33 |
+| selection-contours | PASS | 0.23 |
+| automatic-selection | PASS | 3.98 |
+| automatic-selection-hidpi | PASS | 4.24 |
+| selection-context | PASS | 30.78 |
+
+All five passed in 41.57 seconds. Coverage distinguishes cylinder silhouettes
+from seams (including a seam coincident with a silhouette), retained trimmed
+rims, planar contours, toroidal Faces and tangent Fillet transition edges,
+imported analytic classification, camera changes/cache reuse, translated Faces,
+canonical BRep immutability, hover color/width and selection restoration in the
+actual shaded presentation at normal/2x DPI. Existing Part rotation and selection
+history assertions also pass. No full suite, unrelated geometry tests or clean
+rebuild was run. Existing untracked `.odc` files were left untouched.
+
+### Initial selection validation — 2026-11-11
 
 Incremental Release builds of `OpenDesigner` and
 `OpenDesignerSelectionContextTests` passed with Ninja `-j4`. Exact CTest names
