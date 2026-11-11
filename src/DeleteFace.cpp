@@ -23,10 +23,20 @@ void CadViewport::deleteFace() {
         for(const auto& selected:selection.faces) if(selected.partIndex==index) faces.push_back(selected.face);
         BRepReconstruction::Result result;
         const auto& before=boxes_[index];
-        if(!DeleteFaceGeometry::remove(before.shape,faces,result,error)) {
+        auto blendState=before.blends;TopoDS_Shape sharpResult;
+        QString blendError;
+        bool recognized=EdgeBlendFeatures::resolve(before.shape,blendState,blendError);
+        bool transitions=recognized&&std::any_of(faces.begin(),faces.end(),[&](const auto& f){return EdgeBlendFeatures::selected(blendState,f)>=0;});
+        EdgeBlendFeatures::State afterBlends;
+        bool success=false;
+        if(transitions) {
+            success=EdgeBlendFeatures::remove(before.shape,blendState,faces,afterBlends,sharpResult,error);
+            if(success) result.solid=sharpResult;
+        } else success=DeleteFaceGeometry::remove(before.shape,faces,result,error);
+        if(!success) {
             reportGeometryFailure(tr("Delete Face"),error,true);return;
         }
-        auto after=before;after.shape=result.solid;
+        auto after=before;after.shape=result.solid;after.blends=afterBlends;
         after.geometryKind=CadPart::GeometryKind::GeneralBRep;
         after.cylinderPrimitive=after.spherePrimitive=after.conePrimitive=false;
         Bnd_Box bounds;BRepBndLib::AddOptimal(after.shape,bounds,false,false);

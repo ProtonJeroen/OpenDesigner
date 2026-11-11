@@ -18,7 +18,7 @@ int faceIndex(const TopoDS_Shape& shape,const TopoDS_Face& face) {
 }
 }
 QJsonObject CadViewport::debugCommand(const CommandSession& session) const {
-    static const char* names[]={"Move Part","Rotate Part","Move Face","Rotate Face","Align Face","Boolean","Primitive Pull","Delete Face","Construction"};
+    static const char* names[]={"Move Part","Rotate Part","Move Face","Rotate Face","Align Face","Boolean","Primitive Pull","Delete Face","Construction","Sketch","Extrude","Revolve","Fillet","Chamfer"};
     QJsonArray parts;for(auto index:session.selection) parts.append(QString::number(index));
     QJsonObject operation{{"name",names[static_cast<int>(session.kind)]},{"partIds",parts},
         {"value",session.value},{"valueUnit",session.kind==CommandSession::Kind::Rotate||session.kind==CommandSession::Kind::RotateFace?"degrees":"mm"},
@@ -37,7 +37,7 @@ QJsonObject CadViewport::debugCommand(const CommandSession& session) const {
     }
     operation["state"]=static_cast<int>(session.state);
     operation["worldDelta3x4"]=transform(session.delta);
-    if(session.faceBefore) {
+    if(session.faceBefore && !session.face.IsNull()) {
         operation["targetFaceIndexBefore"]=faceIndex(session.faceBefore->shape,session.face);
         operation["beforeObjectRole"]=session.state==CommandSession::State::Confirmed?"last-operation-before":"active-command-before";
         operation["partTransform"]=transform(session.faceBefore->orientation);

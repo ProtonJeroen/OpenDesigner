@@ -380,6 +380,8 @@ void runProfileExtrusionSessions();
 void runProfileRevolutionSessions();
 void runActivePartSessions();
 void runDeletePartSessions();
+void runEdgeBlendSessions();
+void runEdgeBlendFeatureSessions();
 void runSketchEllipseSessions();
 void runSketchEllipseDrawing();
 int main(int argc,char** argv) {
@@ -389,7 +391,9 @@ int main(int argc,char** argv) {
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc,argv);
     try {
-        if(app.arguments().contains("--delete-parts")) runDeletePartSessions();
+        if(app.arguments().contains("--edge-blend-features")) runEdgeBlendFeatureSessions();
+        else if(app.arguments().contains("--edge-blends")) runEdgeBlendSessions();
+        else if(app.arguments().contains("--delete-parts")) runDeletePartSessions();
         else if(app.arguments().contains("--active-part")) runActivePartSessions();
         else if(app.arguments().contains("--revolution")) runProfileRevolutionSessions();
         else if(app.arguments().contains("--extrusion")) runProfileExtrusionSessions();

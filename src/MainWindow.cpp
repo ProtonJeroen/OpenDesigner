@@ -29,7 +29,7 @@
 #include <algorithm>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.4.9");
+    setWindowTitle("OpenDesigner 0.5.0");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     connect(viewport_,&CadViewport::geometryOperationFailed,this,[this](const QString& operation,const QString& reason) {
@@ -178,6 +178,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(duplicateAction, &QAction::triggered, viewport_, &CadViewport::duplicateSelectedParts);
     auto* moveFaceAction = model3D->addAction(tr("Move Face"));
     connect(moveFaceAction,&QAction::triggered,viewport_,&CadViewport::moveFace);
+    auto* filletAction=model3D->addAction(tr("Fillet"));
+    connect(filletAction,&QAction::triggered,viewport_,&CadViewport::fillet);
+    auto* chamferAction=model3D->addAction(tr("Chamfer"));
+    connect(chamferAction,&QAction::triggered,viewport_,&CadViewport::chamfer);
     auto* rotateFaceAction = model3D->addAction(tr("Rotate Face"));
     connect(rotateFaceAction,&QAction::triggered,viewport_,&CadViewport::rotateFace);
     auto* alignFaceAction = model3D->addAction(tr("Align Face"));
@@ -230,7 +234,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.4.1 — 2D Modeling foundation."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.5.0 — Fillet and Chamfer."));
     });
     auto* toolbar = addToolBar(tr("3D Modeling"));toolbar->setObjectName("modeling3DToolbar");
     connect(viewport_,&CadViewport::transformModesChanged,this,[interactiveMove,directMove,interactiveRotate](bool faceNormal,bool move,bool rotate) {
@@ -521,7 +525,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 void MainWindow::updateWindowTitle() {
     const QString name = documentPath_.isEmpty()
         ? tr("Untitled") : QFileInfo(documentPath_).fileName();
-    setWindowTitle(tr("OpenDesigner 0.4.9 — %1%2").arg(name, documentDirty_ ? QStringLiteral(" *") : QString()));
+    setWindowTitle(tr("OpenDesigner 0.5.0 — %1%2").arg(name, documentDirty_ ? QStringLiteral(" *") : QString()));
 }
 
 void MainWindow::markDocumentDirty() {

@@ -754,9 +754,52 @@ regardless of creation method, trims or neighboring geometry.
   Add targeted geometry/session regressions and manual Fedora KDE acceptance
   for each independently scoped extension; avoid duplicating algorithms.
 
+## Priority — Workplane, reference and Sketch geometry foundations
+
+Agreed priority (2026-11-11): finish the current v0.5.0 Fillet/Chamfer
+acceptance first, then strengthen these foundations **before Sweep, Loft and
+broader geometric alignment**. This is planned work, not an implementation claim.
+Every new modeling tool must explicitly assess applicable Workplane, Axis, Point,
+Sketch and projected-geometry references during design and acceptance.
+
+- [ ] Complete the planned Workplane activation, frame visibility, minimum
+  extent and Move/Rotate preview improvements below. Keep camera alignment an
+  explicit action independent of Workplane activation.
+- [ ] Share consistent target/reference picking and snapping for construction
+  objects, Sketch entities and solid geometry. Support points, endpoints,
+  centers and unambiguous intersections/relevant curve points; state each
+  operation's supported reference types explicitly.
+- [ ] Resolve directions, axes and positions in world coordinates after Part
+  and Workplane transforms, including references from other Parts/Workplanes.
+  Integrate the planned Move Face geometric-direction controls below.
+- [ ] Extend Sketch geometry to **ellipses and elliptical arcs**, including
+  editing/trimming and downstream profile construction; existing ellipse
+  drawing alone does not establish complete modeling support.
+- [ ] Preserve **exact projected curves** where representable, including
+  elliptical and spline/B-spline results from solid edges. Define supported
+  projection modes and clear diagnostics for ambiguous/degenerate results.
+  Do not silently replace exact curves with polyline approximations.
+- [ ] Add **2D multipoint interpolating splines** on a Workplane: initially
+  curves passing through supplied points, with point insertion, movement and
+  removal, and open/closed modes. Define closure and tangent behavior.
+  Control-point B-spline editing is a separately scoped follow-up.
+- [ ] Extend trimming, connectivity, closure/self-intersection diagnostics and
+  the shared certified Profile Builder for supported mixed contours containing
+  lines, arcs, circles, ellipses/elliptical arcs and spline curves, including
+  holes and disjoint regions where certified.
+- [ ] Carry supported curves through Extrude and Revolve and subsequently
+  Sweep/Loft; display-only support is insufficient. Document operation-specific
+  limits and refuse unsupported profiles atomically with useful diagnostics.
+- [ ] Preserve exact geometry, reference coordinates and editability through
+  duplication, transforms, native Save/Open and Undo/Redo, with focused
+  geometry/session regressions and manual acceptance.
+- [ ] Evaluate geometric references at operation time without introducing
+  persistent parametric dependencies; associativity is a separate future scope.
+
 ## Next milestones
-- CAD document ownership, persistent save/load and robust selection
-- Direct face modeling and workplanes
+- Finish current v0.5.0 Fillet/Chamfer manual acceptance within its documented scope
+- Prioritize Workplane, reference and Sketch geometry foundations above
+- Sweep (including 3D spline paths), then Loft, after the foundation gates
 - Broader cylindrical-face movement (holes and bosses) beyond the certified v0.4.9 scope
 - Assemblies and 3D copilot
 - STEP, IGES, STL
@@ -834,7 +877,7 @@ Material), existing certified Profile Builder, OCCT Boolean utilities,
 Command Panels, target picking and history should be reused rather than
 duplicated.
 
-### Sweep — profile along a path (proposed v0.5.0)
+### Sweep — profile along a path (after Sketch/reference foundations)
 
 - [ ] **3D Modeling > Sweep**: sweep one certified, closed 2D profile along a
   selectable continuous path; start with lines, circular arcs and connected
@@ -842,9 +885,19 @@ duplicated.
 - [ ] Support **New Solid**, **Add Material** and **Remove Material** with the same
   operation selection and eligible Active Part / explicit viewport target override
   semantics as Extrude and Revolve.
+- [ ] Add **3D multipoint interpolating spline paths** through spatial points
+  not restricted to one Workplane. Support creating/editing path points and
+  using construction/Sketch/solid references where unambiguous; persist exact
+  curves through transforms, duplication, Save/Open and Undo/Redo.
+- [ ] Support both planar and spatial Sweep paths, including certified spline/
+  B-spline paths, in addition to the initial line/arc rollout. Explicitly stage
+  delivery; 3D spline support is required for the completed Sweep milestone.
 - [ ] Define deterministic section orientation along the path, path direction,
   closed-path handling, corner transitions and self-intersection refusal before
-  implementation. Reject invalid/non-manifold or ambiguous results atomically.
+  implementation. For 3D paths, specify the moving frame and predictable
+  profile rotation/twist behavior, including inflections and near-zero curvature;
+  reject undefined frames or offer an explicit, documented reference.
+  Reject invalid/non-manifold or ambiguous results atomically.
 - [ ] Live result preview; exact inputs where applicable; OK/Cancel/Escape,
   one-step Undo/Redo, stable target Part identity/properties and native Save/Open.
 - [ ] Focused kernel, session, Boolean, history and persistence tests; native
@@ -852,7 +905,7 @@ duplicated.
 - [ ] Future extensions: controlled twist, variable scale and guide rails,
   separately scoped rather than promised in the initial milestone.
 
-### Loft — solid through multiple sections (proposed v0.5.1)
+### Loft — solid through multiple sections (after Sweep)
 
 - [ ] **3D Modeling > Loft**: create a valid solid between at least two ordered,
   certified closed Sketch profiles on different Workplanes; support more than
@@ -870,7 +923,18 @@ duplicated.
 - [ ] Future extensions: guide rails, tangent/continuity constraints and
   advanced surface lofts.
 
-### Fillet & Chamfer — 3D edge finishing (proposed milestone)
+### Fillet & Chamfer — v0.5.0 creation and feature-aware editing
+
+Single-edge constant-radius Fillet and equal-distance Chamfer are implemented
+through the existing command panel, blue previews and FaceChange history.
+Separated transitions now support certified geometric recognition, Edit commands,
+orange dimension dragging, sharp Delete Face restoration and Keep ON/OFF during
+supported planar Move/Pull and supporting-cap Rotate. Optional native recipes
+retain sharp support geometry and are checked against the current B-Rep.
+Initial creation was manually accepted on Fedora KDE; new feature-aware controls
+still require manual acceptance. Targeted tests only were run for this update.
+See [implementation, limitations and Fedora KDE checklist](FILLET_CHAMFER.md).
+The broader multi-edge milestone below remains future work.
 
 - [ ] Add separate **3D Modeling > Fillet** and **3D Modeling > Chamfer**
   commands, accessible from toolbar and appropriate edge context menus.
@@ -899,7 +963,7 @@ duplicated.
   and complex freeform transitions remain future work; no blanket claim that
   all OCCT-valid geometry is editable.
 
-### Materials & Colors — Part and Face appearance (proposed v0.5.2)
+### Materials & Colors — Part and Face appearance (future milestone)
 
 - [ ] **Part-level appearance**: edit an individual Part's default color and
   visual finish through the Structure Browser, viewport context menu and/or a
@@ -931,16 +995,39 @@ duplicated.
 
 - [ ] **Broader Move Cylindrical Face reconstruction:** extend the certified
   v0.4.9 hole/boss implementation to the remaining Issue #51 cases described above.
-- [ ] **Assemblies and Structure Browser** (proposed v0.5.3):
+- [ ] **Assemblies and Structure Browser**:
   hierarchical single-file Parts/subassemblies with optional externally stored
   components and explicit assembly-level transforms.
-- [ ] **Geometric Align** (proposed v0.5.4): align Parts and assemblies using
+- [ ] **Geometric Align**: align Parts and assemblies using
   Face-to-Face, Axis-to-Axis, Vertex-to-Vertex and Point-to-Point references,
   including points derived from Sketch/Workplane geometry.
-- [ ] **CAD exchange** (proposed v0.5.5): STEP/IGES/STL, followed by GLB/glTF
+- [ ] **CAD exchange**: STEP/IGES/STL, followed by GLB/glTF
   and FBX import/export, with documented geometry/material/assembly fidelity.
 - [ ] **Standard Parts library** and wider technical material presets; evaluate
   library integration with Assemblies and Materials & Colors.
 - [ ] **Platform-independent Touch Mode** in Settings for desktop and future
   iPadOS/Android tablet targets; keep conventional desktop controls available.
 - [ ] **3D copilot/local AI** as a later, separately scoped milestone.
+
+## Planned — Platform builds, packaging and tablet validation
+
+Agreed targets (2026-11-11); these are planned deliverables, not certified builds.
+
+- [ ] Use shared CMake presets and pinned compatible Qt/OCCT dependencies for
+  Linux x86_64, Windows x64 and macOS Apple Silicon ARM64 (local Mac M1).
+  Establish native build/test workflows and automated platform artifacts.
+- [ ] Package Linux AppImage, Windows portable ZIP and macOS app/DMG with
+  required libraries/plugins/resources. Select an older supported Linux build
+  baseline and publish tested distro/graphics/runtime requirements; do not
+  imply universal AppImage compatibility. Intel macOS is a later target.
+- [ ] Test Linux releases on Ubuntu, Fedora KDE and Debian; separately validate
+  relevant X11/Wayland, graphics and HiDPI behavior. Add clean-machine Windows
+  and macOS installation/runtime checks.
+- [ ] After desktop build foundations, create iPadOS and Android proof builds
+  for startup, viewport, model opening/saving and basic modeling. Validate
+  mobile Qt/OCCT builds and graphics compatibility.
+- [ ] **Mouse and keyboard are acceptable for initial iPadOS/Android testing**;
+  resolve platform input shortcuts, pointer behavior and file access as needed.
+  Touch/stylus UI optimization is not a prerequisite for these technical builds.
+- [ ] Later implement platform-independent Touch Mode in Settings and optimized
+  tablet/stylus interaction, retaining conventional mouse/keyboard controls.

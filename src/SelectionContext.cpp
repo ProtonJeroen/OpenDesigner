@@ -10,6 +10,7 @@
 #include <QAction>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QLabel>
 #include <QContextMenuEvent>
@@ -113,6 +114,11 @@ bool CadViewport::supportsResize(const SelectionContext& selection) const {
            std::all_of(selection.faces.begin(),selection.faces.end(),[&](const auto& f){return std::any_of(local.history.begin(),local.history.end(),[&](const auto& m){return m.original.IsSame(f.face)&&std::any_of(local.patch.begin(),local.patch.end(),[&](const auto& patch){return patch.IsSame(m.modified.front());});});})) {
             auto one=selection;one.faces.resize(1);return supportsResize(one);
         }
+    }
+    if(selection.faces.size()==1) {
+        const auto& selected=selection.faces.front();auto state=boxes_[selected.partIndex].blends;QString diagnostic;
+        if(EdgeBlendFeatures::resolve(boxes_[selected.partIndex].shape,state,diagnostic)
+            &&(EdgeBlendFeatures::selected(state,selected.face)>=0||BRepAdaptor_Surface(selected.face).GetType()==GeomAbs_Plane)) return true;
     }
     for(const auto& selected:selection.faces) {
         auto part=boxes_[selected.partIndex];
@@ -256,12 +262,23 @@ void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection
         auto* midplane=menu.addAction(tr("Midplane Workplane"));midplane->setObjectName("context.midplane");
         connect(midplane,&QAction::triggered,this,[this]{startConstruction(Construction::Method::PlaneMidplane);});
     }
+    int blendIndex=-1;
+    if(selection.faces.size()==1) {
+        const auto selected=selection.faces.front();auto state=boxes_[selected.partIndex].blends;QString diagnostic;
+        if(EdgeBlendFeatures::resolve(boxes_[selected.partIndex].shape,state,diagnostic)) blendIndex=EdgeBlendFeatures::selected(state,selected.face);
+        if(blendIndex>=0) {
+            const bool fillet=state.features[blendIndex].kind==EdgeBlendFeatures::Kind::Fillet;
+            auto* edit=menu.addAction(fillet?tr("Edit Fillet"):tr("Edit Chamfer"));
+            edit->setObjectName(fillet?"context.edit_fillet":"context.edit_chamfer");
+            connect(edit,&QAction::triggered,this,[this,selected]{startEditEdgeBlend(selected.partIndex,selected.face);});
+        }
+    }
     auto* move=menu.addAction(tr("Move Face"));move->setObjectName(QStringLiteral("context.move_face"));
     QString error=tr("Select exactly one supported planar face.");gp_Pnt center;gp_Dir direction;
     const bool supported=selection.faces.size()==1 && BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Plane && MoveFaceGeometry::reference(
         boxes_[selection.faces.front().partIndex].shape,selection.faces.front().face,center,direction,error);
     MoveFaceFeature feature;
-    const bool moveSupported=supported || (selection.faces.size()==1 && moveFaceReference(
+    const bool moveSupported=blendIndex>=0 || supported || (selection.faces.size()==1 && moveFaceReference(
         boxes_[selection.faces.front().partIndex].shape,selection.faces.front().face,feature,center,direction,error));
     const bool cylinder=selection.faces.size()==1&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Cylinder;
     if(!moveSupported&&!cylinder) { delete move; move=nullptr; }
@@ -358,7 +375,7 @@ void CadViewport::resetModelingTools() {
         context_->ClearSelected(Standard_False);
         for(const auto& owner:retainedOwners) context_->AddOrRemoveSelected(owner,Standard_False);
     }
-    dragDimension_->hide(); commandPanel_->hide();
+    dragDimension_->hide(); commandPanel_->hide();keepBlends_->hide();
     faceAxisSelector_->hide(); faceAlignSelector_->hide();
     cylinderMoveLabel_->hide(); cylinderMoveDirection_->hide();
     cylinderMoveAngle_->hide(); cylinderBossBoundary_->hide();
@@ -372,6 +389,16 @@ void CadViewport::startPrimitivePull() {
     endSketchEditing();
     cancelCommandSession();
     const auto selection=selectionContext();
+    if(selection.faces.size()==1) {
+        const auto& selected=selection.faces.front();auto state=boxes_[selected.partIndex].blends;QString diagnostic;
+        if(EdgeBlendFeatures::resolve(boxes_[selected.partIndex].shape,state,diagnostic)) {
+            if(EdgeBlendFeatures::selected(state,selected.face)>=0) {startEditEdgeBlend(selected.partIndex,selected.face);return;}
+            if(BRepAdaptor_Surface(selected.face).GetType()==GeomAbs_Plane) {
+                if(startMoveFace(selected.partIndex,selected.face)) commandPanel_->setWindowTitle(tr("Pull / Resize Preview"));
+                return;
+            }
+        }
+    }
     if(!supportsResize(selection)) {
         emit statusMessage(tr("Pull / Resize: the selected faces have no certified individual or joint reconstruction. No command started."));
         return;

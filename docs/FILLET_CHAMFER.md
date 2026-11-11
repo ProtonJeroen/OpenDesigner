@@ -1,0 +1,277 @@
+# Fillet and Chamfer — v0.5.0
+
+Choose **3D Modeling > Fillet** or **3D Modeling > Chamfer**, then click one
+edge on a visible Part. Enter a positive radius or equal distance in millimeters
+in the existing floating command panel. Fractional values retain double precision;
+there is no snapping or rounding of the requested treatment. The inherited numeric
+editor range is 100000 mm. For scaled instances the world distance is converted
+to local distance once; placement is preserved.
+
+The complete candidate solid appears in blue with 25% transparency. Numeric
+changes rebuild from the original B-Rep. Invalid geometry or incomplete input
+removes the candidate, restores the original presentation, disables OK and reports
+the reason in the status bar. Preview never writes canonical document geometry.
+OK/Enter confirms one cached FaceChange; Cancel/Escape or a tool switch removes
+all preview objects and leaves history, including Redo, intact. Picking returns
+to normal Face selection after termination. Selecting another object after the
+edge is chosen follows the existing command cancellation convention.
+
+## Geometry and safety
+
+`FilletGeometry::apply` uses `BRepFilletAPI_MakeFillet` with one selected edge and
+a positive constant radius. `ChamferGeometry::apply` uses
+`BRepFilletAPI_MakeChamfer` with two identical distances and a face obtained from
+actual edge-to-face adjacency. Equal distances make the chosen face side
+immaterial. Both operate on one deep copy and map the selected topology into it.
+No feature history, primitive recognition, mesh conversion or healing is used.
+
+`EdgeBlendValidation` checks finite positive input, membership, non-degenerate
+edges, two distinct adjacent faces and absence of seam topology. Both paths use
+the existing `BRepReconstruction::validSolid` policy before and after construction:
+one solid, one closed shell, no stray face/edge/vertex topology, BRepCheck validity,
+positive finite volume and isolated self-interference analysis. OCCT must complete
+successfully. Exceptions become actionable errors; failures return a null shape.
+
+Candidates reuse `presentFacePreview`, including tessellation and nonselectable
+blue AIS display. Confirmation replaces the B-Rep of the same Part slot, marks
+it GeneralBRep and records complete before/after snapshots. UUID, appearance,
+visibility, placement and browser order use the existing FaceChange lifecycle.
+Native `.odc` storage saves the exact resulting B-Rep without a schema version
+change. Optional feature-reconstruction recipes are described below. Save during
+preview saves confirmed geometry. Undo/Redo restores cached shapes and clears selection.
+
+## Scope and limitations
+
+One selected edge on one Part per command. Ordinary convex box edges and concave
+prismatic notch edges are tested. OCCT may extend a blend along a tangent contour;
+there is no separate multi-edge/junction control. Oversized treatments, seam,
+non-manifold, foreign and degenerate edges are refused. The shared validator
+conservatively rejects solids with multiple shells, including enclosed cavities.
+Arbitrary imported/freeform geometry is accepted only when the kernel and shared
+validation succeed; broad freeform coverage is not claimed. Variable radii,
+asymmetric/angle chamfers, setback corners, face-to-face blends and multi-edge
+selection remain future work. Geometry computation is synchronous, like existing
+face commands; expensive arbitrary models have no background cancellation.
+
+## Automated verification
+
+`Fillet-geometry` and `Chamfer-geometry` check analytic convex material volume,
+concave material addition, invalid sizes/selections, valid closed solid topology
+and byte-identical serialized source geometry across success and failure.
+`edge-blend-sessions` checks OCCT edge picking on a translated/rotated Part,
+fractional input, blue-preview ownership, malformed input cleanup, Escape/Enter,
+Cancel/Redo preservation, one-step history, stable identity/metadata/Part slots,
+unrelated Part preservation and native Save/Open including confirmed-only Save.
+
+Initial creation validation on Fedora 44, Release build, 2026-11-10:
+
+- `cmake --build build -j 4`: PASS.
+- Targeted `Fillet-geometry` and `Chamfer-geometry`: 2/2 PASS.
+- Targeted `edge-blend-sessions`, `selection-context`,
+  `native-document-sessions`, `command-panel-sessions`: 4/4 PASS (65.00 s).
+- `ctest --test-dir build --output-on-failure -j 2 --timeout 300`:
+  92/92 PASS, 0 failed, 0 skipped (759.78 s), including all 89 existing tests.
+- `git diff --check`: PASS.
+
+Viewport tests required execution outside the filesystem/network sandbox to access
+X11/OpenGL. Initial sandboxed viewport attempts aborted before test output; all
+four passed with display access. No tests were disabled or assertions weakened.
+
+Initial creation was subsequently accepted manually on Fedora KDE. The new
+feature-aware controls below still require manual acceptance; automated viewport
+checks do not establish behavior on every compositor, screen or display scale.
+
+## Fedora KDE acceptance checklist
+
+1. Launch `build/OpenDesigner`, create a Box, choose **3D Modeling > Fillet**,
+   then click a visible convex edge. Enter `2.345` mm (use the locale decimal
+   separator); verify a complete translucent blue round and unchanged browser row.
+2. Change the radius repeatedly. Enter zero, a negative number, incomplete input
+   and an oversized radius; verify the original returns and OK is unavailable.
+   Correct the value, then Cancel. Repeat and press Escape while editing the field.
+3. Confirm using OK; verify one Undo restores the box and one Redo restores the
+   fillet. Verify name, color, visibility, Active Part and placement remain correct.
+4. Repeat with **Chamfer**, using an equal distance of `2.345` mm; inspect both
+   adjacent faces. Repeat cancellation, invalid input and one-step Undo/Redo.
+5. Rotate/translate a Part and repeat both operations. Check placement and exact
+   world-space treatment size. Test a concave notch edge when available.
+6. Save during preview and reopen a copy: only confirmed geometry should exist.
+   Save each confirmed treatment, reopen and inspect the solid and Part identity.
+7. Switch tools during edge picking and preview; invoke Undo/Redo during preview;
+   verify no blue objects, stale edge highlights, gizmos or panels remain.
+8. Repeat at normal and 200% display scale, checking numeric focus, panel placement,
+   typing and OK/Cancel visibility. Camera orbit/pan/zoom must preserve the session.
+
+## Feature-aware direct modeling
+
+The initial creation workflow above was manually accepted on Fedora KDE (including
+normal/200% display scaling). Feature editing and Keep behavior below require the
+new manual acceptance checks; the earlier 92-test result describes the initial
+creation implementation, not validation of these subsequent changes.
+
+### Confirmed regression causes
+
+`OpenDesignerEdgeBlendFeatureTests --baseline` reproduces the old geometry routes
+using current member faces on a 100 x 80 x 60 Box, an R5 vertical Fillet and an
+opposite 3 mm Chamfer:
+
+- Box and Fillet face/edge/vertex maximum tolerances: `1e-7`.
+- After Chamfer: faces and edges remain `1e-7`, vertices reach `1e-4`.
+- Calling OCCT's symmetric chamfer builder directly also creates `1e-4` vertices;
+  this is already present in the kernel result, before viewport selection,
+  snapshots or native serialization. Changing to the symmetric API is not a fix.
+- The legacy ordinary planar Move route then refuses its source at the existing
+  `1e-6` neighborhood tolerance check. A Fillet-only cap can move in that route.
+- Delete Face's hole/boss and removable-region certificates cannot establish the
+  sharp intersection of these transition supports. A cylinder surface alone
+  cannot distinguish a Fillet from a hole or boss.
+- GeneralBRep Pull dispatch previously offered planar faces only for recognized
+  primitives or supported boss caps; it had no transition-dimension adapter.
+
+No tolerance is clamped, relaxed or arbitrarily overwritten. The shared
+`BRepReconstruction` validators and their existing limits are unchanged.
+
+### Certification and persistent information
+
+`EdgeBlendFeatures` stores a sharp local B-Rep, feature IDs, type, absolute size,
+and pairs of supporting planes (normal and signed plane offset). This is an
+optional reconstruction recipe, not an authoritative history tree. No face
+indices, edge indices or OCCT pointer values are serialized.
+
+New supported creations record their sharp supports. To certify a recipe after
+Open or topology replacement, replay the transitions using the OCCT kernels and
+require full material equivalence with the actual current B-Rep. Bind the current
+faces by geometric carrier correspondence only after that certificate succeeds.
+Face handles are then cached solely for that certified shape; stale member faces
+are refused. Generic topology replacement clears a recipe whose certificate no
+longer matches. Invalid persisted information can be discarded and independently
+recognized again, rather than reviving stale supports.
+
+For imported/older B-Reps without recipes, recognition is deliberately narrower:
+rectangular stock with six distinct axis-aligned local planar supports, plus
+separated cylindrical Fillets tangent to two perpendicular side planes or planar
+equal-distance Chamfers on those planes. Distances, tangency, actual neighbors,
+sharp closure and complete reconstructed material are checked. An ordinary
+cylinder, arbitrary inclined plane, unequal chamfer or ambiguous/split surface
+is not enough to expose Edit. A rotated/translated Part instance retains its
+local coordinate system; arbitrarily rotated imported B-Reps without recipes
+are outside this recognition scope.
+
+Optional native metadata `OpenDesignerEdgeBlendRecipeV1` stores the exact sharp
+B-Rep and geometric descriptors. Older readers can ignore it. The current edited
+B-Rep remains authoritative. Snapshots carry recipes through Undo/Redo and Part
+duplication; feature IDs are scoped to their owning Part. Instance transforms
+remain outside the local B-Rep. Save during preview includes only the confirmed
+recipe and solid.
+
+### Edit, Pull and Keep
+
+Right-click a certified transition face to choose **Edit Fillet** or **Edit
+Chamfer**. The editor shows its existing absolute radius/distance in world mm.
+Move Face or Pull on a recognized transition uses the same dimension editor;
+it never translates the transition surface to approximate a size change.
+
+Creation and editing share the existing orange Pull arrow and drag handling.
+The arrow changes the actual absolute feature dimension, synchronizes numeric
+input, and rebuilds a blue complete-solid preview. Identical/subpixel redundant
+pointer changes skip reconstruction. Numeric input retains full double precision.
+Cancel/Escape, tool changes and history remove the arrow and preview.
+
+**Keep Fillet / Chamfer** defaults ON for every Move Face, Rotate Face and
+Pull/Resize operation. On supported ordinary planar faces:
+
+- ON: edit the certified sharp supporting solid, update the selected supporting
+  plane, then reconstruct transitions with their original radii/distances.
+- OFF: identify dependent transitions by actual face adjacency, including end
+  caps; omit only these transitions, perform the sharp face edit, and reconstruct
+  unaffected transitions. No open shell or partially deleted Part is committed.
+- One complete candidate is previewed and one FaceChange is committed. A failure
+  refuses the entire operation. Cancel restores the exact source and recipe.
+
+Ordinary planar Pull on a Part with certified transitions uses the same signed
+face-offset adapter as Move Face. Existing primitive Pull conventions remain in
+place for ordinary unfeatured Parts. Supporting-cap rotation is certified by
+sharp reconstruction and preserves the transition dimensions. Existing direct
+rotation of a planar Chamfer uses the established Rotate Face geometry route;
+when it ceases to be an equal-distance Chamfer, its old recipe is invalidated
+instead of displaying a false Edit dimension. Keep is explicitly disabled with
+an explanatory tooltip for this legacy face-rotation mode; dimension-preserving
+Keep ON/OFF requires a supporting face. This is a supported-scope boundary, not
+a switch to approximate equal-distance reconstruction.
+
+Delete Face on a recognized transition restores its sharp supporting intersection
+and replays all remaining transitions. Mixed transition/ordinary-face deletion is
+refused atomically by this adapter. Ordinary deletions continue through the
+existing Delete Face certificates; arbitrary stock-face removal is not promised.
+
+### Supported boundary and refusal policy
+
+Known recipes require a valid planar sharp solid whose face/edge/vertex
+tolerances meet the unchanged `1e-6` limit. Each reconstructed transition must
+produce one cylindrical Fillet face or one planar Chamfer face on a unique
+straight sharp edge. Up to eight separated transitions are supported; transition
+faces may not meet at an edge or vertex. Each rebuilt solid passes the existing
+blend completion, validity, closure, positive-volume and self-interference checks.
+OCCT's conservative Chamfer vertex tolerances are retained; strict sharp-face
+editing operates on the independently certified low-tolerance support solid,
+never by loosening the legacy neighborhood check on those vertices.
+
+Missing/consumed/split/curved support edges, interacting junctions, unsupported
+surface types, lost supports, failed kernel operations and invalid dimensions
+are refused. Supported general single-edge creation remains available through
+the original kernel path when a recipe cannot be certified, but it does not
+advertise unsupported feature editing. There is no speculative freeform healing,
+mesh approximation, multi-edge corner algorithm or generalized selection system.
+
+### Targeted validation — feature-awareness update (2026-11-11)
+
+Affected Release targets were built incrementally with at most four jobs:
+`OpenDesigner`, `OpenDesignerSelectionContextTests`,
+`OpenDesignerEdgeBlendFeatureTests`, and `OpenDesignerNativeDocumentTests`.
+
+Seven unique targeted CTests passed, with no tests disabled or assertions weakened:
+
+- `edge-blend-features`: analytic material checks for single/mixed transitions,
+  radius/distance editing, Keep ON/OFF, cap rotation, sharp deletion, persisted
+  support recertification, exact source preservation and safe rejection of stale,
+  interacting, invalid-size and stray-topology inputs.
+- `edge-blend-feature-sessions`: actual command/menu lifecycle, legacy B-Reps
+  without metadata, both orange manipulators, exact values, Keep failure recovery
+  and commit/Undo/Redo, planar Pull, cap/direct-Chamfer rotation, Delete Face,
+  edited-dimension Save/Open, Part transforms and independent duplicate editing.
+- `edge-blend-sessions`: existing creation, typed picking, invalid input,
+  cancellation and persistence, extended to verify creation dragging/release.
+- `selection-context`, `native-document-sessions`, `command-panel-sessions`.
+- `native-document-roundtrip`.
+
+The six-test viewport/feature batch passed in 71.60 seconds. The feature-specific
+checks were subsequently rerun for the final source-topology guard and explicit
+legacy-rotation control boundary: geometry PASS (0.85 seconds), viewport PASS
+(8.51 seconds). All seven unique targeted tests are green; none were skipped. The source-preservation assertion is retained;
+invalid compound fixtures use an isolated copy because OCCT's compound builder
+freezes child topology. Native roundtrip passed separately (0.54 seconds).
+
+The full CTest suite and expensive unrelated cylindrical geometry regressions
+were deliberately not run for this update. The earlier 92-test result above is
+historical evidence for initial creation only. New KDE feature-awareness manual
+acceptance remains pending.
+
+### DellJV manual feature-awareness acceptance
+
+1. Make a Box with separated R5 and 3 mm vertical transitions. Select each face
+   normally; right-click Edit and verify the current value. Try exact fractional
+   input, orange dragging, invalid input, Cancel and Escape.
+2. Move a shared cap outward 20 mm with Keep ON. Confirm both dimensions remain
+   5/3 mm. Undo/Redo once. Repeat with Keep OFF and verify both sharp corners.
+3. Move a side supporting only the Fillet with Keep OFF. Verify the Fillet is
+   removed while the opposite Chamfer remains 3 mm. Cancel, then repeat with ON.
+4. Repeat ordinary planar Pull/Resize and a small supporting-cap Rotate with both
+   policies. Check each new panel defaults ON. On a transition face, Pull/Move
+   must change its absolute dimension rather than translate the face.
+5. Delete either transition face. Inspect sharp closure and preservation of the
+   other transition before OK; check Cancel and one-step Undo/Redo.
+6. Repeat on a rotated/translated Part, then duplicate it and edit the copy.
+   Save during preview and after confirmation; Open and edit both recognized
+   features again. Check Part identity, appearance and browser order.
+7. Check safe refusal of touching transitions and missing/ambiguous supports,
+   and repeat the new controls at normal/200% KDE display scale.
