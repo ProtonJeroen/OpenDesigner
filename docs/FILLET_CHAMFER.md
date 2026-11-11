@@ -1,4 +1,4 @@
-# Fillet and Chamfer — v0.5.0
+# Fillet and Chamfer — v0.5.1
 
 Choose **3D Modeling > Fillet** or **3D Modeling > Chamfer**, then click one
 edge on a visible Part. Enter a positive radius or equal distance in millimeters
@@ -23,7 +23,7 @@ a positive constant radius. `ChamferGeometry::apply` uses
 `BRepFilletAPI_MakeChamfer` with two identical distances and a face obtained from
 actual edge-to-face adjacency. Equal distances make the chosen face side
 immaterial. Both operate on one deep copy and map the selected topology into it.
-No feature history, primitive recognition, mesh conversion or healing is used.
+No mesh conversion or healing is used; editable transitions use the verified reconstruction recipes below.
 
 `EdgeBlendValidation` checks finite positive input, membership, non-degenerate
 edges, two distinct adjacent faces and absence of seam topology. Both paths use
@@ -47,8 +47,8 @@ prismatic notch edges are tested. OCCT may extend a blend along a tangent contou
 there is no separate multi-edge/junction control. Oversized treatments, seam,
 non-manifold, foreign and degenerate edges are refused. The shared validator
 conservatively rejects solids with multiple shells, including enclosed cavities.
-Arbitrary imported/freeform geometry is accepted only when the kernel and shared
-validation succeed; broad freeform coverage is not claimed. Variable radii,
+Fillet accepts straight edges and complete certified circular contours. Elliptical,
+spline and freeform edges are outside this milestone. Variable radii,
 asymmetric/angle chamfers, setback corners, face-to-face blends and multi-edge
 selection remain future work. Geometry computation is synchronous, like existing
 face commands; expensive arbitrary models have no background cancellation.
@@ -275,3 +275,98 @@ acceptance remains pending.
    features again. Check Part identity, appearance and browser order.
 7. Check safe refusal of touching transitions and missing/ambiguous supports,
    and repeat the new controls at normal/200% KDE display scale.
+
+## v0.5.1 circular-edge Fillets
+
+The same constant-radius fillet engine handles cylinder top/bottom rims, circular
+hole entrances/exits and circular boss feet. Circular curves are identified by
+`BRepAdaptor_Curve`, not tessellation. Coincident circular segments must form a
+valid closed wire with total sweep 2π; every member must have two distinct
+adjacent faces and pass seam/degeneracy checks. Partial arcs and ambiguous or
+incomplete circular contours are refused. All operations use isolated source
+copies and the existing closed-solid, volume and self-interference validation.
+
+Editable recipes support a planar face and one cylindrical carrier. They retain
+geometric plane/cylinder references, sharp stock and the stable feature UUID;
+face handles are transient caches. Replay must reproduce equivalent material
+before loaded metadata is accepted. A unique generated toroidal transition is
+bound to current topology, allowing **Edit Fillet**, absolute numeric radius,
+Undo/Redo, native Save/Open and independent Part duplication. Ordinary cylinders
+and arbitrary toroidal modeling faces do not become features based on type alone.
+Imported circular transitions without recipes deliberately have no Edit Fillet.
+Split supporting faces or multiple transition faces are not yet editable; the
+kernel may create a valid contour without attaching an editable recipe.
+
+Creation and Edit reuse the orange Pull arrow and blue whole-solid preview.
+Dragging changes the radius parameter, including on rotated/translated Parts;
+instance scale converts between local and world dimensions. For circular Edit,
+the arrow lies at the torus major circle and points along its axis, avoiding the
+zero radial vector at a full torus face's center of mass. Creation uses a point
+on the selected circular contour and the supporting planar face normal.
+
+**Keep ON/OFF boundary:** supporting-face Move/Pull/Rotate on Parts containing
+circular recipes is explicitly refused for both settings. Cylindrical support
+Move/Pull is also refused. Remove the circular Fillet first, edit the sharp solid,
+and create it again. This conservative boundary also refuses unrelated planar
+support edits on the same Part; separated straight-edge Fillet/Chamfer behavior
+is unchanged. No circular Keep reconstruction is claimed complete.
+
+**Delete Face:** selecting a recognized circular Fillet restores its certified
+sharp intersection by replay, preserving other separated recipe transitions.
+This is atomic and uses existing preview/history handling. Imported toroidal
+faces without certified recipes have no guaranteed sharp restoration.
+
+### DellJV / Fedora KDE manual circular acceptance
+
+1. Create a cylinder; Fillet its top and bottom separately with `2.345` mm.
+   Inspect the complete blue candidate; drag the orange arrow at several view
+   angles, then test malformed/zero/negative/oversized input and recovery.
+2. Cancel with Escape; repeat and confirm with Enter. Check one-step Undo/Redo.
+3. Right-click the new round and choose Edit Fillet. Check the current absolute
+   radius, numeric edits and orange dragging. Confirm ordinary face selection.
+4. Repeat on a through-hole entrance/exit and a fused boss base. Inspect material
+   removal at rims/holes and addition at the concave boss base.
+5. Save/Open; edit again. Duplicate and transform the Part; edit the duplicate
+   independently. Check scale-aware world radius where applicable.
+6. Attempt supporting-face Move, Pull and Rotate with Keep ON and OFF. Verify
+   explicit refusal and unchanged geometry/history. Delete the recognized round;
+   inspect the closed sharp solid and Undo/Redo its restoration.
+7. Check partial/split/unsupported imported topology fails safely or remains an
+   ordinary selectable solid without an editable recipe. Repeat a straight-edge
+   Fillet and Chamfer to check their existing workflow.
+
+Manual KDE/Wayland acceptance remains pending; automated session checks do not
+certify every viewing angle, compositor or display scaling setting.
+
+### v0.5.1 targeted validation — 2026-11-11
+
+Incremental Release builds succeeded for `OpenDesigner`,
+`OpenDesignerFilletTests`, `OpenDesignerChamferTests`,
+`OpenDesignerEdgeBlendFeatureTests`, `OpenDesignerSelectionContextTests` and
+`OpenDesignerNativeDocumentTests` with Ninja (`-j4`). CTest used `-j2` and exact
+names only:
+
+| Test | Result | Seconds |
+| --- | --- | ---: |
+| circular-fillet-geometry | PASS | 0.44 |
+| Fillet-geometry | PASS | 0.11 |
+| Chamfer-geometry | PASS | 0.09 |
+| edge-blend-features | PASS | 1.42 |
+| edge-blend-sessions | PASS | 6.69 |
+| edge-blend-feature-sessions | PASS | 8.76 |
+| native-document-roundtrip | PASS | 0.17 |
+| native-document-sessions | PASS | 3.01 |
+
+All eight targeted tests pass. The circular test was rerun alone after diagnosing
+an unsuitable split fixture: OCCT's shape-divider introduced 1e-5 edge tolerances.
+It now uses fused exact half-cylinders and verifies complete-contour volume and
+byte-identical input. Production tolerances and assertions were not relaxed.
+The circular geometry test also verifies analytic volumes at both outer rims,
+both hole rims and a boss foot; recipe edits/roundtrips, tamper rejection,
+separated rim preservation, sharp deletion, Keep refusal, invalid radii, seam,
+degenerate and incomplete contour rejection. Circular session coverage includes
+typed picking, orange dragging, transformed placement, numeric edits, preview,
+Cancel, Undo/Redo, native Save/Open, duplication, Keep refusal and Delete Face.
+
+The full CTest suite, expensive cylindrical Move Face regressions and manual
+KDE/Wayland acceptance were deliberately not run for this milestone.

@@ -367,6 +367,8 @@ if(OPENDESIGNER_BUILD_TESTS)
         target_link_libraries(OpenDesigner${blend}Tests PRIVATE OpenDesignerEdgeBlends)
         add_test(NAME ${blend}-geometry COMMAND OpenDesigner${blend}Tests)
     endforeach()
+    add_test(NAME circular-fillet-geometry COMMAND OpenDesignerFilletTests --circular)
+    set_tests_properties(circular-fillet-geometry PROPERTIES TIMEOUT 90)
 endif()
 
 foreach(viewport_target OpenDesigner OpenDesignerPullTests OpenDesignerBooleanTests OpenDesignerMoveFaceTests OpenDesignerSelectionContextTests OpenDesignerDebugModelTests OpenDesignerDeleteFaceTests)

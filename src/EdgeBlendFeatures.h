@@ -5,12 +5,14 @@
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Edge.hxx>
 #include <gp_Pln.hxx>
+#include <gp_Cylinder.hxx>
+#include <optional>
 #include <gp_Ax1.hxx>
 #include <array>
 #include <vector>
 
 // A small reconstruction recipe, not an authoritative feature tree. Supports are
-// geometric planes. Face handles below are an ephemeral cache for certified only.
+// geometric planes/cylinders. Face handles below are an ephemeral certified cache.
 namespace EdgeBlendFeatures {
 enum class Kind { Fillet, Chamfer };
 struct Feature {
@@ -18,6 +20,7 @@ struct Feature {
     Kind kind=Kind::Fillet;
     double size=0;
     std::array<gp_Pln,2> supports;
+    std::array<std::optional<gp_Cylinder>,2> cylinders;
     std::vector<TopoDS_Face> faces;
 };
 struct State {

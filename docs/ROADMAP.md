@@ -1031,3 +1031,18 @@ Agreed targets (2026-11-11); these are planned deliverables, not certified build
   Touch/stylus UI optimization is not a prerequisite for these technical builds.
 - [ ] Later implement platform-independent Touch Mode in Settings and optimized
   tablet/stylus interaction, retaining conventional mouse/keyboard controls.
+
+### v0.5.1 — circular-edge Fillets
+
+- [x] Extend the existing constant-radius OCCT engine to complete circular contours.
+- [x] Plane/cylinder recipes for outer rims, through-hole rims and boss feet;
+  unique toroidal transition recognition, absolute Edit Fillet and sharp deletion.
+- [x] Reuse orange radius Pull, blue preview, native recipes and history.
+- [x] Safely refuse supporting-face Keep ON/OFF reconstruction for circular recipes.
+- [ ] Certified circular Keep ON/OFF reconstruction (Move/Pull/Rotate).
+- [ ] Imported circular transition recovery without native recipes.
+- [ ] Editable split supporting/transition face sets and general analytic carriers.
+- [ ] Manual DellJV Fedora KDE/Wayland acceptance (see FILLET_CHAMFER.md).
+
+Elliptical, spline and freeform fillets remain future work. Circular contour
+creation does not imply arbitrary curved support reconstruction is available.

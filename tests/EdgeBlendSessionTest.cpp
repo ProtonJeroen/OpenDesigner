@@ -27,6 +27,66 @@ void check(bool value,const char* message) {if(!value) throw std::runtime_error(
 double volume(const TopoDS_Shape& shape) {GProp_GProps p;BRepGProp::VolumeProperties(shape,p);return p.Mass();}
 }
 struct EdgeBlendSessionTest {
+static void circular() {
+    CadViewport v;v.resize(1000,800);v.show();QApplication::processEvents();v.addCylinder();
+    gp_Trsf placement;placement.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),0.3);
+    placement.SetTranslationPart(gp_Vec(12,23,34));
+    v.applyPartState(0,v.boxes_[0].min,v.boxes_[0].max,placement);v.fitAll();QApplication::processEvents();
+    const auto original=v.boxes_[0];
+    auto arm=[&] {
+        v.startEdgeBlend(false);bool picked=false;
+        for(TopExp_Explorer it(v.boxes_[0].shape,TopAbs_EDGE);it.More()&&!picked;it.Next()) {
+            BRepAdaptor_Curve c(TopoDS::Edge(it.Current()));if(c.GetType()!=GeomAbs_Circle) continue;
+            for(int sample=0;sample<12&&!picked;++sample) {
+                auto p=c.Value(c.FirstParameter()+(c.LastParameter()-c.FirstParameter())*(sample+0.5)/12).Transformed(placement);
+                Standard_Integer x,y;v.view_->Convert(p.X(),p.Y(),p.Z(),x,y);
+                picked=v.pickEdgeBlend(QPoint(x,y));
+            }
+        }
+        check(picked&&v.commandSession_->valid,"circular typed picking/preview failed");
+        check(!v.moveFaceArrow_.IsNull()&&!v.commandSession_->preview.IsNull(),"circular arrow/blue preview missing");
+    };
+    arm();v.cancelCommandSession();check(v.boxes_[0].shape.IsSame(original.shape)&&v.undoStack_.empty(),"circular Cancel changed document");
+    arm();v.dragDimension_->setText("2.345");check(v.updateCommandParameter(false),"circular numeric radius failed");
+    const auto& session=*v.commandSession_;
+    auto mid=session.pivot.Translated(gp_Vec(session.direction)*(session.value+15.5));
+    Standard_Integer x,y;v.view_->Convert(mid.X(),mid.Y(),mid.Z(),x,y);QPoint start(x,y);
+    check(v.beginMoveFaceDrag(start),"circular orange drag capture failed");
+    QPoint end=start+QPoint(int(std::round(v.dragScreenX_/v.dragMmPerPixel_)),int(std::round(v.dragScreenY_/v.dragMmPerPixel_)));
+    QMouseEvent drag(QEvent::MouseMove,QPointF(end),QPointF(end),Qt::NoButton,Qt::LeftButton,Qt::ShiftModifier);v.mouseMoveEvent(&drag);
+    check(v.commandSession_->valid&&v.commandSession_->value>2.345,"circular drag did not change radius");
+    QMouseEvent release(QEvent::MouseButtonRelease,QPointF(end),QPointF(end),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);v.mouseReleaseEvent(&release);
+    v.dragDimension_->setText("2.345");check(v.updateCommandParameter(false),"circular exact radius recovery");v.confirmCommandSession();
+    check(v.undoStack_.size()==1&&v.boxes_[0].blends.features.size()==1,"circular commit missing recipe/history");
+    v.undoPull();check(v.boxes_[0].shape.IsSame(original.shape),"circular Undo failed");v.redoPull();
+    TopoDS_Face cap,wall;
+    for(TopExp_Explorer it(v.boxes_[0].shape,TopAbs_FACE);it.More();it.Next()) {
+        auto f=TopoDS::Face(it.Current());BRepAdaptor_Surface a(f);
+        if(a.GetType()==GeomAbs_Plane) cap=f;
+        if(a.GetType()==GeomAbs_Cylinder) wall=f;
+    }
+    check(v.startMoveFace(0,cap),"ordinary circular supporting face selection failed");
+    v.dragDimension_->setText("1");check(!v.updateCommandParameter(false),"circular Keep ON silently accepted");
+    v.keepBlends_->setChecked(false);check(!v.commandSession_->valid,"circular Keep OFF silently accepted");v.cancelCommandSession();
+    check(!v.startMoveFace(0,wall),"circular cylindrical support bypassed Keep refusal");
+    check(v.startEditEdgeBlend(0,v.boxes_[0].blends.features[0].faces.front()),"circular Edit unavailable");
+    check(std::abs(v.commandSession_->value-2.345)<1.e-9&&!v.moveFaceArrow_.IsNull(),"circular absolute radius/arrow incorrect");
+    v.dragDimension_->setText("1.25");v.confirmCommandSession();
+    NativeDocumentSnapshot saved,loaded;QTemporaryDir temp;QString error;
+    check(v.exportDocumentSnapshot(saved)&&NativeDocumentStorage::save(temp.filePath("circle.odc"),saved,error)
+        &&NativeDocumentStorage::load(temp.filePath("circle.odc"),loaded,error)&&v.importDocumentSnapshot(loaded,error),"circular native roundtrip failed");
+    check(v.startEditEdgeBlend(0,v.boxes_[0].blends.features[0].faces.front()),"loaded circular Edit unavailable");v.cancelCommandSession();
+    v.selectParts({0});v.duplicateSelectedParts();
+    check(v.startEditEdgeBlend(1,v.boxes_[1].blends.features[0].faces.front()),"duplicate circular Edit unavailable");
+    v.dragDimension_->setText("1.5");v.confirmCommandSession();
+    check(std::abs(v.boxes_[0].blends.features[0].size-1.25)<1.e-9,"duplicate circular edit changed original");
+    v.context_->ClearSelected(false);v.selectedPartIndices_.clear();
+    Handle(StdSelect_BRepOwner) owner=new StdSelect_BRepOwner(v.boxes_[0].blends.features[0].faces.front(),v.boxes_[0].presentation,5,true);
+    v.context_->AddOrRemoveSelected(owner,false);v.deleteFace();
+    check(v.commandSession_&&v.commandSession_->valid,"circular Delete preview unavailable");v.confirmCommandSession();
+    check(v.boxes_[0].blends.features.empty()&&std::abs(volume(v.boxes_[0].shape)-volume(original.shape))<1.e-6,"circular Delete did not restore sharp solid");
+    v.undoPull();check(v.boxes_[0].blends.features.size()==1,"circular Delete Undo lost recipe");
+}
 static void run() {
     CadViewport v;v.resize(1000,800);v.show();QApplication::processEvents();v.addBox();v.addCylinder();
     const auto untouched=v.boxes_[1];
@@ -218,6 +278,6 @@ static void features() {
 }
 
 };
-void runEdgeBlendSessions() {EdgeBlendSessionTest::run();}
+void runEdgeBlendSessions() {EdgeBlendSessionTest::run();EdgeBlendSessionTest::circular();}
 
 void runEdgeBlendFeatureSessions() {EdgeBlendSessionTest::features();}

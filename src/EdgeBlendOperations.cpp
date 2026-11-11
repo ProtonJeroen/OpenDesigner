@@ -125,7 +125,11 @@ bool CadViewport::startEditEdgeBlend(size_t index,const TopoDS_Face& face) {
     GProp_GProps props;BRepGProp::SurfaceProperties(face,props);auto center=props.CentreOfMass();
     BRepAdaptor_Surface surface(face);gp_Vec normal;
     if(surface.GetType()==GeomAbs_Plane) normal=gp_Vec(surface.Plane().Axis().Direction());
-    else {
+    else if(surface.GetType()==GeomAbs_Torus) {
+        const auto circle=surface.Torus();
+        center=circle.Location().Translated(gp_Vec(circle.XAxis().Direction())*circle.MajorRadius());
+        normal=gp_Vec(circle.Axis().Direction());
+    } else {
         const auto axis=surface.Cylinder().Axis();normal=gp_Vec(axis.Location(),center);
         normal-=gp_Vec(axis.Direction())*normal.Dot(gp_Vec(axis.Direction()));
     }
