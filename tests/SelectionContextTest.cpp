@@ -66,7 +66,8 @@ struct SelectionContextTest {
         for(bool local:{false,true}) {
             auto chosen=v.context_->HighlightStyle(local?Prs3d_TypeOfHighlight_LocalSelected:Prs3d_TypeOfHighlight_Selected);
             auto dynamic=v.context_->HighlightStyle(local?Prs3d_TypeOfHighlight_LocalDynamic:Prs3d_TypeOfHighlight_Dynamic);
-            require(chosen->Color()==dynamic->Color(),"hover and selection colors differ");
+            require(chosen->Color()==Quantity_Color(135./255,206./255,250./255,Quantity_TOC_sRGB),"selection is not light blue");
+            require(dynamic->Color()==Quantity_Color(0.,0.95,1.,Quantity_TOC_RGB),"hover is not cyan");
             require(std::abs(chosen->LineAspect()->Aspect()->Width()-2*v.devicePixelRatioF())<0.01,"selected width not DPI aware");
             require(std::abs(dynamic->LineAspect()->Aspect()->Width()-4*v.devicePixelRatioF())<0.01,"hover width not DPI aware");
             require(chosen->ZLayer()==Graphic3d_ZLayerId_Top&&dynamic->ZLayer()==Graphic3d_ZLayerId_Top,"highlight lost depth-tested layer");

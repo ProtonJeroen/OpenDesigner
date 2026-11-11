@@ -505,11 +505,13 @@ void CadViewport::configureSelectionHighlights() {
     for(auto type:{Prs3d_TypeOfHighlight_Selected,Prs3d_TypeOfHighlight_LocalSelected,
                    Prs3d_TypeOfHighlight_Dynamic,Prs3d_TypeOfHighlight_LocalDynamic}) {
         auto style=context_->HighlightStyle(type);
-        style->SetColor(cyan);style->SetDisplayMode(AIS_WireFrame);
+        const bool hovered=type==Prs3d_TypeOfHighlight_Dynamic||type==Prs3d_TypeOfHighlight_LocalDynamic;
+        const Quantity_Color color=hovered?cyan:Quantity_Color(135./255,206./255,250./255,Quantity_TOC_sRGB);
+        style->SetColor(color);style->SetDisplayMode(AIS_WireFrame);
         style->SetZLayer(Graphic3d_ZLayerId_Top);style->SetOwnLineAspects();
         const double width=(type==Prs3d_TypeOfHighlight_Dynamic||type==Prs3d_TypeOfHighlight_LocalDynamic?4.:2.)*devicePixelRatioF();
         for(const auto& aspect:{style->WireAspect(),style->LineAspect(),style->FreeBoundaryAspect(),style->UnFreeBoundaryAspect(),style->SeenLineAspect()}) {
-            aspect->SetColor(cyan);aspect->SetWidth(width);
+            aspect->SetColor(color);aspect->SetWidth(width);
         }
     }
     context_->SetToHilightSelected(true);
@@ -1751,7 +1753,8 @@ void CadViewport::updateMultiFaceHighlight() {
     if (count == 0) { clearMultiFaceHighlight(); return; }
     if (multiFaceHighlight_.IsNull()) {
         multiFaceHighlight_ = new AIS_Shape(edges);
-        multiFaceHighlight_->SetColor(Quantity_Color(0.0, 0.95, 1.0, Quantity_TOC_RGB));
+        multiFaceHighlight_->SetColor(Quantity_Color(135./255,206./255,250./255,Quantity_TOC_sRGB));
+        multiFaceHighlight_->SetWidth(2.*devicePixelRatioF());
         context_->Display(multiFaceHighlight_, Standard_False);
         context_->SetDisplayMode(multiFaceHighlight_, AIS_WireFrame, Standard_False);
         context_->Deactivate(multiFaceHighlight_);
@@ -1760,7 +1763,7 @@ void CadViewport::updateMultiFaceHighlight() {
         context_->Redisplay(multiFaceHighlight_, Standard_False);
         context_->Deactivate(multiFaceHighlight_);
     }
-    context_->SetZLayer(multiFaceHighlight_, Graphic3d_ZLayerId_Topmost);
+    context_->SetZLayer(multiFaceHighlight_, Graphic3d_ZLayerId_Top);
 }
 
 bool CadViewport::applyMultiFaceDrag(double distance) {
@@ -2568,7 +2571,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             return;
         }
         // Use OCCT's additive selection scheme for Ctrl+click on faces.
-        // Highlight selected faces by cyan edges only, preserving their material.
+        // Highlight selected face boundaries, preserving their material.
         if (!context_->SelectionStyle().IsNull())
             context_->SelectionStyle()->SetDisplayMode(AIS_WireFrame);
         // Additive selection stays typed: Ctrl on a face starts a face set
@@ -2966,7 +2969,7 @@ void CadViewport::refreshActivePart() {
         const bool hovered=!detected.IsNull()&&detected->Selectable()==part.presentation
             &&!detected->Shape().IsNull()&&detected->Shape().ShapeType()!=TopAbs_FACE&&detected->Shape().ShapeType()!=TopAbs_EDGE;
         const bool outlined=active || selected || hovered;
-        const auto& color=selected||hovered?cyan:green;
+        const auto color=hovered?cyan:selected?Quantity_Color(135./255,206./255,250./255,Quantity_TOC_sRGB):green;
         const double outlineWidth=(hovered?4.:selected?2.:2.8)*devicePixelRatioF();
         auto drawer=part.presentation->Attributes();
         if(!outlined && !drawer->HasOwnShadingAspect() && !drawer->HasOwnFaceBoundaryDraw())continue;

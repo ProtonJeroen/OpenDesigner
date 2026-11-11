@@ -19,6 +19,7 @@
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <stdexcept>
 #include <cmath>
@@ -27,6 +28,28 @@ void check(bool value,const char* message) {if(!value) throw std::runtime_error(
 double volume(const TopoDS_Shape& shape) {GProp_GProps p;BRepGProp::VolumeProperties(shape,p);return p.Mass();}
 }
 struct EdgeBlendSessionTest {
+static void checkFilletDirection(CadViewport& v) {
+    const auto& s=*v.commandSession_;
+    if(s.kind!=CadViewport::CommandSession::Kind::Fillet)return;
+    const auto inverse=s.faceBefore->orientation.Inverted();
+    const auto anchor=s.editBlendId.isEmpty()?s.pivot:s.pivot.Translated(gp_Vec(s.direction)*s.value);
+    const auto inside=anchor.Translated(gp_Vec(s.direction)*0.001).Transformed(inverse);
+    const auto outside=anchor.Translated(gp_Vec(s.direction)*(-0.001)).Transformed(inverse);
+    check(BRepClass3d_SolidClassifier(s.faceBefore->shape,inside,1.e-7).State()==TopAbs_IN,"increasing radius direction must enter material");
+    check(BRepClass3d_SolidClassifier(s.faceBefore->shape,outside,1.e-7).State()==TopAbs_OUT,"decreasing radius direction must leave material");
+    bool cone=false;
+    for(TopExp_Explorer it(v.moveFaceArrow_->Shape(),TopAbs_FACE);it.More();it.Next()) {
+        BRepAdaptor_Surface surface(TopoDS::Face(it.Current()));
+        if(surface.GetType()!=GeomAbs_Cone)continue;
+        cone=true;
+        check(surface.Cone().Axis().Direction().Dot(s.direction)>0.999,"arrowhead disagrees with radius direction");
+        const auto tip=surface.Cone().Apex();
+        const auto expected=s.pivot.Translated(gp_Vec(s.direction)*s.value);
+        check(tip.Distance(expected)<1.e-6,"arrow tip is not at Fillet anchor");
+    }
+    check(cone,"Fillet arrowhead missing");
+}
+
 static void circular() {
     CadViewport v;v.resize(1000,800);v.show();QApplication::processEvents();v.addCylinder();
     gp_Trsf placement;placement.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),0.3);
@@ -44,12 +67,13 @@ static void circular() {
             }
         }
         check(picked&&v.commandSession_->valid,"circular typed picking/preview failed");
+        checkFilletDirection(v);
         check(!v.moveFaceArrow_.IsNull()&&!v.commandSession_->preview.IsNull(),"circular arrow/blue preview missing");
     };
     arm();v.cancelCommandSession();check(v.boxes_[0].shape.IsSame(original.shape)&&v.undoStack_.empty(),"circular Cancel changed document");
     arm();v.dragDimension_->setText("2.345");check(v.updateCommandParameter(false),"circular numeric radius failed");
     const auto& session=*v.commandSession_;
-    auto mid=session.pivot.Translated(gp_Vec(session.direction)*(session.value+15.5));
+    auto mid=session.pivot.Translated(gp_Vec(session.direction)*(session.value-15.5));
     Standard_Integer x,y;v.view_->Convert(mid.X(),mid.Y(),mid.Z(),x,y);QPoint start(x,y);
     check(v.beginMoveFaceDrag(start),"circular orange drag capture failed");
     QPoint end=start+QPoint(int(std::round(v.dragScreenX_/v.dragMmPerPixel_)),int(std::round(v.dragScreenY_/v.dragMmPerPixel_)));
@@ -70,6 +94,7 @@ static void circular() {
     v.keepBlends_->setChecked(false);check(!v.commandSession_->valid,"circular Keep OFF silently accepted");v.cancelCommandSession();
     check(!v.startMoveFace(0,wall),"circular cylindrical support bypassed Keep refusal");
     check(v.startEditEdgeBlend(0,v.boxes_[0].blends.features[0].faces.front()),"circular Edit unavailable");
+    checkFilletDirection(v);
     check(std::abs(v.commandSession_->value-2.345)<1.e-9&&!v.moveFaceArrow_.IsNull(),"circular absolute radius/arrow incorrect");
     v.dragDimension_->setText("1.25");v.confirmCommandSession();
     NativeDocumentSnapshot saved,loaded;QTemporaryDir temp;QString error;
@@ -108,13 +133,14 @@ static void run() {
                 picked=v.pickEdgeBlend(QPoint(x,y));
         }
         check(picked && v.commandSession_->valid,"typed edge pick/preview failed");
+        checkFilletDirection(v);
         check(!v.moveFaceArrow_.IsNull(),"creation did not show orange Pull arrow");
     };
     for(bool chamfer:{false,true}) {
         arm(chamfer);
         check(v.boxes_[0].shape.IsSame(original.shape) && !v.commandSession_->preview.IsNull(),"preview changed canonical geometry");
         const auto& creation=*v.commandSession_;
-        const auto arrowMid=creation.pivot.Translated(gp_Vec(creation.direction)*(creation.value+15.5));
+        const auto arrowMid=creation.pivot.Translated(gp_Vec(creation.direction)*(creation.value+(chamfer?15.5:-15.5)));
         Standard_Integer ax,ay;v.view_->Convert(arrowMid.X(),arrowMid.Y(),arrowMid.Z(),ax,ay);QPoint dragStart(ax,ay);
         check(v.beginMoveFaceDrag(dragStart),"creation orange arrow did not capture");
         QPoint dragEnd=dragStart+QPoint(int(std::round(v.dragScreenX_*3/v.dragMmPerPixel_)),int(std::round(v.dragScreenY_*3/v.dragMmPerPixel_)));
@@ -199,9 +225,10 @@ static void features() {
         auto* edit=menu->findChild<QAction*>(i==0?"context.edit_fillet":"context.edit_chamfer");check(edit,"recognized transition missing Edit action");edit->trigger();
         check(v.commandSession_&&!v.moveFaceArrow_.IsNull()&&!v.commandSession_->preview.IsNull(),"Edit missing orange arrow or blue preview");
         check(std::abs(QLocale().toDouble(v.dragDimension_->text())-(i==0?5.:3.))<1.e-10,"Edit did not show absolute dimension");
+        checkFilletDirection(v);
         auto& session=*v.commandSession_;
         const auto origin=session.pivot.Translated(gp_Vec(session.direction)*session.value);
-        const auto midpoint=origin.Translated(gp_Vec(session.direction)*15.5);
+        const auto midpoint=origin.Translated(gp_Vec(session.direction)*(i==0?-15.5:15.5));
         Standard_Integer x,y;v.view_->Convert(midpoint.X(),midpoint.Y(),midpoint.Z(),x,y);
         const QPoint start(x,y);check(v.beginMoveFaceDrag(start),"orange arrow did not capture drag");
         const double initial=session.value;

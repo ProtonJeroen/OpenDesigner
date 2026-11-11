@@ -305,9 +305,11 @@ bool CadViewport::beginMoveFaceDrag(const QPoint& point) {
     const auto& session=*commandSession_;
     if(session.moveFeature!=MoveFaceFeature::Planar&&!session.lateralDirectionReady) return false;
     const gp_Pnt origin=session.pivot.Translated(gp_Vec(session.direction)*(blend?std::max(0.,session.value):(session.valid?session.value:0)));
-    const auto tip=origin.Translated(gp_Vec(session.direction)*31);
+    const auto base=session.kind==CommandSession::Kind::Fillet
+        ?origin.Translated(gp_Vec(session.direction)*(-31)):origin;
+    const auto tip=base.Translated(gp_Vec(session.direction)*31);
     Standard_Integer x0,y0,x1,y1;
-    view_->Convert(origin.X(),origin.Y(),origin.Z(),x0,y0);
+    view_->Convert(base.X(),base.Y(),base.Z(),x0,y0);
     view_->Convert(tip.X(),tip.Y(),tip.Z(),x1,y1);
     const double dx=x1-x0,dy=y1-y0,len2=dx*dx+dy*dy;
     if (len2<4) return false;
