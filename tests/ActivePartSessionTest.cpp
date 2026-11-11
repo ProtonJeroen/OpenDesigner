@@ -52,13 +52,13 @@ static void run() {
     AIS_ListOfInteractive displayedBefore;v.context_->DisplayedObjects(displayedBefore);
     const auto selectionColor=v.context_->SelectionStyle()->Color();
     const auto hoverColor=v.context_->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->Color();
-    const auto featureLines=[&](const Handle(AIS_Shape)& part,const Quantity_Color& color) {
+    const auto featureLines=[&](const Handle(AIS_Shape)& part,const Quantity_Color& color,double width=2.8) {
         const auto presentation=v.context_->MainPrsMgr()->Presentation(part,AIS_Shaded);
         if(presentation.IsNull())return false;
         for(const auto& group:presentation->Groups()) {
             const auto aspect=group->Aspects();
             if(!group->IsClosed() && !aspect.IsNull() && aspect->Color().IsEqual(color)
-                && std::abs(aspect->LineWidth()-2.8)<0.001)return true;
+                && std::abs(aspect->LineWidth()-width*v.devicePixelRatioF())<0.001)return true;
         }
         return false;
     };
@@ -83,7 +83,7 @@ static void run() {
         return double(drawer->FaceBoundaryAspect()->Aspect()->Width());
     };
     auto drawer=v.boxes_[0].presentation->Attributes();
-    check(std::abs(outlineWidth(*drawer->ShadingAspect()->Aspect(),drawer)-2.8)<0.001,"active outline width wrong");
+    check(std::abs(outlineWidth(*drawer->ShadingAspect()->Aspect(),drawer)-2.8*v.devicePixelRatioF())<0.001,"active outline width wrong");
     check(v.context_->SelectionStyle()->ZLayer()==Graphic3d_ZLayerId_Top
         && v.viewer_->ZLayerSettings(Graphic3d_ZLayerId_Top).ToEnableDepthTest()
         && !v.viewer_->ZLayerSettings(Graphic3d_ZLayerId_Top).ToClearDepth(),"whole Part selection ignores scene depth");
@@ -92,10 +92,10 @@ static void run() {
     v.selectParts({0});
     check(outlineColor(*drawer->ShadingAspect()->Aspect(),drawer).IsEqual(selectionColor)
         && !drawer->FaceBoundaryDraw() && !drawer->ShadingAspect()->Aspect()->ToDrawEdges()
-        && std::abs(outlineWidth(*drawer->ShadingAspect()->Aspect(),drawer)-2.8)<0.001,"selected silhouette did not override Active Part in cyan");
+        && std::abs(outlineWidth(*drawer->ShadingAspect()->Aspect(),drawer)-2*v.devicePixelRatioF())<0.001,"selected silhouette did not override Active Part in cyan");
     check(v.context_->IsSelected(v.boxes_[0].presentation->GlobalSelOwner())
         && !v.context_->MainPrsMgr()->IsHighlighted(v.boxes_[0].presentation,AIS_WireFrame),"whole Part still draws selection wireframe edges");
-    check(featureLines(v.boxes_[0].presentation,selectionColor),"selected feature edges did not take cyan priority");
+    check(featureLines(v.boxes_[0].presentation,selectionColor,2),"selected feature edges did not take cyan priority");
     check(v.boxes_[0].shape.IsSame(shape) && v.partColor(0)==color,"selected contour changed geometry/material");
     v.selectParts({1});
     check(outlineColor(*drawer->ShadingAspect()->Aspect(),drawer).IsEqual(expectedGreen)

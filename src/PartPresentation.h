@@ -29,7 +29,8 @@ public:
                           Standard_Integer mode=0) override {
         const auto object=Handle(AIS_InteractiveObject)::DownCast(Selectable());
         const auto context=object.IsNull()?Handle(AIS_InteractiveContext)():object->GetContext();
-        if(!context.IsNull() && style==context->SelectionStyle())return;
+        if(!context.IsNull() && (style==context->SelectionStyle()
+            ||style==context->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)))return;
         StdSelect_BRepOwner::HilightWithColor(manager,style,mode);
     }
 };
@@ -38,9 +39,9 @@ class PartPresentation final : public AIS_Shape {
 public:
     explicit PartPresentation(const TopoDS_Shape& shape) : AIS_Shape(shape) {}
 
-    bool setFeatureHighlight(bool enabled,const Quantity_Color& color) {
-        const bool changed=featureHighlight_!=enabled || (enabled && featureColor_!=color);
-        featureHighlight_=enabled;featureColor_=color;return changed;
+    bool setFeatureHighlight(bool enabled,const Quantity_Color& color,double width=2.8) {
+        const bool changed=featureHighlight_!=enabled || (enabled && (featureColor_!=color||std::abs(featureWidth_-width)>0.001));
+        featureHighlight_=enabled;featureColor_=color;featureWidth_=width;return changed;
     }
 
     // Shared BRep references only: no copied geometry or selection primitives.
@@ -76,7 +77,7 @@ protected:
         if(mode!=AIS_Shaded || !featureHighlight_)return;
         const auto features=featureEdges(Shape());
         Handle(Prs3d_Drawer) drawer=new Prs3d_Drawer;drawer->SetLink(Attributes());
-        const Handle(Prs3d_LineAspect) lines=new Prs3d_LineAspect(featureColor_,Aspect_TOL_SOLID,2.8);
+        const Handle(Prs3d_LineAspect) lines=new Prs3d_LineAspect(featureColor_,Aspect_TOL_SOLID,featureWidth_);
         drawer->SetWireAspect(lines);drawer->SetLineAspect(lines);
         drawer->SetFreeBoundaryAspect(lines);drawer->SetUnFreeBoundaryAspect(lines);
         // Scene-depth-tested lines in the same presentation as the shaded
@@ -104,5 +105,6 @@ protected:
     }
 private:
     bool featureHighlight_=false;
+    double featureWidth_=2.8;
     Quantity_Color featureColor_=Quantity_NOC_WHITE;
 };

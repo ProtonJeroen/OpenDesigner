@@ -1,5 +1,6 @@
 #include "CadViewport.h"
 #include <QIcon>
+#include <TColStd_ListOfInteger.hxx>
 #include "MoveFaceGeometry.h"
 #include "BRepReconstruction.h"
 #include "CylindricalMoveGeometry.h"
@@ -29,7 +30,7 @@
 CadViewport::SelectionContext CadViewport::selectionContext() const {
     SelectionContext result;
     if (context_.IsNull()) return result;
-    bool faces=false,parts=false;
+    bool faces=false,parts=false,edges=false;
     for (context_->InitSelected();context_->MoreSelected();context_->NextSelected()) {
         const auto object=context_->SelectedInteractive();
         bool sketch=false;
@@ -56,25 +57,49 @@ CadViewport::SelectionContext CadViewport::selectionContext() const {
                 if(f.Current().IsSame(face)) member=true;
             if(!member) return {}; // Never offer an edit for stale topology.
             result.faces.push_back({index,face}); faces=true;
+        } else if(!owner.IsNull()&&!owner->Shape().IsNull()&&owner->Shape().ShapeType()==TopAbs_EDGE) {
+            const auto edge=TopoDS::Edge(owner->Shape());bool member=false;
+            for(TopExp_Explorer it(boxes_[index].shape,TopAbs_EDGE);it.More();it.Next()) if(it.Current().IsSame(edge)) member=true;
+            if(!member) return {};
+            result.edges.push_back({index,edge});edges=true;
         } else parts=true;
     }
     if(!result.sketches.empty()) {
-        if(faces || parts || !result.constructions.empty()) return {};
+        if(faces || parts || edges || !result.constructions.empty()) return {};
         result.kind=SelectionContext::Kind::Sketches;return result;
     }
     if(!result.constructions.empty()) {
-        if(faces || parts) return {};
+        if(faces || parts || edges) return {};
         result.kind=SelectionContext::Kind::Constructions;return result;
     }
-    if(!faces && !parts) {
+    if(!faces && !parts && !edges) {
         // Some existing Undo paths refresh geometry before restoring OCCT owners.
         // Whole-part IDs remain authoritative; face picks clear this list explicitly.
         for(const auto index:selectedPartIndices_) if(isPartVisible(index)) result.parts.push_back(index);
         parts=!result.parts.empty();
     }
-    if(faces && parts) return {};
-    result.kind=faces ? SelectionContext::Kind::Faces : parts ? SelectionContext::Kind::Parts : SelectionContext::Kind::None;
+    if(int(faces)+int(parts)+int(edges)>1) return {};
+    result.kind=edges ? SelectionContext::Kind::Edges : faces ? SelectionContext::Kind::Faces : parts ? SelectionContext::Kind::Parts : SelectionContext::Kind::None;
     return result;
+}
+// Normal viewport picking shares AIS owners with commands. Only change active
+// modes when needed; repeated hover must not recreate owners or lose selection.
+void CadViewport::activateAutomaticSelection(bool parts) {
+    for(auto& part:boxes_) if(part.active&&part.visible) {
+        TColStd_ListOfInteger modes;context_->ActivatedModes(part.presentation,modes);
+        bool global=false,face=false,edge=false;
+        for(int mode:modes) {global|=mode==0;face|=mode==AIS_Shape::SelectionMode(TopAbs_FACE);edge|=mode==AIS_Shape::SelectionMode(TopAbs_EDGE);}
+        if(parts?global&&!face&&!edge:!global&&face&&edge) continue;
+        context_->Deactivate(part.presentation);
+        if(parts) context_->Activate(part.presentation,0,Standard_False);
+        else {
+            context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
+            context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_EDGE),Standard_False);
+        }
+    }
+    // QMouseEvent and the native view use logical viewport coordinates. Keep a
+    // four-logical-pixel aperture rather than scaling it a second time on HiDPI.
+    if(context_->PixelTolerance()!=4) context_->SetPixelTolerance(4);
 }
 void CadViewport::setSelectionMode(SelectionMode mode) {
     if(selectionMode_==mode && !(mode==SelectionMode::Face && (movePartMode_ || directMoveMode_ || rotateMode_))) return;
@@ -162,7 +187,10 @@ QMenu* CadViewport::createSelectionMenu(const QPoint& anchor) {
     else if(selection.kind==SelectionContext::Kind::Parts) populatePartMenu(*menu,selection);
     else if(selection.kind==SelectionContext::Kind::Constructions) populateConstructionMenu(*menu);
     else if(selection.kind==SelectionContext::Kind::Sketches) populateSketchMenu(*menu);
-    else populateFaceMenu(*menu,selection,anchor);
+    else if(selection.kind==SelectionContext::Kind::Edges) {
+        connect(menu->addAction(tr("Fillet")),&QAction::triggered,this,&CadViewport::fillet);
+        connect(menu->addAction(tr("Chamfer")),&QAction::triggered,this,&CadViewport::chamfer);
+    } else populateFaceMenu(*menu,selection,anchor);
     if(selection.kind==SelectionContext::Kind::Parts || selection.kind==SelectionContext::Kind::Faces) {
         menu->addSeparator();
         auto* fit=menu->addAction(tr("Fit Selected"));fit->setObjectName("context.fit_selected");
@@ -383,6 +411,7 @@ void CadViewport::resetModelingTools() {
     emit transformModesChanged(false,false,false);
     emit selectionModeChanged(selectionMode_);
     refreshSketchPicking();
+    if(!context_.IsNull()) {context_->ClearDetected(Standard_False);refreshActivePart();}
     if(!view_.IsNull()) view_->Redraw();
 }
 void CadViewport::startPrimitivePull() {

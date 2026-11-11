@@ -202,12 +202,17 @@ private:
     friend struct DeleteFaceTest;
     friend struct DeletePartSessionTest;
     friend struct EdgeBlendSessionTest;
+    struct SelectedEdge { size_t partIndex; TopoDS_Edge edge; };
+    void activateAutomaticSelection(bool parts=false);
+    void configureSelectionHighlights();
+    void leaveEvent(QEvent*) override;
     struct SelectedFace { size_t partIndex; TopoDS_Face face; };
     struct SelectionContext {
-        enum class Kind { None, Parts, Faces, Constructions, Sketches };
+        enum class Kind { None, Parts, Faces, Edges, Constructions, Sketches };
         Kind kind = Kind::None;
         std::vector<size_t> parts;
         std::vector<SelectedFace> faces;
+        std::vector<SelectedEdge> edges;
         QStringList constructions, sketches;
     };
     QAction* undoAction_ = nullptr;

@@ -1,16 +1,23 @@
-# Selection and explicit modeling commands (v0.3.3–v0.4.2)
+# Unified selection and explicit modeling commands (v0.5.1)
 
 Selection is passive. There is no Faces/Parts dropdown.
 
 | Input | Selection |
 | --- | --- |
-| Left click | One Face |
-| Ctrl + left click | Add/remove Faces |
+| Left click near a visible edge | One Edge (straight or curved) |
+| Left click inside a face | One Face |
+| Second distinct click on the sole selected Edge/Face | Owning Part, with no double-click timing requirement |
+| Left click another Edge/Face, including on a selected Part | Start a new subelement selection |
+| Unmodified left click empty space | Clear selection |
+| Ctrl + left click | Add/remove Edges or Faces in a same-type set; no promotion |
 | Alt + left click | One Part |
 | Ctrl + Alt + left click | Add/remove Parts |
 
 Releasing Alt does not change the current selection or its type. Structure
-Browser rows select Parts. Selecting a different type starts a fresh typed set.
+Browser rows select Parts. Selecting a different type starts a fresh typed set. Edge/Face/Part sets are not mixed.
+Promotion applies only to a sole selected subelement; Ctrl and multi-element
+sets deliberately do not promote. Ctrl-background clicks retain their existing
+typed set, matching the prior additive-selection behavior.
 Selection alone never activates a modeling function or displays manipulators.
 Middle-button orbit, Shift+middle pan and wheel zoom retain their behavior.
 
@@ -207,3 +214,84 @@ Sketch selection; commit and Undo/Redo clear selection. The projection context
 menu has Clear/Cancel/Fit All and does not turn the session into a normal 3D face
 edit. No new persistent selection system or browser subshape hierarchy is added.
 See [the full workflow](SKETCH_PROJECTION.md#phase-5-interactive-project-3d-geometry).
+
+## Unified picking and highlighting (v0.5.1)
+
+Normal picking activates OCCT Edge and Face modes together. OCCT prioritizes the
+nearest visible geometry and resolves adjacent-edge sensitivity in screen space.
+The aperture is four logical viewport pixels: event positions and the native
+view size already use Qt logical coordinates, so the aperture is not multiplied
+again on HiDPI displays. Interior face picks remain Faces. Mode activation changes
+only when necessary; ordinary hover does not recreate selection owners.
+
+Tool-specific picking takes precedence: Fillet/Chamfer pick Edges, Move Face
+picks Faces, rotation/reference pickers keep their requested types, and Part
+transform manipulators receive mouse presses before ordinary selection.
+Subelement selection is passive. A selected Edge's context menu offers the
+existing Fillet/Chamfer commands, which then request their command-specific edge.
+Structure Browser selection remains whole-Part selection.
+
+Hover and selected geometry share cyan. Initial line-width targets are 4 logical
+pixels for hover and 2 for selection, scaled by Qt's device pixel ratio for line
+rendering. Hover is enabled over already-selected owners. Edge highlights use
+that edge; Face highlights use its wire boundary without changing material.
+Part highlights reuse the existing native silhouette plus sharp feature edges;
+seams and tangent joins are excluded. On OCCT builds without native silhouette
+support, only sharp feature edges are available, as in the existing Part renderer.
+All highlight drawers use scene-depth-tested layers. Whole-Part AIS wireframes
+are suppressed to avoid duplicate seams/highlights. Moving to another owner,
+leaving the viewport or resetting tools clears transient hover. Active Part green
+remains independent and returns when cyan whole-Part highlighting ends.
+
+Promotion compares the current selected and detected AIS owners' actual topology
+and owning presentation. No last-click TopoDS pointer, face index or timer is
+stored. Existing geometry-replacement/history cleanup remains authoritative;
+stale Edge owners are rejected by the same membership policy as Faces.
+
+### Manual Fedora KDE acceptance
+
+1. Click a box Edge, wait longer than the double-click interval and click again:
+   expect Edge then Part. Repeat inside a Face. Click another element to reset.
+2. Select a Part in the Structure Browser; click an Edge or Face to return to it.
+   Check Alt immediate Part selection, Ctrl typed multi-selection, Ctrl+Alt Part
+   multi-selection, and clearing on empty space.
+3. Hover a selected Edge/Face and an Alt-hovered Part: cyan should thicken from
+   approximately 2 to 4 logical pixels. Check circular rims, occluded geometry,
+   orbiting, leaving the viewport, and moving between screens at different scale.
+4. Run Fillet and Chamfer Edge picking and preview, then Move Face, Pull, Rotate
+   Face and Part transform drags. Check command picking never promotes to Part.
+5. Confirm geometry changes, Undo/Redo and Save/Open; make fresh subelement picks.
+   Verify no stale owners or hover artifacts and no accidental modeling on click.
+
+Manual KDE/Wayland visual acceptance remains pending. The automated normal and
+`QT_SCALE_FACTOR=2` tests check selection semantics and highlight configuration;
+line rasterization and native silhouette support still depend on OCCT/driver.
+
+### Targeted automated validation — 2026-11-11
+
+Incremental Release builds of `OpenDesigner` and
+`OpenDesignerSelectionContextTests` passed with Ninja `-j4`. Exact CTest names
+were run with `-j2`; automatic-selection tests run serially against the display.
+
+| Test | Result | Seconds |
+| --- | --- | ---: |
+| automatic-selection | PASS | 4.12 |
+| automatic-selection-hidpi | PASS | 4.19 |
+| selection-context | PASS | 31.89 |
+| active-part-sessions | PASS | 2.39 |
+| edge-blend-sessions | PASS | 7.89 |
+| edge-blend-feature-sessions | PASS | 10.77 |
+| native-document-sessions | PASS | 3.25 |
+
+All seven targeted tests pass across focused runs. The new tests cover exact and
+near Edge picks, visible-edge depth preference, interior Face picks, delayed
+promotion, Part-to-subelement return, Alt, Ctrl typed selection, selected-owner
+hover, width/color/depth configuration, leave cleanup, circular picking, Fillet
+picker precedence and selection after geometry replacement/Undo/Redo.
+Existing modeling tests keep their geometry and history assertions. The Active
+Part test checks the new selected width of 2 logical pixels, and the independent
+second Pull case explicitly clears its retained Face before a fresh click (a
+repeat click now intentionally promotes to Part).
+
+The full CTest suite and unrelated expensive OCCT geometry tests were not run.
+Manual KDE/Wayland visual acceptance remains pending.
