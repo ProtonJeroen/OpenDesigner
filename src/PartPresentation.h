@@ -167,12 +167,25 @@ public:
             if(transitionsOnly && !transition)continue;
             if(faces.Extent()==2 && !transition) {
                 try {
-                    if(BRepLib::ContinuityOfFaces(edge,TopoDS::Face(faces(1)),TopoDS::Face(faces(2)),1e-4)!=GeomAbs_C0)continue;
+                    const auto first=TopoDS::Face(faces(1)),second=TopoDS::Face(faces(2));
+                    const auto a=BRepAdaptor_Surface(first).GetType(),b=BRepAdaptor_Surface(second).GetType();
+                    const auto analytic=[](GeomAbs_SurfaceType type) {
+                        return type==GeomAbs_Plane || type==GeomAbs_Cylinder || type==GeomAbs_Cone
+                            || type==GeomAbs_Sphere || type==GeomAbs_Torus;
+                    };
+                    // A tangent change of analytic surface is a real design
+                    // boundary even without a recognized Fillet recipe.
+                    if(!(a!=b && analytic(a) && analytic(b))
+                        && BRepLib::ContinuityOfFaces(edge,first,second,1e-4)!=GeomAbs_C0)continue;
                 } catch(const Standard_Failure&) {continue;} // Unclassifiable joins are not highlighted.
             }
             builder.Add(features,edge);
         }
         return features;
+    }
+
+    TopoDS_Compound highlightedEdges() const {
+        return featureEdges(Shape(),filletFaces_,transitionsOnly_);
     }
 
 protected:
@@ -182,7 +195,7 @@ protected:
         if(mode!=AIS_Shaded)return;
         for(const auto& contour:faceContours_)drawLines(presentation,contour.shape,contour.color,contour.width);
         if(!featureHighlight_)return;
-        drawLines(presentation,featureEdges(Shape(),filletFaces_,transitionsOnly_),featureColor_,featureWidth_);
+        drawLines(presentation,highlightedEdges(),featureColor_,featureWidth_);
     }
     void drawLines(const Handle(Prs3d_Presentation)& presentation,const TopoDS_Shape& features,
                    const Quantity_Color& color,double width) {

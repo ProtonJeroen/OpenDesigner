@@ -31,6 +31,8 @@
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <Quantity_Color.hxx>
+#include <Image_PixMap.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
 #include <iostream>
 #include <stdexcept>
 namespace {
@@ -40,7 +42,34 @@ QAction* action(QMenu& menu,const char* id) {
 }
 }
 struct SelectionContextTest {
+    static void contourPixels() {
+        CadViewport v;v.resize(1000,800);v.show();QApplication::processEvents();v.addBox();
+        const Quantity_Color blue(135./255,206./255,250./255,Quantity_TOC_sRGB);
+        const auto blueAt=[&](const gp_Pnt& point) {
+            Standard_Integer width,height;v.view_->Window()->Size(width,height);
+            Image_PixMap pixels;require(v.view_->ToPixMap(pixels,width,height),"contour raster capture failed");
+            const auto p=project(v,point);
+            for(int dy=-3;dy<=3;++dy)for(int dx=-3;dx<=3;++dx)
+                if(pixels.PixelColor(p.x()+dx,p.y()+dy,true).GetRGB().Distance(blue)<0.03)return true;
+            return false;
+        };
+        for(bool reverse:{false,true}) {
+            v.view_->SetProj(reverse?-1:1,reverse?1:-1,1);v.fitAll();
+            v.view_->FitAll(0.1,Standard_False);v.selectParts({0});v.refreshActivePart();
+            const gp_Pnt front=reverse?gp_Pnt(0,80,30):gp_Pnt(100,0,30);
+            const gp_Pnt back=reverse?gp_Pnt(100,0,30):gp_Pnt(0,80,30);
+            require(blueAt(front),"selected Part missing visible sharp edge inside silhouette");
+            require(!blueAt(back),"selected Part shows occluded back edge");
+            v.selectParts({});chooseFace(v,0,topFace(v.boxes_[0].shape));v.refreshActivePart();
+            require(!blueAt(front),"selected Face leaked complete Part edge network");
+        }
+        v.selectParts({0});v.addBox();auto blocker=v.boxes_[1];
+        blocker.shape=BRepPrimAPI_MakeBox(gp_Pnt(-50,-50,-50),200,180,160).Shape();
+        v.applyFaceState(1,blocker);v.selectParts({0});v.refreshActivePart();
+        require(!blueAt(gp_Pnt(0,80,30)),"Part edge highlighted through another solid");
+    }
     static void automatic() {
+        contourPixels();
         CadViewport v;v.resize(1000,800);v.show();QApplication::processEvents();v.addBox();
         v.view_->SetProj(V3d_Zpos);v.fitAll();v.view_->FitAll(0.1,Standard_False);QApplication::processEvents();
         const auto face=project(v,gp_Pnt(50,40,60)),edge=project(v,gp_Pnt(100,40,60));
@@ -104,7 +133,7 @@ struct SelectionContextTest {
         }
         require(found,"missing circle fixture");click(c,rim);
         require(c.selectionContext().kind==Kind::Edges&&BRepAdaptor_Curve(c.selectionContext().edges[0].edge).GetType()==GeomAbs_Circle,"circular Edge picking failed");
-        c.fillet();click(c,rim);require(c.commandSession_&&c.commandSession_->valid&&c.commandSession_->faceBefore,"Fillet Edge picking was promoted or lost");
+        c.fillet();require(c.commandSession_&&c.commandSession_->valid&&c.commandSession_->faceBefore,"Fillet Edge picking was promoted or lost");
         c.confirmCommandSession();c.undoPull();require(c.selectionContext().kind==Kind::None,"Undo retained stale owner");c.redoPull();
         click(c,project(c,gp_Pnt(0,0,0)));require(c.selectionContext().kind==Kind::Faces,"selection after replacement/Redo failed");
         auto stale=owners(c);c.undoPull();c.redoPull();

@@ -1,6 +1,7 @@
 #include "CadViewport.h"
 #include "FilletGeometry.h"
 #include "ChamferGeometry.h"
+#include "EdgeBlendValidation.h"
 #include <QDialogButtonBox>
 #include <QPushButton>
 #include <QLineEdit>
@@ -39,7 +40,11 @@ gp_Vec outwardNormal(const TopoDS_Face& face,const gp_Pnt& point) {
 void CadViewport::fillet() {startEdgeBlend(false);}
 void CadViewport::chamfer() {startEdgeBlend(true);}
 void CadViewport::startEdgeBlend(bool chamfer) {
-    endSketchEditing();cancelCommandSession();resetModelingTools();
+    cancelCommandSession();
+    const auto selection=selectionContext();
+    const bool unsupportedSelection=(selection.kind==SelectionContext::Kind::Edges && selection.edges.size()!=1)
+        || (selection.kind==SelectionContext::Kind::None && context_->NbSelected()>0);
+    endSketchEditing();resetModelingTools();
     beginCommandSession(chamfer?CommandSession::Kind::Chamfer:CommandSession::Kind::Fillet,{},gp_Dir(1,0,0));
     commandSession_->valid=false;
     commandPanel_->setWindowTitle(chamfer?tr("Chamfer Preview"):tr("Fillet Preview"));
@@ -50,6 +55,14 @@ void CadViewport::startEdgeBlend(bool chamfer) {
         context_->Deactivate(part.presentation);
         context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_EDGE),Standard_False);
     }
+    if(unsupportedSelection) {
+        emit statusMessage(tr("The selected set is unsupported. Select one Edge for Fillet or Chamfer."));
+        return;
+    }
+    if(selection.kind==SelectionContext::Kind::Edges && selection.edges.size()==1) {
+        adoptEdgeBlend(selection.edges.front().partIndex,selection.edges.front().edge);
+        return;
+    }
     emit statusMessage(tr("Select one solid edge, then enter a positive value in mm."));
 }
 bool CadViewport::pickEdgeBlend(const QPoint& point) {
@@ -58,35 +71,44 @@ bool CadViewport::pickEdgeBlend(const QPoint& point) {
     auto owner=Handle(StdSelect_BRepOwner)::DownCast(context_->DetectedOwner());
     if(owner.IsNull() || owner->Shape().IsNull() || owner->Shape().ShapeType()!=TopAbs_EDGE) return false;
     for(size_t i=0;i<boxes_.size();++i) if(isPartVisible(i) && boxes_[i].presentation==context_->DetectedInteractive()) {
-        auto& session=*commandSession_;const auto& part=boxes_[i];
-        session.edge=TopoDS::Edge(owner->Shape());
-        session.faceBefore=std::make_shared<CadPart>(part);
-        session.blendSource=part.blends;
-        QString recipeError;EdgeBlendFeatures::resolve(part.shape,session.blendSource,recipeError);
-        BRepAdaptor_Curve curve(session.edge);
-        auto center=curve.Value((curve.FirstParameter()+curve.LastParameter())/2);
-        gp_Vec normal(1,1,1);gp_Vec sum;
-        TopTools_IndexedDataMapOfShapeListOfShape adjacency;
-        TopExp::MapShapesAndUniqueAncestors(part.shape,TopAbs_EDGE,TopAbs_FACE,adjacency);
-        for(const auto& f:adjacency.FindFromKey(session.edge)) {
-            BRepAdaptor_Surface surface(TopoDS::Face(f));
-            if(session.kind==CommandSession::Kind::Fillet) {
-                sum+=outwardNormal(TopoDS::Face(f),center);continue;
-            }
-            if(surface.GetType()!=GeomAbs_Plane) continue;
-            gp_Vec n(surface.Plane().Axis().Direction());if(f.Orientation()==TopAbs_REVERSED) n.Reverse();sum+=n;
-        }
-        if(sum.Magnitude()>1.e-8) normal=sum;
-        if(session.kind==CommandSession::Kind::Fillet) {
-            if(sum.Magnitude()<=1.e-8)return false;
-            normal.Reverse();
-        }
-        session.direction=gp_Dir(normal.Transformed(part.orientation));
-        session.pivot=center.Transformed(part.orientation);
-        session.changes.push_back({i,part.min,part.max,part.min,part.max,part.orientation,part.orientation});
-        return updateCommandParameter(false);
+        return adoptEdgeBlend(i,TopoDS::Edge(owner->Shape()));
     }
     return false;
+}
+bool CadViewport::adoptEdgeBlend(size_t i,const TopoDS_Edge& edge) {
+    if(!commandSession_ || !isPartVisible(i))return false;
+    TopTools_IndexedDataMapOfShapeListOfShape adjacent;QString error;
+    if(!EdgeBlendValidation::input(boxes_[i].shape,edge,1.,adjacent,error)) {
+        emit statusMessage(error);return false;
+    }
+    auto& session=*commandSession_;const auto& part=boxes_[i];
+    BRepAdaptor_Curve curve(edge);
+    auto center=curve.Value((curve.FirstParameter()+curve.LastParameter())/2);
+    gp_Vec normal(1,1,1);gp_Vec sum;
+    for(const auto& f:adjacent.FindFromKey(edge)) {
+        BRepAdaptor_Surface surface(TopoDS::Face(f));
+        if(session.kind==CommandSession::Kind::Fillet) {
+            sum+=outwardNormal(TopoDS::Face(f),center);continue;
+        }
+        if(surface.GetType()!=GeomAbs_Plane) continue;
+        gp_Vec n(surface.Plane().Axis().Direction());if(f.Orientation()==TopAbs_REVERSED) n.Reverse();sum+=n;
+    }
+    if(sum.Magnitude()>1.e-8) normal=sum;
+    if(session.kind==CommandSession::Kind::Fillet) {
+        if(sum.Magnitude()<=1.e-8) {
+            emit statusMessage(tr("Cannot determine the Fillet direction. Select another Edge."));return false;
+        }
+        normal.Reverse();
+    }
+    session.edge=edge;
+    session.faceBefore=std::make_shared<CadPart>(part);
+    session.blendSource=part.blends;
+    QString recipeError;EdgeBlendFeatures::resolve(part.shape,session.blendSource,recipeError);
+    session.direction=gp_Dir(normal.Transformed(part.orientation));
+    session.pivot=center.Transformed(part.orientation);
+    session.changes.clear();
+    session.changes.push_back({i,part.min,part.max,part.min,part.max,part.orientation,part.orientation});
+    return updateCommandParameter(false);
 }
 bool CadViewport::previewEdgeBlend(double value) {
     auto& session=*commandSession_;

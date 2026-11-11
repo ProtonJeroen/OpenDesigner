@@ -547,6 +547,7 @@ private:
     void updateEdgeBlendArrow();
     void startEdgeBlend(bool chamfer);
     bool pickEdgeBlend(const QPoint& point);
+    bool adoptEdgeBlend(size_t index, const TopoDS_Edge& edge);
     bool previewEdgeBlend(double value);
     bool startMoveFace(size_t index, const TopoDS_Face& face);
     bool previewMoveFace(double value);

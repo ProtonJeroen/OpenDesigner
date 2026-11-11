@@ -370,3 +370,17 @@ Cancel, Undo/Redo, native Save/Open, duplication, Keep refusal and Delete Face.
 
 The full CTest suite, expensive cylindrical Move Face regressions and manual
 KDE/Wayland acceptance were deliberately not run for this milestone.
+
+### Selection-first command startup
+
+Fillet and Chamfer automatically reuse exactly one currently selected,
+membership-validated Edge from any shared command entry point. This initializes
+the existing numeric panel, orange manipulator and live preview; no second click
+is needed. Fillet accepts its supported straight and circular edges. Chamfer
+uses its existing geometry validation; an unsupported edge cannot produce a
+confirmable invalid preview.
+
+No selection, Face selection and Part selection retain Edge-picking mode.
+Multi-edge, mixed and stale sets report that the set is unsupported and allow
+an explicit single Edge pick. They never silently use the first member.
+Escape leaves geometry/history unchanged; confirmation uses one Undo/Redo step.

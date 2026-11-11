@@ -2999,7 +2999,7 @@ void CadViewport::refreshActivePart(bool redraw) {
                     for(const auto& face:feature.faces) {
                         if(std::none_of(fillets.begin(),fillets.end(),[&](const auto& f){return f.IsSame(face);}))fillets.push_back(face);
                     }
-            presentation->setFilletFaces(fillets,selected||hovered);
+            presentation->setFilletFaces(fillets,false);
 
         }
         const bool featuresChanged=presentation && presentation->setFeatureHighlight(outlined,color,outlineWidth);

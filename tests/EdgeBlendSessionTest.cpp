@@ -56,8 +56,14 @@ static void circular() {
     placement.SetTranslationPart(gp_Vec(12,23,34));
     v.applyPartState(0,v.boxes_[0].min,v.boxes_[0].max,placement);v.fitAll();QApplication::processEvents();
     const auto original=v.boxes_[0];
-    auto arm=[&] {
-        v.startEdgeBlend(false);bool picked=false;
+    TopoDS_Edge circularSelection;
+    auto arm=[&](bool preselected=false) {
+        if(preselected) {
+            v.selectParts({});
+            Handle(StdSelect_BRepOwner) owner=new StdSelect_BRepOwner(circularSelection,v.boxes_[0].presentation,5,Standard_True);
+            v.context_->AddOrRemoveSelected(owner,Standard_False);
+        }
+        v.fillet();bool picked=preselected && v.commandSession_->valid;
         for(TopExp_Explorer it(v.boxes_[0].shape,TopAbs_EDGE);it.More()&&!picked;it.Next()) {
             BRepAdaptor_Curve c(TopoDS::Edge(it.Current()));if(c.GetType()!=GeomAbs_Circle) continue;
             for(int sample=0;sample<12&&!picked;++sample) {
@@ -66,12 +72,20 @@ static void circular() {
                 picked=v.pickEdgeBlend(QPoint(x,y));
             }
         }
-        check(picked&&v.commandSession_->valid,"circular typed picking/preview failed");
+        check(picked&&v.commandSession_->valid,"circular typed picking/preselection preview failed");
+        circularSelection=v.commandSession_->edge;
         checkFilletDirection(v);
         check(!v.moveFaceArrow_.IsNull()&&!v.commandSession_->preview.IsNull(),"circular arrow/blue preview missing");
     };
     arm();v.cancelCommandSession();check(v.boxes_[0].shape.IsSame(original.shape)&&v.undoStack_.empty(),"circular Cancel changed document");
-    arm();v.dragDimension_->setText("2.345");check(v.updateCommandParameter(false),"circular numeric radius failed");
+    v.selectParts({});
+    Handle(StdSelect_BRepOwner) circularOwner=new StdSelect_BRepOwner(circularSelection,v.boxes_[0].presentation,5,Standard_True);
+    v.context_->AddOrRemoveSelected(circularOwner,Standard_False);v.chamfer();
+    check(v.boxes_[0].shape.IsSame(original.shape),"circular Chamfer adoption changed geometry");
+    check(!v.commandSession_->valid || BRepCheck_Analyzer(v.commandSession_->candidate).IsValid(),"circular Chamfer produced invalid preview");
+    check(v.commandSession_->valid || !v.commandButtons_->button(QDialogButtonBox::Ok)->isEnabled(),"unsupported circular Chamfer can be confirmed");
+    v.cancelCommandSession();
+    arm(true);v.dragDimension_->setText("2.345");check(v.updateCommandParameter(false),"circular numeric radius failed");
     const auto& session=*v.commandSession_;
     auto mid=session.pivot.Translated(gp_Vec(session.direction)*(session.value-15.5));
     Standard_Integer x,y;v.view_->Convert(mid.X(),mid.Y(),mid.Z(),x,y);QPoint start(x,y);
@@ -111,6 +125,42 @@ static void circular() {
     check(v.commandSession_&&v.commandSession_->valid,"circular Delete preview unavailable");v.confirmCommandSession();
     check(v.boxes_[0].blends.features.empty()&&std::abs(volume(v.boxes_[0].shape)-volume(original.shape))<1.e-6,"circular Delete did not restore sharp solid");
     v.undoPull();check(v.boxes_[0].blends.features.size()==1,"circular Delete Undo lost recipe");
+}
+static void preselection() {
+    for(bool chamfer:{false,true}) {
+        CadViewport v;v.resize(1000,800);v.show();QApplication::processEvents();v.addBox();
+        const auto original=v.boxes_[0].shape;
+        TopExp_Explorer it(original,TopAbs_EDGE);const auto first=TopoDS::Edge(it.Current());it.Next();const auto second=TopoDS::Edge(it.Current());
+        const auto select=[&](const TopoDS_Shape& shape) {
+            Handle(StdSelect_BRepOwner) owner=new StdSelect_BRepOwner(shape,v.boxes_[0].presentation,5,Standard_True);
+            v.context_->AddOrRemoveSelected(owner,Standard_False);
+        };
+        v.startEdgeBlend(chamfer);check(!v.commandSession_->faceBefore,"empty selection adopted topology");v.cancelCommandSession();
+        v.selectParts({0});v.startEdgeBlend(chamfer);check(!v.commandSession_->faceBefore,"Part expanded into edges");v.cancelCommandSession();v.selectParts({});
+        TopExp_Explorer face(original,TopAbs_FACE);select(face.Current());v.startEdgeBlend(chamfer);
+        check(!v.commandSession_->faceBefore,"Face reinterpreted as Edge");v.cancelCommandSession();v.selectParts({});
+        QString message;QObject::connect(&v,&CadViewport::statusMessage,[&](const QString& text){message=text;});
+        select(first);select(second);v.startEdgeBlend(chamfer);
+        check(!v.commandSession_->faceBefore && message.contains("unsupported"),"multi-edge set silently truncated");
+        check(v.adoptEdgeBlend(0,second) && v.commandSession_->changes.size()==1,"cannot correct unsupported selection");
+        check(v.adoptEdgeBlend(0,first) && v.commandSession_->changes.size()==1 && v.commandSession_->edge.IsSame(first),"replacement Edge duplicated command changes");
+        v.cancelCommandSession();v.selectParts({});
+        const auto foreign=BRepPrimAPI_MakeBox(1,2,3).Shape();TopExp_Explorer stale(foreign,TopAbs_EDGE);
+        select(stale.Current());v.startEdgeBlend(chamfer);
+        check(!v.commandSession_->faceBefore && message.contains("unsupported"),"stale Edge adopted");v.cancelCommandSession();v.selectParts({});
+        select(first);select(face.Current());v.startEdgeBlend(chamfer);
+        check(!v.commandSession_->faceBefore && message.contains("unsupported"),"mixed selection reinterpreted");v.cancelCommandSession();v.selectParts({});
+        select(first);v.startEdgeBlend(chamfer);
+        check(v.commandSession_->valid && v.commandSession_->edge.IsSame(first) && !v.moveFaceArrow_.IsNull(),"preselected straight Edge not adopted with preview/arrow");
+        checkFilletDirection(v);
+        v.dragDimension_->setText("0");check(!v.updateCommandParameter(false),"invalid preselection value accepted");
+        v.dragDimension_->setText("1.23456789");check(v.updateCommandParameter(false),"exact preselection input failed");
+        QKeyEvent escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier);QApplication::sendEvent(v.commandPanel_,&escape);
+        check(!v.commandSession_ && v.boxes_[0].shape.IsSame(original) && v.undoStack_.empty(),"preselection Escape changed geometry/history");
+        v.selectParts({});select(first);v.startEdgeBlend(chamfer);v.confirmCommandSession();
+        check(v.undoStack_.size()==1 && !v.commandSession_,"preselection confirmation not atomic");
+        v.undoPull();check(v.boxes_[0].shape.IsSame(original),"preselection Undo failed");v.redoPull();check(v.undoStack_.size()==1,"preselection Redo failed");
+    }
 }
 static void run() {
     CadViewport v;v.resize(1000,800);v.show();QApplication::processEvents();v.addBox();v.addCylinder();
@@ -305,6 +355,6 @@ static void features() {
 }
 
 };
-void runEdgeBlendSessions() {EdgeBlendSessionTest::run();EdgeBlendSessionTest::circular();}
+void runEdgeBlendSessions() {EdgeBlendSessionTest::preselection();EdgeBlendSessionTest::run();EdgeBlendSessionTest::circular();}
 
 void runEdgeBlendFeatureSessions() {EdgeBlendSessionTest::features();}

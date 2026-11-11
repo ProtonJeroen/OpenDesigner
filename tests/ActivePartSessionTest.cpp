@@ -4,6 +4,7 @@
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepTools.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
+#include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <sstream>
 #include <BRepPrimAPI_MakeCylinder.hxx>
@@ -97,7 +98,10 @@ static void run() {
         && std::abs(outlineWidth(*drawer->ShadingAspect()->Aspect(),drawer)-2*v.devicePixelRatioF())<0.001,"selected silhouette did not override Active Part in cyan");
     check(v.context_->IsSelected(v.boxes_[0].presentation->GlobalSelOwner())
         && !v.context_->MainPrsMgr()->IsHighlighted(v.boxes_[0].presentation,AIS_WireFrame),"whole Part still draws selection wireframe edges");
-    check(!featureLines(v.boxes_[0].presentation,selectionColor,2),"selected plain Part retained unrelated sharp edges");
+    check(featureLines(v.boxes_[0].presentation,selectionColor,2),"selected Part lost styled sharp edges");
+    TopTools_IndexedMapOfShape selectedEdges;
+    TopExp::MapShapes(dynamic_cast<PartPresentation*>(v.boxes_[0].presentation.get())->highlightedEdges(),TopAbs_EDGE,selectedEdges);
+    check(selectedEdges.Extent()==12,"selected box lost physical sharp edges");
     check(v.boxes_[0].shape.IsSame(shape) && v.partColor(0)==color,"selected contour changed geometry/material");
     v.selectParts({1});
     check(outlineColor(*drawer->ShadingAspect()->Aspect(),drawer).IsEqual(expectedGreen)
@@ -193,6 +197,8 @@ static void run() {
     check(edgeCount(sewing.SewedShape())==7 && edgeCount(PartPresentation::featureEdges(sewing.SewedShape()))==6,
         "geometrically tangent join was highlighted");
     v.setActivePart(v.partId(0));v.selectParts({0});
+    check(edgeCount(dynamic_cast<PartPresentation*>(cylinder.get())->highlightedEdges())==2,
+        "selected cylinder lost physical cap boundaries");
     auto cylinderDrawer=cylinder->Attributes();
     check(outlined(cylinder) && !cylinderDrawer->FaceBoundaryDraw()
         && !cylinderDrawer->ShadingAspect()->Aspect()->ToDrawEdges()
@@ -230,7 +236,10 @@ void runSelectionContours() {
     const auto count=[](const TopoDS_Shape& shape) {
         TopTools_IndexedMapOfShape edges;TopExp::MapShapes(shape,TopAbs_EDGE,edges);return edges.Extent();
     };
+    const auto box=BRepPrimAPI_MakeBox(20,30,40).Shape();
+    check(count(PartPresentation::featureEdges(box))==12,"box lost sharp planar intersections");
     const auto cylinder=BRepPrimAPI_MakeCylinder(10,30).Shape();
+    check(count(PartPresentation::featureEdges(cylinder))==2,"Part lost circular cap boundaries");
     std::ostringstream beforeContour;BRepTools::Write(cylinder,beforeContour);
     TopoDS_Face side,cap;
     for(TopExp_Explorer it(cylinder,TopAbs_FACE);it.More();it.Next()) {
@@ -277,7 +286,18 @@ void runSelectionContours() {
               "toroidal Face lost visible contour under camera rotation");
     check(count(PartPresentation::featureEdges(fillet.Shape(),blends,true))==2,
           "Part contour lost tangent Fillet transitions or kept unrelated edges");
-    check(count(PartPresentation::featureEdges(cylinder,{},true))==0,"plain Part retained unrelated rims/seams");
+    check(count(PartPresentation::featureEdges(fillet.Shape()))==count(PartPresentation::featureEdges(fillet.Shape(),blends)),
+          "analytic boundaries depend on Fillet-specific classification");
+    check(count(PartPresentation::featureEdges(fillet.Shape(),blends))>=3,
+          "Part lost sharp circular boundaries alongside tangent transitions");
+    BRepFilletAPI_MakeFillet roundedBox(box);TopExp_Explorer boxEdge(box,TopAbs_EDGE);
+    roundedBox.Add(2,TopoDS::Edge(boxEdge.Current()));roundedBox.Build();
+    check(roundedBox.IsDone() && count(PartPresentation::featureEdges(roundedBox.Shape()))>12,
+          "filleted box lost sharp or tangent design edges");
+    BRepFilletAPI_MakeChamfer chamfer(box);TopExp_Explorer sharp(box,TopAbs_EDGE);
+    chamfer.Add(2,TopoDS::Edge(sharp.Current()));chamfer.Build();
+    check(chamfer.IsDone() && count(PartPresentation::featureEdges(chamfer.Shape()))>12,
+          "Chamfer boundaries missing from Part features");
     gp_Trsf transform;transform.SetTranslation(gp_Vec(100,20,40));
     const auto shifted=TopoDS::Face(side.Moved(TopLoc_Location(transform)));
     check(count(PartPresentation::faceContour(shifted,HLRAlgo_Projector(gp_Ax2(gp_Pnt(100,20,40),gp_Dir(1,0,0)))))==

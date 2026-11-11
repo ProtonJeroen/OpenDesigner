@@ -228,7 +228,18 @@ Tool-specific picking takes precedence: Fillet/Chamfer pick Edges, Move Face
 picks Faces, rotation/reference pickers keep their requested types, and Part
 transform manipulators receive mouse presses before ordinary selection.
 Subelement selection is passive. A selected Edge's context menu offers the
-existing Fillet/Chamfer commands, which then request their command-specific edge.
+existing Fillet/Chamfer commands. Both commands automatically adopt exactly one
+validated preselected Edge through the same initialization path as an Edge pick.
+Straight and supported circular Fillet edges receive the normal parameter panel,
+orange manipulator and live preview. Chamfer retains its existing kernel validation
+and geometry capabilities. Invalid values remain editable; Escape cancels without
+changing geometry and confirmation creates one Undo/Redo transaction.
+
+With no selection, a Face or a Part selected, commands wait for an Edge pick.
+Multi-edge sets are not supported atomically: the command reports the unsupported
+set and waits for one explicit Edge pick, without adopting its first member. Mixed
+or stale selections also report an unsupported set and wait safely; typed selection
+and command adoption both check membership in the current visible Part topology.
 Structure Browser selection remains whole-Part selection.
 
 Selected contours are light blue `#87CEFA`, approximately 2 logical pixels;
@@ -241,14 +252,21 @@ excluding seams, isoparameters and overlapping silhouette segments. The contours
 are drawn in the owning shaded Part presentation, preserving its material and
 scene occlusion. Camera projection and Part placement enter the HLR projector;
 contours are cached until the Face, camera, placement or appearance changes.
-The complete Part retains its native silhouette renderer and adds only geometric
-Fillet transition edges for selection/hover. Certified feature face membership
-and analytic tangent-support classification retain cylindrical/toroidal Fillet
-boundaries even at smooth joins; seams and unrelated sharp edges are excluded.
+The complete Part retains its native silhouette renderer and adds all classified
+B-Rep design edges for selection/hover: sharp planar intersections, circular cap
+and analytic-surface boundaries, and Chamfer boundaries. Certified feature face
+membership and analytic tangent-support classification also retain cylindrical/
+toroidal Fillet boundaries even at smooth joins. Degenerate edges, artificial
+seams and smooth joins within the same surface type are excluded unless
+identified as Fillet transitions. Tangent boundaries between different analytic
+surface types are retained independently of Fillet recognition. Unique B-Rep edges
+are drawn once in the shaded presentation; scene depth testing removes hidden
+segments and occlusion by other Parts. No triangulation edges or per-hover HLR
+pass is introduced. Face contour generation is unchanged.
 The independent Active Part presentation retains its existing green features.
 Face/Part owners suppress OCCT's stock full wireframe while retaining their
 sensitive geometry and selection semantics. On OCCT builds without native Part
-silhouette support, only classified transition edges are available for selected
+silhouette support, only classified B-Rep design edges are available for selected
 Parts. Active Part green returns when whole-Part selection/hover ends.
 
 Promotion compares the current selected and detected AIS owners' actual topology
@@ -329,3 +347,32 @@ repeat click now intentionally promotes to Part).
 
 The full CTest suite and unrelated expensive OCCT geometry tests were not run.
 Manual KDE/Wayland visual acceptance remains pending.
+
+### Final v0.5.1 Part edges and blend preselection validation
+
+Incremental Ninja builds of OpenDesigner and OpenDesignerSelectionContextTests
+passed with at most four compilation jobs. Targeted CTest runs used `-j2`:
+
+| Test | Result | Seconds |
+| --- | --- | ---: |
+| selection-contours | PASS | 0.38 |
+| automatic-selection | PASS | 5.11 |
+| automatic-selection-hidpi | PASS | 5.19 |
+| selection-context | PASS | 31.68 |
+| edge-blend-sessions | PASS | 13.16 |
+| edge-blend-feature-sessions | PASS | 10.84 |
+| active-part-sessions | PASS | 2.40 |
+
+The initial active-Part test still required selected sharp edges to be absent.
+It was updated to require all twelve physical box edges and their selected style,
+then rerun alone. The other six passing cases were not repeated. Raster assertions
+sample a visible sharp crease inside the silhouette, its occluded counterpart
+from opposite cameras, Face-only highlighting, and occlusion by another solid,
+at normal and 2x DPI. Geometry assertions cover box/cylinder rims, Fillet/Chamfer
+boundaries and recipe-independent analytic transitions. Session assertions cover
+straight/circular preselection, transformed circular drag, exact input/recovery,
+unsupported multi-edge/mixed/stale selection, replacement picks, Escape and one
+Undo/Redo transaction.
+
+Not run: full CTest suite, unrelated cylindrical Move Face tests, clean rebuild,
+or manual Fedora KDE/Wayland driver acceptance.
