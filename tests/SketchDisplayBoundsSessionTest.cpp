@@ -122,7 +122,7 @@ struct SketchDisplayBoundsSessionTest {
         v.undoPull();frame(v,wp,expanded);check(v.sketchSelection().empty(),"Undo kept selection");
         v.redoPull();frame(v,wp,Sketch::displayOuterRectangle(wp,{axis}));v.undoPull();
         // Unconfirmed drawing must resize too, not only complete transactions.
-        v.activateSketchWorkplane(wp.id,false);v.startSketchDrawing(Sketch::DrawTool::Circle);
+        v.activateSketchWorkplane(wp.id);v.startSketchDrawing(Sketch::DrawTool::Circle);
         auto& d=*v.commandSession_->drawing;d.points={{-3000,-4000}};d.cursor=Sketch::Point{-2800,-4000};v.refreshSketchDrawing();
         auto shown=v.sketchEntities_;shown.push_back(d.candidate);frame(v,wp,Sketch::displayOuterRectangle(wp,shown));
         v.cancelCommandSession();frame(v,wp,expanded);

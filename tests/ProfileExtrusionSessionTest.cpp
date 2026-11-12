@@ -55,7 +55,7 @@ struct ProfileExtrusionSessionTest {
             entity.geometry=Sketch::Segment{corners[edge],corners[(edge+1)%4]};profiles.push_back(entity);
         }
     }
-    v.restoreSketchEntities(profiles);v.activateSketchWorkplane(wp.id,false);v.setActivePart(first.id);
+    v.restoreSketchEntities(profiles);(v.activateSketchWorkplane(wp.id)&&v.lookAtWorkplane(wp.id));v.setActivePart(first.id);
     // Retain a sketch source while seeding the ordinary OCCT whole-Part selection.
     // Going through the Part selection-mode action synchronizes its browser state.
     v.context_->ClearSelected(false);v.context_->AddOrRemoveSelected(v.boxes_[1].presentation,false);
@@ -98,7 +98,7 @@ struct ProfileExtrusionSessionTest {
         && std::abs(volume(v.boxes_[0].shape)-previewVolume)<1.e-6 && std::abs(previewVolume-198000)<1.e-6
         && v.boxes_[1].shape.IsSame(second.shape) && v.activePartId()==first.id,"commit did not cut only the previewed Active Part");
     // A hidden Active Part cannot be silently used by either material mode.
-    v.setPartVisible(0,false);v.activateSketchWorkplane(wp.id,false);
+    v.setPartVisible(0,false);(v.activateSketchWorkplane(wp.id)&&v.lookAtWorkplane(wp.id));
     cut->trigger();operation(v,ModelingOperation::AddMaterial);
     check(v.targetPicking() && !v.commandSession_->valid && !v.commandSession_->sweep->target
         && v.sweepControls_->findChild<QLabel*>("extrusionStatus")->text().contains("hidden"),"Add did not reject hidden Active Part and request picking");
@@ -117,7 +117,7 @@ struct ProfileExtrusionSessionTest {
     v.restoreConstructions({wp});
     const Sketch::Point p[]{{0,0},{100,0},{100,50},{0,50}};std::vector<Sketch::Entity> sketch;
     for(size_t i=0;i<4;++i){Sketch::Entity e;e.id="profile-"+QString::number(i);e.workplaneId=wp.id;e.geometry=Sketch::Segment{p[i],p[(i+1)%4]};sketch.push_back(e);}
-    v.restoreSketchEntities(sketch);v.activateSketchWorkplane(wp.id);v.selectSketchEntities({sketch.front().id});w.documentDirty_=false;
+    v.restoreSketchEntities(sketch);(v.activateSketchWorkplane(wp.id)&&v.lookAtWorkplane(wp.id));v.selectSketchEntities({sketch.front().id});w.documentDirty_=false;
     auto* action=w.findChild<QAction*>("sketch.extrude");check(action && action->isEnabled(),"Extrude menu/toolbar action unavailable");action->trigger();QApplication::processEvents();
     check(action->text()=="Extrude" && !w.findChild<QAction*>("sketch.cutExtrude"),"separate extrusion UI actions remain");
     check(w.findChild<QMenu*>("modeling3DMenu")->actions().count(action)==1
@@ -138,7 +138,7 @@ struct ProfileExtrusionSessionTest {
     check(v.sketchEntities_==sketch && v.constructions_.size()==1 && std::abs(volume(v.boxes_[0].shape)-100000)<1.e-6,"sources consumed/volume wrong");
     const auto id=v.boxes_[0].persistentId;check(!id.isEmpty() && w.root_->childCount()==1,"Part identity/browser missing");
     v.setActivePart(id);v.undoPull();check(!v.isPartActive(0) && v.activePartId().isEmpty(),"Undo did not remove new Part/active reference");const auto redo=v.redoStack_.size();
-    v.activateSketchWorkplane(wp.id);v.startProfileExtrusion();v.cancelCommandSession();check(v.redoStack_.size()==redo,"Cancel cleared Redo");
+    (v.activateSketchWorkplane(wp.id)&&v.lookAtWorkplane(wp.id));v.startProfileExtrusion();v.cancelCommandSession();check(v.redoStack_.size()==redo,"Cancel cleared Redo");
     v.redoPull();check(v.isPartActive(0) && v.boxes_[0].persistentId==id && v.selectedPartIndices_.empty() && v.activePartId().isEmpty(),"Redo changed identity/selection");
     // Add to a transformed existing Part; source sketch sits at its world top.
     v.boxes_[0].shape=BRepPrimAPI_MakeBox(100,50,10).Shape();v.boxes_[0].orientation.SetTranslation(gp_Vec(30,40,0));
@@ -146,7 +146,7 @@ struct ProfileExtrusionSessionTest {
     wp.frame=gp_Ax3(gp_Pnt(30,40,10),gp_Dir(0,0,1));v.restoreConstructions({wp});
     std::vector<Sketch::Entity> boss=sketch;const Sketch::Point q[]{{10,10},{30,10},{30,30},{10,30}};
     for(size_t i=0;i<4;++i)boss[i].geometry=Sketch::Segment{q[i],q[(i+1)%4]};v.restoreSketchEntities(boss);
-    v.activateSketchWorkplane(wp.id);const auto before=v.boxes_[0];const auto history=v.undoStack_.size();w.documentDirty_=false;
+    (v.activateSketchWorkplane(wp.id)&&v.lookAtWorkplane(wp.id));const auto before=v.boxes_[0];const auto history=v.undoStack_.size();w.documentDirty_=false;
     v.startProfileExtrusion();auto* mode=v.sweepControls_->findChild<QComboBox*>("extrusionOperation");mode->setCurrentIndex(1);
     check(!v.commandSession_->valid && v.targetPicking(),"Add without Active Part did not request a target");v.selectParts({0});check(v.commandSession_->valid,"Browser target selection failed");
     check(std::abs(volume(v.commandSession_->candidate)-58000)<1.e-6 && std::abs(volume(v.boxes_[0].shape)-50000)<1.e-6,"preview is tool/modified original");
@@ -200,7 +200,7 @@ struct ProfileExtrusionSessionTest {
     v.undoPull();check(v.boxes_[0].shape.IsSame(before.shape) && v.selectedPartIndices_.empty(),"Add Undo did not restore exact target");v.redoPull();check(std::abs(volume(v.boxes_[0].shape)-58000)<1.e-6,"Add Redo wrong");
     // In-place Cut lifecycle, preview cancellation, history and persistence.
     v.setActivePart({});
-    v.activateSketchWorkplane(wp.id);w.documentDirty_=false;const auto cutBefore=v.boxes_[0];const auto cutHistory=v.undoStack_.size();
+    (v.activateSketchWorkplane(wp.id)&&v.lookAtWorkplane(wp.id));w.documentDirty_=false;const auto cutBefore=v.boxes_[0];const auto cutHistory=v.undoStack_.size();
     action->trigger();operation(v,ModelingOperation::RemoveMaterial);
     CommandPanelTest::waitForInitialAnchor(*v.commandPanel_,v,"Cut panel anchor changed");
     check(v.targetPicking(),"Cut without Active Part did not request viewport target");
@@ -238,8 +238,8 @@ struct ProfileExtrusionSessionTest {
     check(loaded.activePartId==id,"Cut roundtrip lost active reference");
     check(loaded.parts.size()==1 && loaded.parts[0].color==cutBefore.color && loaded.parts[0].name==cutBefore.name && std::abs(volume(loaded.parts[0].shape)-54000)<1.e-6,"Cut save lost geometry");
     check(loaded.parts.size()==1 && loaded.parts[0].id==id && loaded.sketchEntities==boss && loaded.constructions.size()==1,"native storage lost source/Part");
-    v.activateSketchWorkplane(wp.id);v.startProfileExtrusion();check(v.importDocumentSnapshot(loaded,error) && !v.commandSession_ && v.undoStack_.empty(),"Open did not reset extrusion/history");
-    v.activateSketchWorkplane(wp.id);v.startProfileExtrusion();v.startSketchDrawing(Sketch::DrawTool::Segment,Sketch::Role::Construction);
+    (v.activateSketchWorkplane(wp.id)&&v.lookAtWorkplane(wp.id));v.startProfileExtrusion();check(v.importDocumentSnapshot(loaded,error) && !v.commandSession_ && v.undoStack_.empty(),"Open did not reset extrusion/history");
+    (v.activateSketchWorkplane(wp.id)&&v.lookAtWorkplane(wp.id));v.startProfileExtrusion();v.startSketchDrawing(Sketch::DrawTool::Segment,Sketch::Role::Construction);
     check(v.commandSession_ && !v.commandSession_->sweep,"command switch did not cancel extrusion");v.cancelCommandSession();
     w.documentDirty_=false;w.close();
     activeTargetPrecedence();

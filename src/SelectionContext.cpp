@@ -239,7 +239,7 @@ QMenu* CadViewport::createSelectionMenu(const QPoint& anchor) {
         add(tr("Construction Arc"),Sketch::DrawTool::Arc,Sketch::Role::Construction);
         add(tr("Construction Ellipse"),Sketch::DrawTool::Ellipse,Sketch::Role::Construction);
         add(tr("Construction Elliptical Arc"),Sketch::DrawTool::EllipticalArc,Sketch::Role::Construction);
-        connect(menu->addAction(tr("Look Normal")),&QAction::triggered,this,&CadViewport::lookNormalToSketch);
+        connect(menu->addAction(tr("Look at Workplane")),&QAction::triggered,this,&CadViewport::lookNormalToSketch);
         connect(menu->addAction(tr("Finish 2D")),&QAction::triggered,this,&CadViewport::endSketchEditing);
     }
     if(menu->isEmpty()) { delete menu; return nullptr; }

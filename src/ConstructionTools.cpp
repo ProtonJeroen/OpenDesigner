@@ -210,8 +210,8 @@ void CadViewport::populateConstructionMenu(QMenu& menu) {
         if(object->kind==Kind::Workplane) {
             auto* edit=menu.addAction(tr("Edit Sketch"));edit->setObjectName("context.edit_sketch");
             connect(edit,&QAction::triggered,this,[this,id=object->id]{activateSketchWorkplane(id);});
-            auto* normal=menu.addAction(tr("Look Normal to Workplane"));
-            connect(normal,&QAction::triggered,this,[this,id=object->id]{activateSketchWorkplane(id);});
+            auto* normal=menu.addAction(tr("Look at Workplane"));normal->setObjectName("context.look_at_workplane");
+            connect(normal,&QAction::triggered,this,[this,id=object->id]{lookAtWorkplane(id);});
             add(tr("Move Workplane"),Method::PlaneMove);add(tr("Rotate Workplane"),Method::PlaneRotate);add(tr("Offset Workplane"),Method::PlaneOffset);add(tr("Normal Axis"),Method::AxisNormalPlane);}
         else if(object->kind==Kind::Axis) {add(tr("Move Axis"),Method::AxisMove);add(tr("Rotate Axis"),Method::AxisRotate);add(tr("Point on Axis"),Method::PointOnAxis);add(tr("Workplane Normal through Point"),Method::PlaneNormalAxisPoint);add(tr("Workplane through Axis and Point"),Method::PlaneThroughAxisPoint);add(tr("Workplane at Angle"),Method::PlaneAxisAngle);}
         else {add(tr("Offset Point"),Method::PointOffset);add(tr("Edit Coordinates"),Method::PointXYZ);add(tr("Axis and Direction"),Method::AxisPointDirection);add(tr("Project Point"),Method::PointProject);}

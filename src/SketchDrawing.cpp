@@ -20,7 +20,7 @@ constexpr double pi=3.14159265358979323846,turn=2*pi;
 double distance(Sketch::Point a,Sketch::Point b) {return std::hypot(a.x-b.x,a.y-b.y);}
 Sketch::Point polar(Sketch::Point center,double radius,double angle) {return {center.x+radius*std::cos(angle),center.y+radius*std::sin(angle)};}
 }
-bool CadViewport::activateSketchWorkplane(const QString& requested,bool alignView) {
+bool CadViewport::activateSketchWorkplane(const QString& requested) {
     QString id=requested;
     if(id.isEmpty()) {
         for(const auto& selected:selectedConstructionIds_) if(const auto* o=constructionObject(selected);o && o->kind==Construction::Kind::Workplane && o->visible && o->selectable) {
@@ -36,7 +36,7 @@ bool CadViewport::activateSketchWorkplane(const QString& requested,bool alignVie
     }
     cancelCommandSession();initializeViewer();clearHistorySelection();
     activeSketchWorkplaneId_=id;refreshSketchPicking();updateConstructionLabels();
-    emit activeSketchWorkplaneChanged(id);if(alignView) lookNormalToSketch();
+    emit activeSketchWorkplaneChanged(id);
     emit statusMessage(tr("2D editing: %1. Choose Line, Circle, Arc, Ellipse, Elliptical Arc or Infinite Line. Finish 2D returns to 3D picking.").arg(owner->name));return true;
 }
 void CadViewport::endSketchEditing() {
@@ -75,13 +75,28 @@ void CadViewport::refreshSketchPicking(bool restore3D) {
         if(sketchPickable(e)) context_->Activate(p,0,Standard_False);
     }
 }
-void CadViewport::lookNormalToSketch() {
-    const auto* owner=constructionObject(activeSketchWorkplaneId_);if(!owner || view_.IsNull()) return;
+void CadViewport::lookNormalToSketch() {lookAtWorkplane(activeSketchWorkplaneId_);}
+QString CadViewport::lookAtWorkplaneCandidate() const {
+    if(!activeSketchWorkplaneId_.isEmpty()) return activeSketchWorkplaneId_;
+    QString id;
+    for(const auto& selected:selectedConstructionIds_) if(const auto* o=constructionObject(selected);o && o->kind==Construction::Kind::Workplane) {
+        if(!id.isEmpty()) return {};
+        id=selected;
+    }
+    return id;
+}
+bool CadViewport::lookAtWorkplane(const QString& requested) {
+    const auto id=requested.isEmpty()?lookAtWorkplaneCandidate():requested;
+    const auto* owner=constructionObject(id);
+    if(!owner || owner->kind!=Construction::Kind::Workplane || !owner->visible) {
+        emit statusMessage(tr("Look at Workplane: activate or select one visible Workplane."));return false;
+    }
+    initializeViewer();if(view_.IsNull()) return false;
     const auto r=workplaneDisplayRectangle(*owner);
     const auto center=Sketch::worldPoint({std::midpoint(r.minX,r.maxX),std::midpoint(r.minY,r.maxY)},owner->frame);const auto camera=view_->Camera();
     const double distance=std::max(1.0,camera->Distance());
     camera->SetEyeAndCenter(center.Translated(gp_Vec(owner->frame.Direction())*distance),center);
-    camera->SetUp(owner->frame.YDirection());fitConstructions({owner->id});clearSketchFeedback();
+    camera->SetUp(owner->frame.YDirection());fitConstructions({owner->id});clearSketchFeedback();return true;
 }
 void CadViewport::setSketchSnapPixels(int pixels) {sketchSnapPixels_=std::clamp(pixels,1,100);clearSketchFeedback();}
 void CadViewport::setSketchSnapping(bool enabled) {sketchSnapping_=enabled;clearSketchFeedback();}
@@ -135,7 +150,7 @@ bool CadViewport::sketchDrawingMove(const QPoint& pixel,Qt::KeyboardModifiers mo
     if(!commandSession_ || !commandSession_->drawing) return false;
     auto& d=*commandSession_->drawing;if(d.complete) return true;
     d.snap.reset();d.cursor=sketchPlanePoint(pixel);
-    if(!d.cursor) {clearSketchFeedback();sketchDrawingPanel_->setStep(int(d.points.size()),false,false,tr("Workplane is edge-on; use Look Normal."));return true;}
+    if(!d.cursor) {clearSketchFeedback();sketchDrawingPanel_->setStep(int(d.points.size()),false,false,tr("Workplane is edge-on; use Look at Workplane."));return true;}
     const auto* owner=constructionObject(activeSketchWorkplaneId_);
     if(sketchSnapping_ && !(modifiers&Qt::ShiftModifier)) {
         std::optional<Sketch::Point> anchor;

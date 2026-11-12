@@ -60,7 +60,7 @@ struct SketchEllipseDrawingTest {
     static void begin(CadViewport& v,Sketch::DrawTool tool) {v.startSketchDrawing(tool);check(v.commandSession_.has_value(),"ellipse tool did not start");}
     static void run() {
         MainWindow w;w.show();QApplication::processEvents();auto& v=*w.viewport_;QString error;
-        const auto base=fixture();check(v.importDocumentSnapshot(base,error) && v.activateSketchWorkplane("wp"),qPrintable(error));
+        const auto base=fixture();check(v.importDocumentSnapshot(base,error) && (v.activateSketchWorkplane("wp")&&v.lookAtWorkplane("wp")),qPrintable(error));
         auto* action=w.findChild<QAction*>("sketch.ellipse");auto* arcAction=w.findChild<QAction*>("sketch.elliptical_arc");
         check(action && arcAction,"ellipse menu/toolbar actions missing");
         std::unique_ptr<QMenu> menu(v.createSelectionMenu({0,0}));int commands=0;
@@ -149,13 +149,13 @@ struct SketchEllipseDrawingTest {
         begin(v,Sketch::DrawTool::Ellipse);center(v);major(v);minor(v);check(w.saveDocument() && v.commandSession_ && v.undoStack_.size()==undo,"Save lost drawing session/history");
         NativeDocumentSnapshot loaded;check(NativeDocumentStorage::load(w.documentPath_,loaded,error) && loaded.schemaVersion==5 && loaded.sketchEntities==values,"schema-v5 save lost exact values or included preview");
         check(v.importDocumentSnapshot(loaded,error) && !v.commandSession_ && v.undoStack_.empty() && v.sketchEntities_==values,"Open retained temporary drawing/history");
-        check(v.activateSketchWorkplane("wp"),"cannot reactivate sketch");begin(v,Sketch::DrawTool::Ellipse);center(v);check(v.activateSketchWorkplane("wp2") && !v.commandSession_,"Workplane switch retained drawing");
+        check((v.activateSketchWorkplane("wp")&&v.lookAtWorkplane("wp")),"cannot reactivate sketch");begin(v,Sketch::DrawTool::Ellipse);center(v);check((v.activateSketchWorkplane("wp2")&&v.lookAtWorkplane("wp2")) && !v.commandSession_,"Workplane switch retained drawing");
         begin(v,Sketch::DrawTool::Ellipse);center(v);v.startSketchDrawing(Sketch::DrawTool::Circle);check(v.commandSession_->drawing->tool==Sketch::DrawTool::Circle && v.commandSession_->drawing->points.empty(),"tool switch retained ellipse points");v.cancelCommandSession();
         snapAndPanel(w);w.documentDirty_=false;
     }
     static void snapAndPanel(MainWindow& w) {
         auto& v=*w.viewport_;auto data=fixture();Sketch::Entity e;e.workplaneId="wp";e.geometry=Sketch::EllipticalArc{{{10,20},30,10,0.3},5.8,-2.0};data.sketchEntities={e};QString error;
-        check(v.importDocumentSnapshot(data,error) && v.activateSketchWorkplane("wp"),qPrintable(error));v.setSketchSnapping(true);v.setSketchSnapPixels(10);
+        check(v.importDocumentSnapshot(data,error) && (v.activateSketchWorkplane("wp")&&v.lookAtWorkplane("wp")),qPrintable(error));v.setSketchSnapping(true);v.setSketchSnapPixels(10);
         const auto arc=std::get<Sketch::EllipticalArc>(e.geometry),mid=arc;const auto ends=Sketch::ellipticalArcEndpoints(arc);
         const std::vector<std::pair<Sketch::Point,Sketch::SnapKind>> targets{{arc.ellipse.center,Sketch::SnapKind::Center},{ends[0],Sketch::SnapKind::Endpoint},{ends[1],Sketch::SnapKind::Endpoint},{Sketch::ellipsePoint(mid.ellipse,mid.startParameter+mid.sweepParameter/2),Sketch::SnapKind::Midpoint}};
         for(double zoom:{100.0,300.0}) for(const auto& [target,kind]:targets) {

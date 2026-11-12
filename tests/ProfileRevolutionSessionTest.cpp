@@ -89,7 +89,7 @@ struct ProfileRevolutionSessionTest {
     const Sketch::Point points[]{{20,0},{40,0},{40,30},{20,30}};
     for(int i=0;i<4;++i)sketch.push_back(entity(QString("material-profile-%1").arg(i),Sketch::Segment{points[i],points[(i+1)%4]},Sketch::Role::Profile));
     sketch.push_back(entity("material-axis",Sketch::InfiniteLine{{0,0},{0,1}}));v.restoreSketchEntities(sketch);
-    v.activateSketchWorkplane(wp.id,false);v.setActivePart(first.id);v.selectSketchEntities({sketch.front().id});
+    (v.activateSketchWorkplane(wp.id)&&v.lookAtWorkplane(wp.id));v.setActivePart(first.id);v.selectSketchEntities({sketch.front().id});
     const auto original=v.boxes_[0],other=v.boxes_[1];const auto history=v.undoStack_.size();window.documentDirty_=false;
     const auto start=[&] {
         v.startProfileRevolution();auto* combo=v.sweepControls_->findChild<QComboBox*>("revolutionAxis");combo->setCurrentIndex(combo->findData("material-axis"));
@@ -133,9 +133,9 @@ struct ProfileRevolutionSessionTest {
     check(std::abs(volume(v.boxes_[0].shape)-40000*pi)<1.e-5 && v.context_->IsSelected(v.sketchPresentations_.at(sketch.front().id)),"Add committed a tool or lost source selection");
     check(!v.context_->IsSelected(oldTargetFace) && v.context_->IsSelected(otherFace),"confirmation reused stale target topology or lost other Part selection");
     const auto added=v.boxes_[0];v.undoPull();check(v.boxes_[0].shape.IsSame(original.shape) && v.activePartId()==first.id,"Add Undo failed");
-    v.activateSketchWorkplane(wp.id,false);v.startProfileRevolution();v.cancelCommandSession();check(v.redoStack_.size()==1,"material Cancel cleared Redo");v.redoPull();
+    (v.activateSketchWorkplane(wp.id)&&v.lookAtWorkplane(wp.id));v.startProfileRevolution();v.cancelCommandSession();check(v.redoStack_.size()==1,"material Cancel cleared Redo");v.redoPull();
     check(v.boxes_[0].shape.IsSame(added.shape) && v.boxes_[0].persistentId==first.id,"Add Redo lost target state");
-    v.activateSketchWorkplane(wp.id,false);start();operation(v,ModelingOperation::AddMaterial);
+    (v.activateSketchWorkplane(wp.id)&&v.lookAtWorkplane(wp.id));start();operation(v,ModelingOperation::AddMaterial);
     check(!v.commandSession_->valid && v.commandSession_->preview.IsNull(),"unchanged Add accepted");
     operation(v,ModelingOperation::RemoveMaterial);v.chooseExtrusionTarget({1});preview(v,2000*pi);v.confirmCommandSession();
     check(v.boxes_.size()==2 && v.undoStack_.size()==history+2 && v.boxes_[1].persistentId==second.id && v.boxes_[1].name==second.name
@@ -149,7 +149,7 @@ struct ProfileRevolutionSessionTest {
         && std::abs(volume(loaded.parts[0].shape)-40000*pi)<1.e-5 && std::abs(volume(loaded.parts[1].shape)-2000*pi)<1.e-5,"native Boolean result/properties not restored");
     for(int row=1;row<=3;++row)for(int col=1;col<=4;++col)check(std::abs(loaded.parts[1].transform.Value(row,col)-other.orientation.Value(row,col))<1.e-12,"Remove/native roundtrip changed placement");
     // Absent or hidden Active Part requests viewport picking, never ordinary selection.
-    v.setActivePart({});v.activateSketchWorkplane(wp.id,false);window.documentDirty_=false;v.startProfileRevolution();operation(v,ModelingOperation::RemoveMaterial);
+    v.setActivePart({});(v.activateSketchWorkplane(wp.id)&&v.lookAtWorkplane(wp.id));window.documentDirty_=false;v.startProfileRevolution();operation(v,ModelingOperation::RemoveMaterial);
     check(v.targetPicking() && !v.commandSession_->sweep->axisPicking && !v.commandSession_->valid,"missing Active Part did not request target picking");
     key(v.sweepControls_->findChild<QLineEdit*>("revolutionAngle"),Qt::Key_Escape);
     check(v.commandSession_ && !v.targetPicking() && v.boxes_[0].shape.IsSame(added.shape),"Escape during target picking modified/cancelled the operation");
@@ -157,7 +157,7 @@ struct ProfileRevolutionSessionTest {
     check(v.commandSession_->sweep->axisPicking && !v.targetPicking(),"target-first workflow did not resume axis picking");
     v.selectSketchEntities({"material-axis"});preview(v,4000*pi);
     key(v.sweepControls_->findChild<QLineEdit*>("revolutionAngle"),Qt::Key_Escape);check(!v.commandSession_ && v.boxes_[0].shape.IsSame(added.shape) && !window.documentDirty_,"Escape changed material geometry");
-    v.setActivePart(first.id);v.setPartVisible(0,false);v.activateSketchWorkplane(wp.id,false);start();operation(v,ModelingOperation::AddMaterial);
+    v.setActivePart(first.id);v.setPartVisible(0,false);(v.activateSketchWorkplane(wp.id)&&v.lookAtWorkplane(wp.id));start();operation(v,ModelingOperation::AddMaterial);
     check(v.targetPicking() && !v.commandSession_->valid && v.sweepControls_->findChild<QLabel*>("extrusionStatus")->text().contains("hidden"),"hidden Active Part was accepted");
     operation(v,ModelingOperation::NewSolid);preview(v,36000*pi);check(!v.targetPicking() && !v.isPartVisible(0),"mode switch redisplayed hidden target");v.cancelCommandSession();
     window.documentDirty_=false;window.close();
@@ -182,7 +182,7 @@ struct ProfileRevolutionSessionTest {
     sketch.push_back(entity("curved-axis",Sketch::Circle{{-40,40},5}));
     auto hidden=entity("hidden-axis",Sketch::Segment{{-10,0},{-10,50}});hidden.visible=false;sketch.push_back(hidden);
     auto locked=entity("locked-axis",Sketch::Segment{{-20,0},{-20,50}});locked.selectable=false;sketch.push_back(locked);
-    v.restoreSketchEntities(sketch);v.activateSketchWorkplane(wp.id,false);v.setActivePart(part.id);v.selectSketchEntities({sketch.front().id});
+    v.restoreSketchEntities(sketch);(v.activateSketchWorkplane(wp.id)&&v.lookAtWorkplane(wp.id));v.setActivePart(part.id);v.selectSketchEntities({sketch.front().id});
     const auto original=v.boxes_[0];const auto history=v.undoStack_.size();window.documentDirty_=false;
     check(action->isEnabled() && window.findChild<QMenu*>("modeling3DMenu")->actions().count(action)==1
         && window.findChild<QToolBar*>("modeling3DToolbar")->actions().count(action)==1,"Revolve action not shared by menu/toolbar");
@@ -234,16 +234,16 @@ struct ProfileRevolutionSessionTest {
         && v.context_->IsSelected(v.sketchPresentations_.at(sketch.front().id)) && v.activeSketchWorkplaneId_==wp.id
         && v.boxes_[0].shape.IsSame(original.shape) && v.boxes_[0].color==original.color,"Revolve confirmation changed sources/selection/activation/material");
     v.undoPull();check(!v.isPartActive(1) && v.activePartId()==part.id,"Revolve Undo removed wrong Part/activation");
-    v.activateSketchWorkplane(wp.id,false);action->trigger();v.cancelCommandSession();check(v.redoStack_.size()==1,"Revolve Cancel cleared Redo");
+    (v.activateSketchWorkplane(wp.id)&&v.lookAtWorkplane(wp.id));action->trigger();v.cancelCommandSession();check(v.redoStack_.size()==1,"Revolve Cancel cleared Redo");
     v.redoPull();check(v.isPartActive(1) && v.boxes_[1].persistentId==id && std::abs(volume(v.boxes_[1].shape)-36000*pi)<1.e-5,"Revolve Redo lost identity/geometry");
     QTemporaryDir directory;NativeDocumentSnapshot saved,loaded;check(v.exportDocumentSnapshot(saved),"Revolve snapshot failed");
     check(NativeDocumentStorage::save(directory.filePath("revolve.odc"),saved,error) && NativeDocumentStorage::load(directory.filePath("revolve.odc"),loaded,error),"Revolve Save/Open failed");
     check(loaded.parts.size()==2 && loaded.parts[1].id==id && loaded.activePartId==part.id && loaded.sketchEntities==sketch
         && std::abs(volume(loaded.parts[1].shape)-36000*pi)<1.e-5,"Revolve persistence lost source/solid/identity");
-    v.activateSketchWorkplane(wp.id,false);action->trigger();check(v.importDocumentSnapshot(loaded,error) && !v.commandSession_ && v.undoStack_.empty(),"Open did not discard Revolve session");
+    (v.activateSketchWorkplane(wp.id)&&v.lookAtWorkplane(wp.id));action->trigger();check(v.importDocumentSnapshot(loaded,error) && !v.commandSession_ && v.undoStack_.empty(),"Open did not discard Revolve session");
     const auto reopenedOriginal=v.boxes_[0];
     // Linear Part edge resolution must apply its instance transform exactly once.
-    v.activateSketchWorkplane(wp.id,false);
+    (v.activateSketchWorkplane(wp.id)&&v.lookAtWorkplane(wp.id));
     Handle(StdSelect_BRepOwner) selectedFaceOwner=new StdSelect_BRepOwner(TopExp_Explorer(v.boxes_[0].shape,TopAbs_FACE).Current(),v.boxes_[0].presentation,5,Standard_True);
     v.context_->AddOrRemoveSelected(selectedFaceOwner,Standard_False);action->trigger();
     TopoDS_Edge edge;

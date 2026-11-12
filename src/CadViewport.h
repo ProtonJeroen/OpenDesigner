@@ -70,9 +70,14 @@ public:
     std::optional<size_t> initialTargetPart(const TargetEligibility& eligible, QString& error) const;
 
     QString activeSketchWorkplane() const { return activeSketchWorkplaneId_; }
-    bool activateSketchWorkplane(const QString& id = {}, bool alignView = true);
+    // Activation never moves the camera (v0.5.3); use lookAtWorkplane explicitly.
+    bool activateSketchWorkplane(const QString& id = {});
     void endSketchEditing();
     void lookNormalToSketch();
+    // Eye on the +normal side, up = Workplane +Y, fitted to the frame. Uses the
+    // given Workplane, else the active one, else the single selected one.
+    bool lookAtWorkplane(const QString& id = {});
+    QString lookAtWorkplaneCandidate() const;
     void startSketchDrawing(Sketch::DrawTool tool, Sketch::Role role = Sketch::Role::Profile);
     void startSketchOverdraw();
     void startSketchConstruction(Sketch::ConstructionTool tool);
