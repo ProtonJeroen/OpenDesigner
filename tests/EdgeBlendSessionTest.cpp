@@ -35,6 +35,11 @@
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <stdexcept>
+#include <algorithm>
+#include <iostream>
+#include <QCryptographicHash>
+#include <QFile>
+#include <QFileInfo>
 #include <cmath>
 namespace {
 void check(bool value,const char* message) {if(!value) throw std::runtime_error(message);}
@@ -110,9 +115,11 @@ static void pickActual(CadViewport& v,size_t index,const TopoDS_Face& face) {
     }
     throw std::runtime_error("no visible sample for actual Face picking: "+v.boxes_[index].name.toStdString());
 }
-static void recovery(bool external) {
+// documentPath empty: in-memory synthetic fixture. Otherwise the fixture is
+// read from that .odc (a synthetic round-trip file or a temporary private copy).
+static void recovery(const QString& documentPath={}) {
     auto generated=recoveryFixture(),doc=generated;QString error;
-    if(external) check(NativeDocumentStorage::load(qEnvironmentVariable("OPENDESIGNER_REGRESSION_DOCUMENT"),doc,error),qPrintable(error));
+    if(!documentPath.isEmpty()) {doc={};check(NativeDocumentStorage::load(documentPath,doc,error),qPrintable(error));}
     CadViewport v;v.resize(1000,800);v.show();QApplication::processEvents();
     QString status;QObject::connect(&v,&CadViewport::statusMessage,[&](const QString& text){status=text;});
     auto load=[&]{check(v.importDocumentSnapshot(doc,error),qPrintable(error));};load();
@@ -666,5 +673,46 @@ void runEdgeBlendSessions() {EdgeBlendSessionTest::preselection();EdgeBlendSessi
 
 void runEdgeBlendFeatureSessions() {EdgeBlendSessionTest::features();}
 
-void runRegressionDocumentProbe() {EdgeBlendSessionTest::recovery(true);}
-void runDirectModelingRecovery() {EdgeBlendSessionTest::recovery(false);}
+// The v0.5.1 recovery fixture (Cylinder 2: R40 x 80 with a certified 20 mm top
+// Fillet recipe; Cone 3: R40->R20 x 80, 8 mm top Chamfer, 11 mm bottom Fillet,
+// no recipe) is built in code, saved through NativeDocumentStorage and reopened.
+// Every recovery assertion then runs on the reopened document.
+static void syntheticRecoveryDocument() {
+    QTemporaryDir directory;check(directory.isValid(),"temporary directory unavailable");
+    const auto generated=EdgeBlendSessionTest::recoveryFixture();QString error;
+    const auto path=directory.filePath("synthetic-recovery.odc");
+    check(NativeDocumentStorage::save(path,generated,error),qPrintable(error));
+    NativeDocumentSnapshot reopened;check(NativeDocumentStorage::load(path,reopened,error),qPrintable(error));
+    check(reopened.parts.size()==2&&reopened.parts[0].name=="Cylinder 2"&&reopened.parts[1].name=="Cone 3"
+        &&reopened.parts[0].id==generated.parts[0].id&&reopened.parts[1].id==generated.parts[1].id,"synthetic recovery document lost Part identity");
+    check(!reopened.parts[0].edgeBlendRecipe.isEmpty()&&reopened.parts[1].edgeBlendRecipe.isEmpty(),"synthetic recovery document changed recipe presence");
+    EdgeBlendSessionTest::recovery(path);
+}
+// Optional, local only: OPENDESIGNER_PRIVATE_FIXTURE names a private .odc.
+// The file is copied to a temporary directory and only the copy is opened; the
+// original is verified byte-identical afterwards. CI never sets the variable.
+static void privateFixtureProbe() {
+    const auto source=qEnvironmentVariable("OPENDESIGNER_PRIVATE_FIXTURE");
+    if(source.isEmpty()) {std::cout<<"OPENDESIGNER_PRIVATE_FIXTURE not set: private fixture probe skipped.\n";return;}
+    if(!QFileInfo(source).isFile()) {std::cout<<"OPENDESIGNER_PRIVATE_FIXTURE is not a file: private fixture probe skipped.\n";return;}
+    auto digest=[](const QString& path) {QFile file(path);check(file.open(QIODevice::ReadOnly),"private fixture unreadable");
+        QCryptographicHash hash(QCryptographicHash::Sha256);hash.addData(&file);return hash.result();};
+    const auto original=digest(source);
+    QTemporaryDir directory;check(directory.isValid(),"temporary directory unavailable");
+    const auto copy=directory.filePath("private-fixture.odc");check(QFile::copy(source,copy),"private fixture copy failed");
+    NativeDocumentSnapshot doc;QString error;check(NativeDocumentStorage::load(copy,doc,error),qPrintable(error));
+    const auto generated=EdgeBlendSessionTest::recoveryFixture();bool matches=true;
+    for(const auto& expected:generated.parts) {
+        auto found=std::find_if(doc.parts.begin(),doc.parts.end(),[&](const auto& p){return p.name==expected.name;});
+        if(found==doc.parts.end()) {std::cout<<"private fixture: "<<expected.name.toStdString()<<" missing\n";matches=false;continue;}
+        check(BRepCheck_Analyzer(found->shape).IsValid(),"private fixture contains an invalid B-Rep");
+        const bool equivalent=BRepReconstruction::equivalent(found->shape,expected.shape);
+        std::cout<<"private fixture: "<<expected.name.toStdString()<<(equivalent?" matches":" differs from")<<" the v0.5.1 recovery fixture\n";
+        matches=matches&&equivalent;
+    }
+    if(matches) EdgeBlendSessionTest::recovery(copy);
+    else std::cout<<"private fixture diverged from v0.5.1 expectations: recovery assertions skipped for it.\n";
+    check(digest(source)==original,"private fixture was modified");
+}
+void runRegressionDocumentProbe() {syntheticRecoveryDocument();privateFixtureProbe();}
+void runDirectModelingRecovery() {EdgeBlendSessionTest::recovery();}

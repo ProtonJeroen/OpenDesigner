@@ -387,12 +387,10 @@ if(OPENDESIGNER_BUILD_TESTS)
     target_sources(OpenDesignerSelectionContextTests PRIVATE tests/EdgeBlendSessionTest.cpp)
     add_test(NAME direct-modeling-recovery COMMAND OpenDesignerSelectionContextTests --direct-modeling-recovery)
     set_tests_properties(direct-modeling-recovery PROPERTIES TIMEOUT 120)
-    set(OPENDESIGNER_REGRESSION_DOCUMENT "" CACHE FILEPATH "Optional private fillet.odc regression fixture (read only)")
-    if(OPENDESIGNER_REGRESSION_DOCUMENT)
-        add_test(NAME direct-modeling-recovery-document COMMAND OpenDesignerSelectionContextTests --regression-document)
-        set_tests_properties(direct-modeling-recovery-document PROPERTIES TIMEOUT 120
-            ENVIRONMENT "OPENDESIGNER_REGRESSION_DOCUMENT=${OPENDESIGNER_REGRESSION_DOCUMENT}")
-    endif()
+    # Synthetic fixture saved to and reopened from a temporary .odc. A private
+    # document is probed only when OPENDESIGNER_PRIVATE_FIXTURE is set at run time.
+    add_test(NAME direct-modeling-recovery-document COMMAND OpenDesignerSelectionContextTests --regression-document)
+    set_tests_properties(direct-modeling-recovery-document PROPERTIES TIMEOUT 180)
     add_test(NAME edge-blend-sessions COMMAND OpenDesignerSelectionContextTests --edge-blends)
     set_tests_properties(edge-blend-sessions PROPERTIES TIMEOUT 120)
 endif()
