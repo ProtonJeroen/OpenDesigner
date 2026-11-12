@@ -202,12 +202,17 @@ private:
     friend struct DeleteFaceTest;
     friend struct DeletePartSessionTest;
     friend struct EdgeBlendSessionTest;
+    struct SelectedEdge { size_t partIndex; TopoDS_Edge edge; };
+    void activateAutomaticSelection(bool parts=false);
+    void configureSelectionHighlights();
+    void leaveEvent(QEvent*) override;
     struct SelectedFace { size_t partIndex; TopoDS_Face face; };
     struct SelectionContext {
-        enum class Kind { None, Parts, Faces, Constructions, Sketches };
+        enum class Kind { None, Parts, Faces, Edges, Constructions, Sketches };
         Kind kind = Kind::None;
         std::vector<size_t> parts;
         std::vector<SelectedFace> faces;
+        std::vector<SelectedEdge> edges;
         QStringList constructions, sketches;
     };
     QAction* undoAction_ = nullptr;
@@ -542,6 +547,7 @@ private:
     void updateEdgeBlendArrow();
     void startEdgeBlend(bool chamfer);
     bool pickEdgeBlend(const QPoint& point);
+    bool adoptEdgeBlend(size_t index, const TopoDS_Edge& edge);
     bool previewEdgeBlend(double value);
     bool startMoveFace(size_t index, const TopoDS_Face& face);
     bool previewMoveFace(double value);
@@ -621,7 +627,7 @@ private:
     QString activePartId_;
     TargetEligibility targetEligibility_;
     std::function<void(const QString&)> targetAccepted_;
-    void refreshActivePart();
+    void refreshActivePart(bool redraw=true);
     std::optional<size_t> detectedPart(const QPoint& position);
 
     void applyBoxBounds(size_t index, const std::array<double, 3>& min,

@@ -32,6 +32,7 @@ target_include_directories(OpenDesigner PRIVATE ${OpenCASCADE_INCLUDE_DIR})
 # Use only the libraries required by our current modeling and display code.
 set(OPENDESIGNER_LIBRARIES
     Qt6::Widgets
+    TKHLR
     TKOpenGl
     TKV3d
     TKService
@@ -265,6 +266,11 @@ if(OPENDESIGNER_BUILD_TESTS)
     add_test(NAME profile-extrusion-sessions COMMAND OpenDesignerSelectionContextTests --extrusion)
     add_test(NAME profile-extrusion-sessions-hidpi COMMAND OpenDesignerSelectionContextTests --extrusion)
     set_tests_properties(profile-extrusion-sessions-hidpi PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=2")
+    add_test(NAME selection-contours COMMAND OpenDesignerSelectionContextTests --contours)
+    add_test(NAME automatic-selection COMMAND OpenDesignerSelectionContextTests --automatic-selection)
+    add_test(NAME automatic-selection-hidpi COMMAND OpenDesignerSelectionContextTests --automatic-selection)
+    set_tests_properties(automatic-selection automatic-selection-hidpi PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE)
+    set_tests_properties(automatic-selection-hidpi PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=2")
     add_test(NAME selection-context COMMAND OpenDesignerSelectionContextTests)
     add_test(NAME native-document-sessions COMMAND OpenDesignerSelectionContextTests --documents)
     add_test(NAME native-partless-documents COMMAND OpenDesignerSelectionContextTests --partless)
@@ -367,6 +373,8 @@ if(OPENDESIGNER_BUILD_TESTS)
         target_link_libraries(OpenDesigner${blend}Tests PRIVATE OpenDesignerEdgeBlends)
         add_test(NAME ${blend}-geometry COMMAND OpenDesigner${blend}Tests)
     endforeach()
+    add_test(NAME circular-fillet-geometry COMMAND OpenDesignerFilletTests --circular)
+    set_tests_properties(circular-fillet-geometry PROPERTIES TIMEOUT 90)
 endif()
 
 foreach(viewport_target OpenDesigner OpenDesignerPullTests OpenDesignerBooleanTests OpenDesignerMoveFaceTests OpenDesignerSelectionContextTests OpenDesignerDebugModelTests OpenDesignerDeleteFaceTests)
@@ -377,6 +385,14 @@ endforeach()
 
 if(OPENDESIGNER_BUILD_TESTS)
     target_sources(OpenDesignerSelectionContextTests PRIVATE tests/EdgeBlendSessionTest.cpp)
+    add_test(NAME direct-modeling-recovery COMMAND OpenDesignerSelectionContextTests --direct-modeling-recovery)
+    set_tests_properties(direct-modeling-recovery PROPERTIES TIMEOUT 120)
+    set(OPENDESIGNER_REGRESSION_DOCUMENT "" CACHE FILEPATH "Optional private fillet.odc regression fixture (read only)")
+    if(OPENDESIGNER_REGRESSION_DOCUMENT)
+        add_test(NAME direct-modeling-recovery-document COMMAND OpenDesignerSelectionContextTests --regression-document)
+        set_tests_properties(direct-modeling-recovery-document PROPERTIES TIMEOUT 120
+            ENVIRONMENT "OPENDESIGNER_REGRESSION_DOCUMENT=${OPENDESIGNER_REGRESSION_DOCUMENT}")
+    endif()
     add_test(NAME edge-blend-sessions COMMAND OpenDesignerSelectionContextTests --edge-blends)
     set_tests_properties(edge-blend-sessions PROPERTIES TIMEOUT 120)
 endif()

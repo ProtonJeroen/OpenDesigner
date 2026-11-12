@@ -61,6 +61,12 @@ bool CadViewport::moveFaceReference(const TopoDS_Shape& shape,const TopoDS_Face&
         MoveFaceFeature& feature,gp_Pnt& center,gp_Dir& axis,QString& error) const {
     feature=MoveFaceFeature::Planar;
     if(face.IsNull()) {error=tr("Select one member face.");return false;}
+    if(BRepAdaptor_Surface(face).GetType()==GeomAbs_Cone) {
+        error=tr("Move Face cannot translate an ordinary conical wall or an uncertified conical transition. Select a planar cap; cone primitives also support Pull / Resize.");return false;
+    }
+    if(BRepAdaptor_Surface(face).GetType()==GeomAbs_Torus) {
+        error=tr("Move Face: this toroidal transition has no certified Fillet recipe or sharp source. Original geometry was kept.");return false;
+    }
     if(BRepAdaptor_Surface(face).GetType()!=GeomAbs_Cylinder)
         return MoveFaceGeometry::reference(shape,face,center,axis,error);
     // The unchanged geometry APIs certify recognition at zero displacement.
@@ -129,6 +135,10 @@ bool CadViewport::startMoveFace(size_t index, const TopoDS_Face& face) {
     auto recipe=part.blends;QString recipeError;
     const bool recognized=EdgeBlendFeatures::resolve(part.shape,recipe,recipeError);
     if(recognized&&EdgeBlendFeatures::selected(recipe,face)>=0) return startEditEdgeBlend(index,face);
+    if(recognized&&BRepAdaptor_Surface(face).GetType()!=GeomAbs_Plane
+       &&std::any_of(recipe.features.begin(),recipe.features.end(),[](const auto& f){return f.cylinders[0]||f.cylinders[1];})) {
+        emit statusMessage(tr("Cylindrical support edits with circular Fillets are not yet certified; remove the Fillet first."));return false;
+    }
     if(!recognized&&!part.blends.features.empty()) {emit statusMessage(recipeError);return false;}
     gp_Pnt center; gp_Dir normal; QString error;MoveFaceFeature feature;
     if (!moveFaceReference(part.shape,face,feature,center,normal,error)) {
@@ -301,9 +311,11 @@ bool CadViewport::beginMoveFaceDrag(const QPoint& point) {
     const auto& session=*commandSession_;
     if(session.moveFeature!=MoveFaceFeature::Planar&&!session.lateralDirectionReady) return false;
     const gp_Pnt origin=session.pivot.Translated(gp_Vec(session.direction)*(blend?std::max(0.,session.value):(session.valid?session.value:0)));
-    const auto tip=origin.Translated(gp_Vec(session.direction)*31);
+    const auto base=session.kind==CommandSession::Kind::Fillet
+        ?origin.Translated(gp_Vec(session.direction)*(-31)):origin;
+    const auto tip=base.Translated(gp_Vec(session.direction)*31);
     Standard_Integer x0,y0,x1,y1;
-    view_->Convert(origin.X(),origin.Y(),origin.Z(),x0,y0);
+    view_->Convert(base.X(),base.Y(),base.Z(),x0,y0);
     view_->Convert(tip.X(),tip.Y(),tip.Z(),x1,y1);
     const double dx=x1-x0,dy=y1-y0,len2=dx*dx+dy*dy;
     if (len2<4) return false;

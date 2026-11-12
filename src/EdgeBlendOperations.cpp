@@ -1,6 +1,7 @@
 #include "CadViewport.h"
 #include "FilletGeometry.h"
 #include "ChamferGeometry.h"
+#include "EdgeBlendValidation.h"
 #include <QDialogButtonBox>
 #include <QPushButton>
 #include <QLineEdit>
@@ -10,6 +11,9 @@
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
 #include <cmath>
+#include <ShapeAnalysis_Surface.hxx>
+#include <BRepTools.hxx>
+#include <BRep_Tool.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepGProp.hxx>
@@ -18,10 +22,29 @@
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <Graphic3d_ZLayerId.hxx>
 
+namespace {
+// Evaluate the oriented surface normal at the actual edge/transition point,
+// including curved supports and reversed (inner/concave) faces.
+gp_Vec outwardNormal(const TopoDS_Face& face,const gp_Pnt& point) {
+    ShapeAnalysis_Surface surface(BRep_Tool::Surface(face));
+    const auto uv=surface.ValueOfUV(point,1.e-7);
+    gp_Pnt p;gp_Vec du,dv;
+    BRepAdaptor_Surface(face).D1(uv.X(),uv.Y(),p,du,dv);
+    gp_Vec normal=du.Crossed(dv);
+    if(normal.Magnitude()>1.e-10)normal.Normalize();
+    if(face.Orientation()==TopAbs_REVERSED)normal.Reverse();
+    return normal;
+}
+}
+
 void CadViewport::fillet() {startEdgeBlend(false);}
 void CadViewport::chamfer() {startEdgeBlend(true);}
 void CadViewport::startEdgeBlend(bool chamfer) {
-    endSketchEditing();cancelCommandSession();resetModelingTools();
+    cancelCommandSession();
+    const auto selection=selectionContext();
+    const bool unsupportedSelection=(selection.kind==SelectionContext::Kind::Edges && selection.edges.size()!=1)
+        || (selection.kind==SelectionContext::Kind::None && context_->NbSelected()>0);
+    endSketchEditing();resetModelingTools();
     beginCommandSession(chamfer?CommandSession::Kind::Chamfer:CommandSession::Kind::Fillet,{},gp_Dir(1,0,0));
     commandSession_->valid=false;
     commandPanel_->setWindowTitle(chamfer?tr("Chamfer Preview"):tr("Fillet Preview"));
@@ -32,6 +55,14 @@ void CadViewport::startEdgeBlend(bool chamfer) {
         context_->Deactivate(part.presentation);
         context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_EDGE),Standard_False);
     }
+    if(unsupportedSelection) {
+        emit statusMessage(tr("The selected set is unsupported. Select one Edge for Fillet or Chamfer."));
+        return;
+    }
+    if(selection.kind==SelectionContext::Kind::Edges && selection.edges.size()==1) {
+        adoptEdgeBlend(selection.edges.front().partIndex,selection.edges.front().edge);
+        return;
+    }
     emit statusMessage(tr("Select one solid edge, then enter a positive value in mm."));
 }
 bool CadViewport::pickEdgeBlend(const QPoint& point) {
@@ -40,28 +71,44 @@ bool CadViewport::pickEdgeBlend(const QPoint& point) {
     auto owner=Handle(StdSelect_BRepOwner)::DownCast(context_->DetectedOwner());
     if(owner.IsNull() || owner->Shape().IsNull() || owner->Shape().ShapeType()!=TopAbs_EDGE) return false;
     for(size_t i=0;i<boxes_.size();++i) if(isPartVisible(i) && boxes_[i].presentation==context_->DetectedInteractive()) {
-        auto& session=*commandSession_;const auto& part=boxes_[i];
-        session.edge=TopoDS::Edge(owner->Shape());
-        session.faceBefore=std::make_shared<CadPart>(part);
-        session.blendSource=part.blends;
-        QString recipeError;EdgeBlendFeatures::resolve(part.shape,session.blendSource,recipeError);
-        BRepAdaptor_Curve curve(session.edge);
-        auto center=curve.Value((curve.FirstParameter()+curve.LastParameter())/2);
-        gp_Vec normal(1,1,1);gp_Vec sum;
-        TopTools_IndexedDataMapOfShapeListOfShape adjacency;
-        TopExp::MapShapesAndUniqueAncestors(part.shape,TopAbs_EDGE,TopAbs_FACE,adjacency);
-        for(const auto& f:adjacency.FindFromKey(session.edge)) {
-            BRepAdaptor_Surface surface(TopoDS::Face(f));
-            if(surface.GetType()!=GeomAbs_Plane) continue;
-            gp_Vec n(surface.Plane().Axis().Direction());if(f.Orientation()==TopAbs_REVERSED) n.Reverse();sum+=n;
-        }
-        if(sum.Magnitude()>1.e-8) normal=sum;
-        session.direction=gp_Dir(normal.Transformed(part.orientation));
-        session.pivot=center.Transformed(part.orientation);
-        session.changes.push_back({i,part.min,part.max,part.min,part.max,part.orientation,part.orientation});
-        return updateCommandParameter(false);
+        return adoptEdgeBlend(i,TopoDS::Edge(owner->Shape()));
     }
     return false;
+}
+bool CadViewport::adoptEdgeBlend(size_t i,const TopoDS_Edge& edge) {
+    if(!commandSession_ || !isPartVisible(i))return false;
+    TopTools_IndexedDataMapOfShapeListOfShape adjacent;QString error;
+    if(!EdgeBlendValidation::input(boxes_[i].shape,edge,1.,adjacent,error)) {
+        emit statusMessage(error);return false;
+    }
+    auto& session=*commandSession_;const auto& part=boxes_[i];
+    BRepAdaptor_Curve curve(edge);
+    auto center=curve.Value((curve.FirstParameter()+curve.LastParameter())/2);
+    gp_Vec normal(1,1,1);gp_Vec sum;
+    for(const auto& f:adjacent.FindFromKey(edge)) {
+        BRepAdaptor_Surface surface(TopoDS::Face(f));
+        if(session.kind==CommandSession::Kind::Fillet) {
+            sum+=outwardNormal(TopoDS::Face(f),center);continue;
+        }
+        if(surface.GetType()!=GeomAbs_Plane) continue;
+        gp_Vec n(surface.Plane().Axis().Direction());if(f.Orientation()==TopAbs_REVERSED) n.Reverse();sum+=n;
+    }
+    if(sum.Magnitude()>1.e-8) normal=sum;
+    if(session.kind==CommandSession::Kind::Fillet) {
+        if(sum.Magnitude()<=1.e-8) {
+            emit statusMessage(tr("Cannot determine the Fillet direction. Select another Edge."));return false;
+        }
+        normal.Reverse();
+    }
+    session.edge=edge;
+    session.faceBefore=std::make_shared<CadPart>(part);
+    session.blendSource=part.blends;
+    QString recipeError;EdgeBlendFeatures::resolve(part.shape,session.blendSource,recipeError);
+    session.direction=gp_Dir(normal.Transformed(part.orientation));
+    session.pivot=center.Transformed(part.orientation);
+    session.changes.clear();
+    session.changes.push_back({i,part.min,part.max,part.min,part.max,part.orientation,part.orientation});
+    return updateCommandParameter(false);
 }
 bool CadViewport::previewEdgeBlend(double value) {
     auto& session=*commandSession_;
@@ -124,13 +171,21 @@ bool CadViewport::startEditEdgeBlend(size_t index,const TopoDS_Face& face) {
     session.blendSource=recipe;session.editBlendId=feature.id;session.face=face;
     GProp_GProps props;BRepGProp::SurfaceProperties(face,props);auto center=props.CentreOfMass();
     BRepAdaptor_Surface surface(face);gp_Vec normal;
-    if(surface.GetType()==GeomAbs_Plane) normal=gp_Vec(surface.Plane().Axis().Direction());
-    else {
+    if(feature.kind==EdgeBlendFeatures::Kind::Fillet) {
+        double u0,u1,v0,v1;BRepTools::UVBounds(face,u0,u1,v0,v1);
+        center=surface.Value((u0+u1)/2,(v0+v1)/2);
+        normal=-outwardNormal(face,center);
+    } else if(surface.GetType()==GeomAbs_Plane) normal=gp_Vec(surface.Plane().Axis().Direction());
+    else if(surface.GetType()==GeomAbs_Torus) {
+        const auto circle=surface.Torus();
+        center=circle.Location().Translated(gp_Vec(circle.XAxis().Direction())*circle.MajorRadius());
+        normal=gp_Vec(circle.Axis().Direction());
+    } else {
         const auto axis=surface.Cylinder().Axis();normal=gp_Vec(axis.Location(),center);
         normal-=gp_Vec(axis.Direction())*normal.Dot(gp_Vec(axis.Direction()));
     }
     if(normal.Magnitude()<1.e-8) {cancelCommandSession();return false;}
-    if(face.Orientation()==TopAbs_REVERSED) normal.Reverse();
+    if(feature.kind!=EdgeBlendFeatures::Kind::Fillet && face.Orientation()==TopAbs_REVERSED) normal.Reverse();
     session.direction=gp_Dir(normal.Transformed(part.orientation));
     session.value=feature.size*std::abs(part.orientation.ScaleFactor());
     session.pivot=center.Transformed(part.orientation).Translated(gp_Vec(session.direction)*(-session.value));
@@ -145,6 +200,9 @@ void CadViewport::updateEdgeBlendArrow() {
     if(!commandSession_||!commandSession_->faceBefore) return;
     const auto& s=*commandSession_;
     const double value=std::isfinite(s.value)?std::max(0.,s.value):0.;
-    displayPullArrow(moveFaceArrow_,s.pivot.Translated(gp_Vec(s.direction)*value),gp_Vec(s.direction));
+    // displayPullArrow builds 31 mm from base to tip. Keep the shaft outside
+    // the material, with its tip at the moving radius anchor.
+    const double offset=s.kind==CommandSession::Kind::Fillet?value-31.:value;
+    displayPullArrow(moveFaceArrow_,s.pivot.Translated(gp_Vec(s.direction)*offset),gp_Vec(s.direction));
     if(!moveFaceArrow_.IsNull()) context_->SetZLayer(moveFaceArrow_,Graphic3d_ZLayerId_Topmost);
 }

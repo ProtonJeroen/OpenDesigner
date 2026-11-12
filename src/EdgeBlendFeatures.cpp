@@ -5,6 +5,7 @@
 #include "MoveFaceGeometry.h"
 #include "FaceTransformGeometry.h"
 #include <BRepAdaptor_Surface.hxx>
+#include <gp_Lin.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepTools.hxx>
@@ -42,7 +43,7 @@ bool strictSharp(const TopoDS_Shape& shape) {
         const double t=type==TopAbs_FACE?BRep_Tool::Tolerance(TopoDS::Face(it.Current())):
             type==TopAbs_EDGE?BRep_Tool::Tolerance(TopoDS::Edge(it.Current())):BRep_Tool::Tolerance(TopoDS::Vertex(it.Current()));
         if(!std::isfinite(t)||t>linear) return false;
-        if(type==TopAbs_FACE&&BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType()!=GeomAbs_Plane) return false;
+        if(type==TopAbs_FACE&&(BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType()!=GeomAbs_Plane&&BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType()!=GeomAbs_Cylinder)) return false;
     }
     return true;
 }
@@ -57,16 +58,36 @@ TopoDS_Face supportFace(const TopoDS_Shape& shape,const gp_Pln& plane) {
     }
     return match;
 }
+TopoDS_Face featureSupport(const TopoDS_Shape& shape,const Feature& f,int k) {
+    if(!f.cylinders[k]) return supportFace(shape,f.supports[k]);
+    TopoDS_Face match;const auto& c=*f.cylinders[k];
+    for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {
+        auto face=TopoDS::Face(it.Current());BRepAdaptor_Surface s(face);
+        if(s.GetType()!=GeomAbs_Cylinder) continue;
+        auto b=s.Cylinder();
+        if(std::abs(c.Radius()-b.Radius())<linear&&c.Axis().Direction().IsParallel(b.Axis().Direction(),angular)
+           &&gp_Lin(c.Axis()).Distance(b.Location())<linear) {
+            if(!match.IsNull()) return {};
+            match=face;
+        }
+    }
+    return match;
+}
 TopoDS_Edge supportEdge(const TopoDS_Shape& shape,const Feature& f) {
-    auto a=supportFace(shape,f.supports[0]),b=supportFace(shape,f.supports[1]);
+    auto a=featureSupport(shape,f,0),b=featureSupport(shape,f,1);
     if(a.IsNull()||b.IsNull()) return {};
     TopoDS_Edge match;
     for(TopExp_Explorer x(a,TopAbs_EDGE);x.More();x.Next()) for(TopExp_Explorer y(b,TopAbs_EDGE);y.More();y.Next())
         if(x.Current().IsSame(y.Current())) {
-            if(!match.IsNull()&&!match.IsSame(x.Current())) return {};
+            if(!match.IsNull()&&!match.IsSame(x.Current())) {
+                BRepAdaptor_Curve a(match),b(TopoDS::Edge(x.Current()));
+                if(!(f.cylinders[0]||f.cylinders[1])||a.GetType()!=GeomAbs_Circle||b.GetType()!=GeomAbs_Circle
+                   ||a.Circle().Location().Distance(b.Circle().Location())>linear
+                   ||std::abs(a.Circle().Radius()-b.Circle().Radius())>linear) return {};
+            }
             match=TopoDS::Edge(x.Current());
         }
-    if(!match.IsNull()&&BRepAdaptor_Curve(match).GetType()!=GeomAbs_Line) return {};
+    if(!match.IsNull()&&BRepAdaptor_Curve(match).GetType()!=(f.cylinders[0]||f.cylinders[1]?GeomAbs_Circle:GeomAbs_Line)) return {};
     return match;
 }
 std::vector<TopoDS_Face> neighbors(const TopoDS_Shape& shape,const TopoDS_Face& face) {
@@ -82,6 +103,15 @@ bool touches(const TopoDS_Shape& a,const TopoDS_Shape& b) {
         for(TopExp_Explorer y(b,TopAbs_VERTEX);y.More();y.Next()) if(x.Current().IsSame(y.Current())) return true;
     return false;
 }
+bool transitionSupport(const TopoDS_Face& a,const TopoDS_Face& b) {
+    BRepAdaptor_Surface x(a),y(b);
+    if(x.GetType()==GeomAbs_Torus&&y.GetType()==GeomAbs_Torus) {
+        auto p=x.Torus(),q=y.Torus();
+        return p.Location().Distance(q.Location())<linear&&p.Axis().Direction().IsParallel(q.Axis().Direction(),angular)
+            &&std::abs(p.MajorRadius()-q.MajorRadius())<linear&&std::abs(p.MinorRadius()-q.MinorRadius())<linear;
+    }
+    return BRepReconstruction::sameAnalyticSupport(a,b);
+}
 bool bind(State& state,const TopoDS_Shape& current,QString& error) {
     // Prototypes from replay are carrier geometry, never saved topology IDs.
     for(auto& feature:state.features) {
@@ -89,7 +119,7 @@ bool bind(State& state,const TopoDS_Shape& current,QString& error) {
         for(TopExp_Explorer it(current,TopAbs_FACE);it.More();it.Next()) {
             auto f=TopoDS::Face(it.Current());
             if(std::any_of(prototypes.begin(),prototypes.end(),[&](const auto& p){return BRepAdaptor_Surface(p).GetType()==GeomAbs_Plane&&BRepAdaptor_Surface(f).GetType()==GeomAbs_Plane
-                    ?planeEqual(BRepAdaptor_Surface(p).Plane(),BRepAdaptor_Surface(f).Plane()):BRepReconstruction::sameAnalyticSupport(p,f);})) feature.faces.push_back(f);
+                    ?planeEqual(BRepAdaptor_Surface(p).Plane(),BRepAdaptor_Surface(f).Plane()):transitionSupport(p,f);})) feature.faces.push_back(f);
         }
         if(feature.faces.size()!=1) {error=QStringLiteral("Transition is missing, split or ambiguous; its recipe was invalidated.");return false;}
     }
@@ -101,7 +131,7 @@ bool bind(State& state,const TopoDS_Shape& current,QString& error) {
 }
 bool rebuild(State& state,TopoDS_Shape& result,QString& error) {
     result.Nullify();error.clear();
-    if(!strictSharp(state.sharp)) {error=QStringLiteral("The sharp supporting solid must be planar, valid, and within the existing 1e-6 tolerance limit.");return false;}
+    if(!strictSharp(state.sharp)) {error=QStringLiteral("The sharp supporting solid must be planar/cylindrical, valid, and within the existing 1e-6 tolerance limit.");return false;}
     auto shape=state.sharp;
     for(auto& feature:state.features) {
         if(!std::isfinite(feature.size)||feature.size<=0) {error=QStringLiteral("Enter a finite positive transition dimension.");return false;}
@@ -113,12 +143,12 @@ bool rebuild(State& state,TopoDS_Shape& result,QString& error) {
         for(TopExp_Explorer it(next,TopAbs_FACE);it.More();it.Next()) {
             auto candidate=TopoDS::Face(it.Current());bool old=false;
             for(TopExp_Explorer prev(shape,TopAbs_FACE);prev.More();prev.Next())
-                if(BRepReconstruction::sameAnalyticSupport(candidate,TopoDS::Face(prev.Current()))) {old=true;break;}
+                if(transitionSupport(candidate,TopoDS::Face(prev.Current()))) {old=true;break;}
             BRepAdaptor_Surface surface(candidate);
-            if(!old&&((feature.kind==Kind::Fillet&&surface.GetType()==GeomAbs_Cylinder)
+            if(!old&&((feature.kind==Kind::Fillet&&(surface.GetType()==GeomAbs_Cylinder||surface.GetType()==GeomAbs_Torus))
                 ||(feature.kind==Kind::Chamfer&&surface.GetType()==GeomAbs_Plane))) feature.faces.push_back(candidate);
         }
-        if(feature.faces.size()!=1) {error=QStringLiteral("Only a single straight-edge cylindrical Fillet or planar Chamfer can be reconstructed.");return false;}
+        if(feature.faces.size()!=1) {error=QStringLiteral("Only one unambiguous cylindrical/toroidal Fillet or planar Chamfer face can be reconstructed.");return false;}
         shape=next;
     }
     if(!bind(state,shape,error)) return false;
@@ -189,14 +219,31 @@ bool affected(const Feature& feature,const TopoDS_Shape& source,const TopoDS_Fac
     return false;
 }
 template<class Operation> bool changeSupport(const TopoDS_Shape& current,const State& prior,const TopoDS_Face& target,
-        bool keep,State& after,TopoDS_Shape& result,QString& error,Operation operation,const gp_Pln& expected) {
+        bool keep,State& after,TopoDS_Shape& result,QString& error,Operation operation,const gp_Pln& expected,
+        bool translate=false) {
     result.Nullify();State state=prior;
     if(!resolve(current,state,error)||!member(current,target)||BRepAdaptor_Surface(target).GetType()!=GeomAbs_Plane) return false;
     auto original=BRepAdaptor_Surface(target).Plane();auto sharpFace=supportFace(state.sharp,original);
     if(sharpFace.IsNull()) {error=QStringLiteral("Choose a sharp supporting face, or use Edit Fillet / Chamfer to change a transition dimension.");return false;}
+    for(const auto& f:state.features) if(!translate&&(f.cylinders[0]||f.cylinders[1])) {
+        error=QStringLiteral("Supporting-face edits on circular Fillets are not yet certified; remove the Fillet first.");return false;
+    }
+    if(translate) for(const auto& f:state.features) for(const auto& cylinder:f.cylinders)
+        if(cylinder&&!original.Axis().Direction().IsParallel(cylinder->Axis().Direction(),angular)) {
+            error=QStringLiteral("Circular Fillet support translation requires a cap perpendicular to its cylinder axis.");return false;
+        }
+    const bool circular=std::any_of(state.features.begin(),state.features.end(),[](const auto& f){return f.cylinders[0]||f.cylinders[1];});
     if(!keep) std::erase_if(state.features,[&](const auto& f){return affected(f,current,target);});
     auto base=operation(state.sharp,sharpFace);
     if(base.IsNull()) return false;
+    // Local cap sweeps may retain cylindrical bands. Recipes require one
+    // unambiguous carrier per support; use the existing material-certified
+    // same-domain normalization, then enforce strictSharp again in rebuild.
+    if(translate&&circular) {
+        TopoDS_Shape normalized;
+        if(!BRepReconstruction::normalize(base,normalized,error)) return false;
+        base=normalized;
+    }
     if(!supportFace(base,expected).IsNull()) {
         for(auto& f:state.features) for(auto& plane:f.supports) if(planeEqual(plane,original)) plane=expected;
     } else {error=QStringLiteral("The requested face operation lost its supporting plane.");return false;}
@@ -220,6 +267,12 @@ bool resolve(const TopoDS_Shape& current,State& state,QString& error) {
         }
         state={};
         if(recover(current,state,error)) {error.clear();return true;}
+        for(TopExp_Explorer it(current,TopAbs_FACE);it.More();it.Next()) {
+            const auto type=BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType();
+            if(type==GeomAbs_Cone||type==GeomAbs_Torus) {
+                error=QStringLiteral("No certified transition recipe: conical supports and recipe-free toroidal transitions cannot be reconstructed by Edit Fillet / Chamfer. An ordinary cone is not a Chamfer.");return false;
+            }
+        }
         error=QStringLiteral("No certified separated edge transitions were found. Imported recognition requires rectangular local stock and verified tangent/equal-distance supports.");return false;
     } catch(const Standard_Failure& e) {state={};error=QStringLiteral("Transition analysis failed: %1").arg(QString::fromUtf8(e.GetMessageString()));return false;}
 }
@@ -236,7 +289,14 @@ bool create(const TopoDS_Shape& current,const State& prior,const TopoDS_Edge& ed
         TopTools_IndexedDataMapOfShapeListOfShape adjacency;TopExp::MapShapesAndUniqueAncestors(current,TopAbs_EDGE,TopAbs_FACE,adjacency);
         if(edge.IsNull()||!adjacency.Contains(edge)||adjacency.FindFromKey(edge).Extent()!=2) {error=QStringLiteral("Select one manifold sharp edge.");return false;}
         Feature f;f.kind=kind;f.size=size;f.id=QUuid::createUuid().toString(QUuid::WithoutBraces);int k=0;
-        for(const auto& face:adjacency.FindFromKey(edge)) {BRepAdaptor_Surface s(TopoDS::Face(face));if(s.GetType()!=GeomAbs_Plane) {error=QStringLiteral("Editable transitions require two planar supports.");return false;}f.supports[k++]=s.Plane();}
+        for(const auto& face:adjacency.FindFromKey(edge)) {
+            BRepAdaptor_Surface s(TopoDS::Face(face));
+            if(s.GetType()==GeomAbs_Plane) f.supports[k]=s.Plane();
+            else if(kind==Kind::Fillet&&s.GetType()==GeomAbs_Cylinder&&BRepAdaptor_Curve(edge).GetType()==GeomAbs_Circle) f.cylinders[k]=s.Cylinder();
+            else {error=QStringLiteral("Editable transitions require planar supports or a circular plane/cylinder intersection.");return false;}
+            ++k;
+        }
+        if(f.cylinders[0]&&f.cylinders[1]) {error=QStringLiteral("Two cylindrical supports are not certified.");return false;}
         if(state.features.size()>=8) {error=QStringLiteral("At most eight separated transitions can be certified on one Part.");return false;}
         for(const auto& old:state.features) for(const auto& face:old.faces) if(touches(edge,face)) {
             error=QStringLiteral("The selected edge touches an existing transition; junction reconstruction is unsupported.");return false;
@@ -267,7 +327,7 @@ bool remove(const TopoDS_Shape& current,const State& prior,const std::vector<Top
 bool move(const TopoDS_Shape& current,const State& prior,const TopoDS_Face& face,double distance,bool keep,State& after,TopoDS_Shape& result,QString& error) {
     result.Nullify();if(!member(current,face)||BRepAdaptor_Surface(face).GetType()!=GeomAbs_Plane||!std::isfinite(distance)) {error=QStringLiteral("Choose a current planar support and enter a finite distance.");return false;}
     auto expected=BRepAdaptor_Surface(face).Plane();auto normal=expected.Axis().Direction();if(face.Orientation()==TopAbs_REVERSED) normal.Reverse();expected.Translate(gp_Vec(normal)*distance);
-    return changeSupport(current,prior,face,keep,after,result,error,[&](const auto& s,const auto& f){return MoveFaceGeometry::move(s,f,distance,error);},expected);
+    return changeSupport(current,prior,face,keep,after,result,error,[&](const auto& s,const auto& f){return MoveFaceGeometry::move(s,f,distance,error);},expected,true);
 }
 bool rotate(const TopoDS_Shape& current,const State& prior,const TopoDS_Face& face,const gp_Ax1& axis,double degrees,bool keep,State& after,TopoDS_Shape& result,QString& error) {
     result.Nullify();if(!member(current,face)||BRepAdaptor_Surface(face).GetType()!=GeomAbs_Plane||!std::isfinite(degrees)) {error=QStringLiteral("Choose a current planar support and enter a finite angle.");return false;}
@@ -280,14 +340,20 @@ QJsonObject encode(const State& state) {
     QJsonArray features;
     for(const auto& f:state.features) {
         QJsonArray planes;for(const auto& p:f.supports) {auto n=p.Axis().Direction();planes.append(QJsonArray{n.X(),n.Y(),n.Z(),gp_Vec(gp_Pnt(),p.Location()).Dot(gp_Vec(n))});}
-        features.append(QJsonObject{{"id",f.id},{"kind",f.kind==Kind::Fillet?"fillet":"chamfer"},{"size",f.size},{"supports",planes}});
+        QJsonArray cylinders;for(const auto& c:f.cylinders) {
+            if(!c) {cylinders.append(QJsonValue());continue;}
+            auto p=c->Location();auto n=c->Axis().Direction();
+            cylinders.append(QJsonArray{p.X(),p.Y(),p.Z(),n.X(),n.Y(),n.Z(),c->Radius()});
+        }
+        features.append(QJsonObject{{"cylinders",cylinders},{"id",f.id},{"kind",f.kind==Kind::Fillet?"fillet":"chamfer"},{"size",f.size},{"supports",planes}});
     }
-    return {{"version",1},{"sharp",QString::fromStdString(stream.str())},{"features",features}};
+    const bool circular=std::any_of(state.features.begin(),state.features.end(),[](const auto& f){return f.cylinders[0]||f.cylinders[1];});
+    return {{"version",circular?2:1},{"sharp",QString::fromStdString(stream.str())},{"features",features}};
 }
 State decode(const QJsonObject& object) {
     State state;
     try {
-        if(object.value("version").toInt()!=1) return {};
+        const int version=object.value("version").toInt();if(version!=1&&version!=2) return {};
         auto data=object.value("sharp").toString().toStdString();if(data.size()>4*1024*1024) return {};
         std::istringstream stream(data);BRep_Builder builder;BRepTools::Read(state.sharp,stream,builder);
         const auto features=object.value("features").toArray();if(features.isEmpty()||features.size()>8) return {};
@@ -298,6 +364,16 @@ State decode(const QJsonObject& object) {
             auto planes=o.value("supports").toArray();if(planes.size()!=2) return {};
             for(int k=0;k<2;++k) {auto p=planes[k].toArray();if(p.size()!=4) return {};for(const auto& v:p) if(!v.isDouble()||!std::isfinite(v.toDouble())) return {};
                 gp_Dir n(p[0].toDouble(),p[1].toDouble(),p[2].toDouble());gp_Pnt origin;origin.Translate(gp_Vec(n)*p[3].toDouble());f.supports[k]=gp_Pln(origin,n);}
+            auto cylinders=o.value("cylinders").toArray();
+            if(version==1&&!cylinders.isEmpty()) for(const auto& c:cylinders) if(!c.isNull()) return {};
+            if(!cylinders.isEmpty()&&cylinders.size()!=2) return {};
+            for(int k=0;k<cylinders.size();++k) if(!cylinders[k].isNull()) {
+                auto c=cylinders[k].toArray();if(c.size()!=7) return {};
+                for(const auto& v:c) if(!v.isDouble()||!std::isfinite(v.toDouble())) return {};
+                if(c[6].toDouble()<=0||f.kind!=Kind::Fillet) return {};
+                f.cylinders[k]=gp_Cylinder(gp_Ax3(gp_Pnt(c[0].toDouble(),c[1].toDouble(),c[2].toDouble()),gp_Dir(c[3].toDouble(),c[4].toDouble(),c[5].toDouble())),c[6].toDouble());
+            }
+            if(f.cylinders[0]&&f.cylinders[1]) return {};
             state.features.push_back(f);
         }
     } catch(const Standard_Failure&) {return {};}

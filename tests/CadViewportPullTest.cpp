@@ -109,8 +109,17 @@ struct CadViewportPullTest {
         require(orange,"Pull arrow is hidden in the rendered viewport");
     }
     static void pickSphere(CadViewport& v, size_t index) {
+        // Start a fresh Face pick: a second click on a selected Face promotes
+        // it to a Part in automatic selection mode.
+        v.selectParts({});
         // The center click also covers the screen-right radial fallback.
         click(v,project(v,center(v,index)));
+        const auto selection=v.selectionContext();
+        require(selection.kind==CadViewport::SelectionContext::Kind::Faces
+                && selection.faces.size()==1 && selection.faces.front().partIndex==index
+                && selection.edges.empty()
+                && BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Sphere,
+                "sphere surface picking did not select its owning Face");
         v.startPrimitivePull();
         require(v.arrowVisible_ && v.arrowPartIndex_ == index,
                 "sphere picking did not create a pull arrow");
@@ -609,6 +618,9 @@ struct CadViewportPullTest {
             0.0,"cone presentation transform out of sync");
     }
     static void pickCone(CadViewport& v, size_t index) {
+        // Independent Pull cases start with a fresh pick. Repeating the Face
+        // retained by Cancel intentionally promotes it to Part selection.
+        v.selectParts({});
         const gp_Pnt bottom = coneEnd(v,index,false);
         const gp_Pnt interior = bottom.Translated(gp_Vec(bottom,coneEnd(v,index,true))*0.4);
         click(v,project(v,interior));

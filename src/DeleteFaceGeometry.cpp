@@ -154,7 +154,7 @@ static bool removeNative(const TopoDS_Shape& source,const std::vector<TopoDS_Fac
         for(int i=1;i<=members.Extent();++i) {
             const auto type=BRepAdaptor_Surface(TopoDS::Face(members(i))).GetType();
             if(type!=GeomAbs_Plane&&type!=GeomAbs_Cylinder&&type!=GeomAbs_Cone)
-                return fail(QStringLiteral("Delete Face currently supports plane, cylinder and cone surfaces."));
+                return fail(QStringLiteral("Delete Face cannot certify a solid containing an unrecognized toroidal or other curved transition. Plane, cylinder and cone surfaces are supported; a toroidal Fillet requires a certified recipe."));
         }
         BRepBuilderAPI_Copy copy(source,true,false);
         TopTools_MapOfShape removed;std::vector<TopoDS_Face> copiedFaces;

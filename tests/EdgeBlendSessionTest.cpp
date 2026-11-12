@@ -1,4 +1,17 @@
 #include "CadViewport.h"
+#include "DeleteFaceGeometry.h"
+#include <sstream>
+#include <BRep_Tool.hxx>
+#include <QTimer>
+#include <QMessageBox>
+#include <BRepTools.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakeCone.hxx>
+#include <BRepFilletAPI_MakeChamfer.hxx>
+#include <BRepFilletAPI_MakeFillet.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
+#include "MoveFaceGeometry.h"
+#include "FilletGeometry.h"
 #include <QApplication>
 #include <QCheckBox>
 #include <QMenu>
@@ -19,6 +32,7 @@
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <stdexcept>
 #include <cmath>
@@ -27,6 +41,341 @@ void check(bool value,const char* message) {if(!value) throw std::runtime_error(
 double volume(const TopoDS_Shape& shape) {GProp_GProps p;BRepGProp::VolumeProperties(shape,p);return p.Mass();}
 }
 struct EdgeBlendSessionTest {
+static std::string geometryStamp(const TopoDS_Shape& shape) {
+    std::ostringstream stream;BRepTools::Write(shape,stream,false,false,TopTools_FormatVersion_VERSION_3);return stream.str();
+}
+static void strictTolerances(const TopoDS_Shape& shape) {
+    for(auto type:{TopAbs_FACE,TopAbs_EDGE,TopAbs_VERTEX})for(TopExp_Explorer it(shape,type);it.More();it.Next()) {
+        const double tolerance=type==TopAbs_FACE?BRep_Tool::Tolerance(TopoDS::Face(it.Current())):
+            type==TopAbs_EDGE?BRep_Tool::Tolerance(TopoDS::Edge(it.Current())):BRep_Tool::Tolerance(TopoDS::Vertex(it.Current()));
+        check(std::isfinite(tolerance)&&tolerance<=1.e-6,"reconstruction exceeded certified tolerance");
+    }
+}
+static TopoDS_Face cap(const TopoDS_Shape& shape,bool top) {
+    TopoDS_Face result;double height=top?-1.e30:1.e30;
+    for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {
+        auto f=TopoDS::Face(it.Current());BRepAdaptor_Surface surface(f);
+        if(surface.GetType()!=GeomAbs_Plane)continue;
+        double z=surface.Plane().Location().Z();
+        if(top?z>height:z<height) {result=f;height=z;}
+    }
+    check(!result.IsNull(),"missing cap");return result;
+}
+static NativeDocumentSnapshot recoveryFixture() {
+    NativeDocumentSnapshot doc;NativePartState cylinder,cone;QString error;
+    cylinder.id="recovery-cylinder";cylinder.name="Cylinder 2";
+    auto sharp=BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(125,0,0),gp_Dir(0,0,1)),40,80).Shape();
+    TopExp_Explorer edge(cap(sharp,true),TopAbs_EDGE);EdgeBlendFeatures::State state;
+    check(EdgeBlendFeatures::create(sharp,{},TopoDS::Edge(edge.Current()),EdgeBlendFeatures::Kind::Fillet,20,state,cylinder.shape,error),qPrintable(error));
+    cylinder.edgeBlendRecipe=EdgeBlendFeatures::encode(state);
+    cone.id="recovery-cone";cone.name="Cone 3";
+    auto base=BRepPrimAPI_MakeCone(gp_Ax2(gp_Pnt(250,0,0),gp_Dir(0,0,1)),40,20,80).Shape();
+    BRepFilletAPI_MakeChamfer chamfer(base);TopExp_Explorer top(cap(base,true),TopAbs_EDGE);
+    chamfer.Add(8,TopoDS::Edge(top.Current()));chamfer.Build();check(chamfer.IsDone(),"cone Chamfer fixture failed");
+    BRepFilletAPI_MakeFillet fillet(chamfer.Shape());TopExp_Explorer bottom(cap(chamfer.Shape(),false),TopAbs_EDGE);
+    fillet.Add(11,TopoDS::Edge(bottom.Current()));fillet.Build();check(fillet.IsDone(),"cone Fillet fixture failed");
+    cone.shape=fillet.Shape();check(BRepCheck_Analyzer(cone.shape).IsValid(),"invalid cone fixture");
+    doc.parts={cylinder,cone};return doc;
+}
+static void choose(CadViewport& v,size_t index,const TopoDS_Face& face) {
+    v.selectParts({index});
+    check(v.selectionContext().kind==CadViewport::SelectionContext::Kind::Parts,"Part selection lost");
+    v.context_->ClearSelected(false);v.selectedPartIndices_.clear();
+    Handle(StdSelect_BRepOwner) owner=new StdSelect_BRepOwner(face,v.boxes_[index].presentation,5,true);
+    v.context_->AddOrRemoveSelected(owner,false);
+    auto selection=v.selectionContext();
+    check(selection.kind==CadViewport::SelectionContext::Kind::Faces&&selection.faces.size()==1
+        &&selection.faces.front().face.IsSame(face)&&selection.faces.front().partIndex==index,"Face after Part has wrong owner or stale topology");
+}
+static void pickActual(CadViewport& v,size_t index,const TopoDS_Face& face) {
+    v.selectParts({index});
+    BRepAdaptor_Surface carrier(face);gp_Pnt anchor;gp_Vec du,dw;
+    double ua,ub,wa,wb;BRepTools::UVBounds(face,ua,ub,wa,wb);
+    carrier.D1(ua+(ub-ua)*0.75,(wa+wb)/2,anchor,du,dw);
+    auto normal=du.Crossed(dw);if(face.Orientation()==TopAbs_REVERSED)normal.Reverse();normal.Transform(v.boxes_[index].orientation);
+    v.view_->SetProj(normal.X(),normal.Y(),normal.Z());v.fitAll();QApplication::processEvents();
+    double u0,u1,w0,w1;BRepTools::UVBounds(face,u0,u1,w0,w1);BRepAdaptor_Surface surface(face);
+    for(int u=1;u<8;++u)for(int w=1;w<8;++w) {
+        auto p=surface.Value(u0+(u1-u0)*u/8,w0+(w1-w0)*w/8).Transformed(v.boxes_[index].orientation);
+        Standard_Integer x,y;v.view_->Convert(p.X(),p.Y(),p.Z(),x,y);
+        v.context_->MoveTo(x,y,v.view_,false);
+        if(!v.context_->HasDetected())continue;
+        auto owner=Handle(StdSelect_BRepOwner)::DownCast(v.context_->DetectedOwner());
+        if(owner.IsNull()||!owner->Shape().IsSame(face))continue;
+        QMouseEvent press(QEvent::MouseButtonPress,QPointF(x,y),QPointF(x,y),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease,QPointF(x,y),QPointF(x,y),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+        v.mousePressEvent(&press);v.mouseReleaseEvent(&release);
+        auto selected=v.selectionContext();
+        check(selected.kind==CadViewport::SelectionContext::Kind::Faces&&selected.faces.size()==1&&selected.faces[0].face.IsSame(face),"actual Face pick after Part failed");return;
+    }
+    throw std::runtime_error("no visible sample for actual Face picking: "+v.boxes_[index].name.toStdString());
+}
+static void recovery(bool external) {
+    auto generated=recoveryFixture(),doc=generated;QString error;
+    if(external) check(NativeDocumentStorage::load(qEnvironmentVariable("OPENDESIGNER_REGRESSION_DOCUMENT"),doc,error),qPrintable(error));
+    CadViewport v;v.resize(1000,800);v.show();QApplication::processEvents();
+    QString status;QObject::connect(&v,&CadViewport::statusMessage,[&](const QString& text){status=text;});
+    auto load=[&]{check(v.importDocumentSnapshot(doc,error),qPrintable(error));};load();
+    size_t cylinder=doc.parts.size(),cone=doc.parts.size();
+    for(size_t i=0;i<doc.parts.size();++i) {
+        if(doc.parts[i].name=="Cylinder 2")cylinder=i;
+        if(doc.parts[i].name=="Cone 3")cone=i;
+    }
+    check(cylinder<doc.parts.size()&&cone<doc.parts.size(),"missing reported Parts");
+    check(BRepReconstruction::equivalent(doc.parts[cylinder].shape,generated.parts[0].shape)
+        &&BRepReconstruction::equivalent(doc.parts[cone].shape,generated.parts[1].shape),"actual fixture differs from deterministic reconstruction");
+    check(v.boxes_[cylinder].blends.features.size()==1&&std::abs(v.boxes_[cylinder].blends.features[0].size-20)<1.e-10,"Cylinder recipe/radius lost on Open");
+    pickActual(v,cylinder,cap(v.boxes_[cylinder].shape,true));
+    for(TopExp_Explorer it(v.boxes_[cylinder].shape,TopAbs_FACE);it.More();it.Next()) {
+        auto face=TopoDS::Face(it.Current());if(BRepAdaptor_Surface(face).GetType()!=GeomAbs_Cylinder)continue;
+        choose(v,cylinder,face);v.startPrimitivePull();check(!v.commandSession_&&status.contains("not certified"),"circular wall Pull refusal missing");
+        choose(v,cylinder,face);v.moveFace();check(!v.commandSession_&&status.contains("not yet certified"),"circular wall Move refusal missing");v.resetModelingTools();
+    }
+    // Part commands never infer an arbitrary Face.
+    v.selectParts({cylinder});v.startPrimitivePull();check(!v.commandSession_&&!v.pullMode_,"Part Pull chose an arbitrary Face");
+    v.moveFace();check(!v.commandSession_&&v.moveFacePicking_,"Part Move Face chose an arbitrary Face");v.resetModelingTools();
+    // Both caps, both commands and both Keep policies, including the unaffected cap.
+    for(bool top:{false,true})for(bool pull:{false,true})for(bool keep:{false,true}) {
+        load();auto before=v.boxes_[cylinder];const auto stamp=geometryStamp(before.shape);auto face=cap(before.shape,top);choose(v,cylinder,face);
+        if(pull)v.startPrimitivePull();else v.moveFace();
+        check(v.commandSession_&&v.commandSession_->face.IsSame(face),"cap command lost selected Face");
+        v.keepBlends_->setChecked(keep);v.dragDimension_->setText("1");
+        check(v.updateCommandParameter(false),qPrintable(v.commandSession_->geometryError));
+        auto candidate=v.commandSession_->changes.front().faceChange->after;
+        check(BRepCheck_Analyzer(candidate.shape).IsValid(),"cap produced invalid B-Rep");
+        strictTolerances(candidate.shape);strictTolerances(candidate.blends.sharp);
+        const size_t expected=(!keep&&top)?0:1;
+        check(candidate.blends.features.size()==expected,"Keep removed unrelated or retained affected Fillet");
+        if(expected)check(std::abs(candidate.blends.features[0].size-20)<1.e-10,"Keep changed Fillet radius");
+        else {auto primitive=candidate;check(v.recognizePullPrimitive(primitive)&&primitive.cylinderPrimitive,"Keep OFF left a split sharp cylinder unusable for primitive Pull");}
+        auto expectedState=before.blends;auto sharpCap=cap(expectedState.sharp,top);
+        auto sharp=MoveFaceGeometry::move(expectedState.sharp,sharpCap,1,error);check(!sharp.IsNull(),qPrintable(error));
+        if(expected) {
+            TopExp_Explorer rim(cap(sharp,true),TopAbs_EDGE);
+            // The independent oracle normalizes the sharp bands before a kernel Fillet.
+            TopoDS_Shape normalized;check(BRepReconstruction::normalize(sharp,normalized,error),qPrintable(error));
+            TopExp_Explorer normalizedRim(cap(normalized,true),TopAbs_EDGE);
+            sharp=FilletGeometry::apply(normalized,TopoDS::Edge(normalizedRim.Current()),20,error);check(!sharp.IsNull(),qPrintable(error));
+        }
+        check(BRepReconstruction::equivalent(candidate.shape,sharp),"cap result differs from independently reconstructed solid");
+        v.cancelCommandSession();check(v.boxes_[cylinder].shape.IsSame(before.shape)&&geometryStamp(before.shape)==stamp&&v.undoStack_.empty(),"Cancel changed cap/history");
+        choose(v,cylinder,face);if(pull)v.startPrimitivePull();else v.moveFace();v.keepBlends_->setChecked(keep);
+        v.dragDimension_->setText("1");v.confirmCommandSession();
+        check(v.undoStack_.size()==1&&BRepReconstruction::equivalent(v.boxes_[cylinder].shape,sharp),"cap confirmation lost result");
+        v.undoPull();check(v.boxes_[cylinder].shape.IsSame(before.shape),"cap Undo failed");v.redoPull();
+        check(BRepReconstruction::equivalent(v.boxes_[cylinder].shape,sharp),"cap Redo failed");
+    }
+    NativeDocumentSnapshot edited,reopened;QTemporaryDir temporary;
+    check(v.exportDocumentSnapshot(edited)&&NativeDocumentStorage::save(temporary.filePath("recovery.odc"),edited,error)
+        &&NativeDocumentStorage::load(temporary.filePath("recovery.odc"),reopened,error)&&v.importDocumentSnapshot(reopened,error),"recovered cap Save/Open failed");
+    auto staleFace=cap(doc.parts[cylinder].shape,true);
+    v.context_->ClearSelected(false);v.selectedPartIndices_.clear();
+    Handle(StdSelect_BRepOwner) stale=new StdSelect_BRepOwner(staleFace,v.boxes_[cylinder].presentation,5,true);
+    v.context_->AddOrRemoveSelected(stale,false);check(v.selectionContext().kind==CadViewport::SelectionContext::Kind::None,"stale topology became a command target");v.selectParts({});
+    check(v.boxes_[cylinder].blends.features.size()==1&&v.startEditEdgeBlend(cylinder,v.boxes_[cylinder].blends.features[0].faces.front()),"recovered cap lost editable recipe on Open");v.cancelCommandSession();
+    // Two separated circular transitions: Keep OFF removes only the moved rim.
+    auto circular=EdgeBlendFeatures::decode(generated.parts[0].edgeBlendRecipe);auto current=generated.parts[0].shape;
+    check(EdgeBlendFeatures::resolve(current,circular,error),qPrintable(error));
+    TopExp_Explorer lower(cap(current,false),TopAbs_EDGE);EdgeBlendFeatures::State two;TopoDS_Shape twoShape;
+    check(EdgeBlendFeatures::create(current,circular,TopoDS::Edge(lower.Current()),EdgeBlendFeatures::Kind::Fillet,10,two,twoShape,error),qPrintable(error));
+    for(bool keep:{false,true}) {
+        EdgeBlendFeatures::State after;TopoDS_Shape result;
+        check(EdgeBlendFeatures::move(twoShape,two,cap(twoShape,true),1,keep,after,result,error),qPrintable(error));
+        check(after.features.size()==(keep?2:1)&&BRepCheck_Analyzer(result).IsValid(),"two-rim cap edit lost separated Fillet");
+        check(std::any_of(after.features.begin(),after.features.end(),[](const auto& f){return std::abs(f.size-10)<1.e-10;}),"unaffected lower radius changed");strictTolerances(result);
+    }
+    load();auto before=v.boxes_[cylinder];auto transition=before.blends.features[0].faces.front();
+    check(v.startEditEdgeBlend(cylinder,transition),"Cylinder Edit Fillet failed");v.dragDimension_->setText("19");check(v.updateCommandParameter(false),"Cylinder radius edit failed");
+    check(BRepCheck_Analyzer(v.commandSession_->candidate).IsValid()&&std::abs(volume(v.commandSession_->candidate)-volume(before.shape))>1,"Cylinder Edit has no valid geometric effect");v.cancelCommandSession();
+    choose(v,cylinder,transition);v.deleteFace();check(v.commandSession_&&v.commandSession_->valid,"Cylinder Delete Fillet failed");v.confirmCommandSession();
+    check(BRepReconstruction::equivalent(v.boxes_[cylinder].shape,before.blends.sharp)&&v.boxes_[cylinder].blends.features.empty(),"Cylinder Delete did not restore sharp cylinder");
+    v.undoPull();check(v.boxes_[cylinder].shape.IsSame(before.shape),"Cylinder Delete Undo failed");v.redoPull();check(BRepCheck_Analyzer(v.boxes_[cylinder].shape).IsValid(),"Delete Redo invalid");
+    load();before=v.boxes_[cylinder];choose(v,cylinder,cap(before.shape,true));v.moveFace();v.dragDimension_->setText("-79");
+    check(!v.updateCommandParameter(false)&&!v.commandSession_->geometryError.isEmpty()&&v.commandSession_->candidate.IsNull(),"oversized Fillet accepted after cap collapse");
+    QTimer::singleShot(0,[]{for(auto* w:QApplication::topLevelWidgets())if(auto* box=qobject_cast<QMessageBox*>(w))box->accept();});
+    v.confirmCommandSession();check(v.boxes_[cylinder].shape.IsSame(before.shape)&&v.undoStack_.empty(),"failed cap edit mutated source/history");v.cancelCommandSession();
+    // Recipe-free conical transitions remain distinct from ordinary cone walls.
+    load();before=v.boxes_[cone];const auto coneStamp=geometryStamp(before.shape);int cones=0,tori=0,planes=0;
+    for(TopExp_Explorer it(before.shape,TopAbs_FACE);it.More();it.Next()) {
+        auto face=TopoDS::Face(it.Current());auto type=BRepAdaptor_Surface(face).GetType();
+        cones+=type==GeomAbs_Cone;tori+=type==GeomAbs_Torus;planes+=type==GeomAbs_Plane;
+        auto state=before.blends;check(!EdgeBlendFeatures::resolve(before.shape,state,error)&&!error.isEmpty()&&EdgeBlendFeatures::selected(state,face)<0,"cone misclassified as editable Chamfer");
+        check(!v.startEditEdgeBlend(cone,face)&&!status.isEmpty(),"uncertified cone Edit accepted silently");
+        choose(v,cone,face);v.startPrimitivePull();
+        if(type==GeomAbs_Plane) {
+            check(v.commandSession_&&v.commandSession_->face.IsSame(face),"cone cap Pull failed to initialize");
+            v.dragDimension_->setText("1");check(!v.updateCommandParameter(false)&&!v.commandSession_->geometryError.isEmpty(),"unsupported cone cap accepted");
+        } else check(!v.commandSession_&&!status.isEmpty(),"unsupported cone Pull accepted silently");
+        v.cancelCommandSession();choose(v,cone,face);v.moveFace();
+        if(type==GeomAbs_Plane) {check(v.commandSession_.has_value(),"cone cap Move failed to initialize");v.dragDimension_->setText("1");check(!v.updateCommandParameter(false)&&!v.commandSession_->geometryError.isEmpty(),"unsupported cone Move accepted");}
+        else check(!v.commandSession_&&!status.isEmpty(),"unsupported cone wall Move accepted silently");
+        v.cancelCommandSession();choose(v,cone,face);v.deleteFace();check(!v.commandSession_&&status.contains("toroidal"),"cone Delete session failed silently");
+        BRepReconstruction::Result result;
+        check(!DeleteFaceGeometry::remove(before.shape,{face},result,error)&&error.contains("toroidal"),"unsupported cone Delete not diagnosed");
+        check(v.boxes_[cone].shape.IsSame(before.shape)&&geometryStamp(before.shape)==coneStamp&&v.undoStack_.empty()&&v.redoStack_.empty(),"cone failure/Cancel changed geometry/history");
+    }
+    check(cones==2&&tori==1&&planes==2&&doc.parts[cone].edgeBlendRecipe.isEmpty(),"actual Cone 3 classification changed");
+    for(TopExp_Explorer it(before.shape,TopAbs_FACE);it.More();it.Next())if(BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType()==GeomAbs_Cone) {pickActual(v,cone,TopoDS::Face(it.Current()));break;}
+    // Ordinary cones retain the preexisting certified cap offset route.
+    v.resetModelingTools();v.addCone();const size_t ordinary=v.boxes_.size()-1;before=v.boxes_[ordinary];
+    auto state=before.blends;check(!EdgeBlendFeatures::resolve(before.shape,state,error),"ordinary cone is a Chamfer");
+    choose(v,ordinary,cap(before.shape,true));v.moveFace();check(v.commandSession_.has_value(),"ordinary cone Move unavailable");
+    v.dragDimension_->setText("1");check(v.updateCommandParameter(false),qPrintable(v.commandSession_->geometryError));
+    auto moved=v.commandSession_->candidate;check(BRepCheck_Analyzer(moved).IsValid()&&volume(moved)>volume(before.shape),"ordinary cone cap Move invalid/unchanged");v.cancelCommandSession();
+    choose(v,ordinary,cap(before.shape,true));v.startPrimitivePull();check(v.pullMode_&&v.arrowVisible_,"ordinary cone Pull unavailable");
+    v.fitAll();const auto target=CadViewport::ConePullTarget::TopDiameter;
+    const auto grab=v.coneArrowOrigin(v.boxes_[ordinary],target).Translated(gp_Vec(v.coneArrowDirection(target))*22).Transformed(v.boxes_[ordinary].orientation);
+    Standard_Integer gx,gy;v.view_->Convert(grab.X(),grab.Y(),grab.Z(),gx,gy);
+    check(v.beginArrowDrag(QPoint(gx,gy))&&v.conePullTarget_==target,"ordinary cone Pull target failed");
+    v.dragDimension_->setText("42");check(v.updateCommandParameter(false),"ordinary cone diameter Pull failed");
+    check(BRepCheck_Analyzer(v.boxes_[ordinary].shape).IsValid()&&volume(v.boxes_[ordinary].shape)>volume(before.shape),"ordinary cone Pull has no valid geometric effect");
+    v.cancelCommandSession();check(v.boxes_[ordinary].shape.IsSame(before.shape),"ordinary cone Pull Cancel failed");v.resetModelingTools();
+    // A conical through-hole is safely deletable, unlike a cone's exterior wall.
+    auto box=BRepPrimAPI_MakeBox(100,80,60).Shape();
+    auto hole=BRepAlgoAPI_Cut(box,BRepPrimAPI_MakeCone(gp_Ax2(gp_Pnt(30,40,-10),gp_Dir(0,0,1)),6,14,80).Shape()).Shape();
+    TopoDS_Face wall;for(TopExp_Explorer it(hole,TopAbs_FACE);it.More();it.Next())if(BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType()==GeomAbs_Cone)wall=TopoDS::Face(it.Current());
+    BRepReconstruction::Result result;check(!wall.IsNull()&&DeleteFaceGeometry::remove(hole,{wall},result,error),qPrintable(error));
+    check(BRepCheck_Analyzer(result.solid).IsValid()&&BRepReconstruction::equivalent(result.solid,box),"conical hole deletion did not restore stock");
+    auto holePart=v.boxes_[ordinary];holePart.shape=hole;holePart.conePrimitive=false;v.applyFaceState(ordinary,holePart);
+    choose(v,ordinary,cap(hole,true));v.startPrimitivePull();check(v.commandSession_.has_value(),"nonprimitive conical-hole cap Pull missing");
+    v.dragDimension_->setText("1");check(v.updateCommandParameter(false),qPrintable(v.commandSession_->geometryError));
+    check(BRepCheck_Analyzer(v.commandSession_->candidate).IsValid()&&volume(v.commandSession_->candidate)>volume(hole),"nonprimitive cone cap Pull invalid/unchanged");
+    v.cancelCommandSession();check(v.boxes_[ordinary].shape.IsSame(hole),"nonprimitive cap Pull Cancel changed geometry");
+}
+static void checkFilletDirection(CadViewport& v) {
+    const auto& s=*v.commandSession_;
+    if(s.kind!=CadViewport::CommandSession::Kind::Fillet)return;
+    const auto inverse=s.faceBefore->orientation.Inverted();
+    const auto anchor=s.editBlendId.isEmpty()?s.pivot:s.pivot.Translated(gp_Vec(s.direction)*s.value);
+    const auto inside=anchor.Translated(gp_Vec(s.direction)*0.001).Transformed(inverse);
+    const auto outside=anchor.Translated(gp_Vec(s.direction)*(-0.001)).Transformed(inverse);
+    check(BRepClass3d_SolidClassifier(s.faceBefore->shape,inside,1.e-7).State()==TopAbs_IN,"increasing radius direction must enter material");
+    check(BRepClass3d_SolidClassifier(s.faceBefore->shape,outside,1.e-7).State()==TopAbs_OUT,"decreasing radius direction must leave material");
+    bool cone=false;
+    for(TopExp_Explorer it(v.moveFaceArrow_->Shape(),TopAbs_FACE);it.More();it.Next()) {
+        BRepAdaptor_Surface surface(TopoDS::Face(it.Current()));
+        if(surface.GetType()!=GeomAbs_Cone)continue;
+        cone=true;
+        check(surface.Cone().Axis().Direction().Dot(s.direction)>0.999,"arrowhead disagrees with radius direction");
+        const auto tip=surface.Cone().Apex();
+        const auto expected=s.pivot.Translated(gp_Vec(s.direction)*s.value);
+        check(tip.Distance(expected)<1.e-6,"arrow tip is not at Fillet anchor");
+    }
+    check(cone,"Fillet arrowhead missing");
+}
+
+static void circular() {
+    CadViewport v;v.resize(1000,800);v.show();QApplication::processEvents();v.addCylinder();
+    gp_Trsf placement;placement.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),0.3);
+    placement.SetTranslationPart(gp_Vec(12,23,34));
+    v.applyPartState(0,v.boxes_[0].min,v.boxes_[0].max,placement);v.fitAll();QApplication::processEvents();
+    const auto original=v.boxes_[0];
+    TopoDS_Edge circularSelection;
+    auto arm=[&](bool preselected=false) {
+        if(preselected) {
+            v.selectParts({});
+            Handle(StdSelect_BRepOwner) owner=new StdSelect_BRepOwner(circularSelection,v.boxes_[0].presentation,5,Standard_True);
+            v.context_->AddOrRemoveSelected(owner,Standard_False);
+        }
+        v.fillet();bool picked=preselected && v.commandSession_->valid;
+        for(TopExp_Explorer it(v.boxes_[0].shape,TopAbs_EDGE);it.More()&&!picked;it.Next()) {
+            BRepAdaptor_Curve c(TopoDS::Edge(it.Current()));if(c.GetType()!=GeomAbs_Circle) continue;
+            for(int sample=0;sample<12&&!picked;++sample) {
+                auto p=c.Value(c.FirstParameter()+(c.LastParameter()-c.FirstParameter())*(sample+0.5)/12).Transformed(placement);
+                Standard_Integer x,y;v.view_->Convert(p.X(),p.Y(),p.Z(),x,y);
+                picked=v.pickEdgeBlend(QPoint(x,y));
+            }
+        }
+        check(picked&&v.commandSession_->valid,"circular typed picking/preselection preview failed");
+        circularSelection=v.commandSession_->edge;
+        checkFilletDirection(v);
+        check(!v.moveFaceArrow_.IsNull()&&!v.commandSession_->preview.IsNull(),"circular arrow/blue preview missing");
+    };
+    arm();v.cancelCommandSession();check(v.boxes_[0].shape.IsSame(original.shape)&&v.undoStack_.empty(),"circular Cancel changed document");
+    v.selectParts({});
+    Handle(StdSelect_BRepOwner) circularOwner=new StdSelect_BRepOwner(circularSelection,v.boxes_[0].presentation,5,Standard_True);
+    v.context_->AddOrRemoveSelected(circularOwner,Standard_False);v.chamfer();
+    check(v.boxes_[0].shape.IsSame(original.shape),"circular Chamfer adoption changed geometry");
+    check(!v.commandSession_->valid || BRepCheck_Analyzer(v.commandSession_->candidate).IsValid(),"circular Chamfer produced invalid preview");
+    check(v.commandSession_->valid || !v.commandButtons_->button(QDialogButtonBox::Ok)->isEnabled(),"unsupported circular Chamfer can be confirmed");
+    v.cancelCommandSession();
+    arm(true);v.dragDimension_->setText("2.345");check(v.updateCommandParameter(false),"circular numeric radius failed");
+    const auto& session=*v.commandSession_;
+    auto mid=session.pivot.Translated(gp_Vec(session.direction)*(session.value-15.5));
+    Standard_Integer x,y;v.view_->Convert(mid.X(),mid.Y(),mid.Z(),x,y);QPoint start(x,y);
+    check(v.beginMoveFaceDrag(start),"circular orange drag capture failed");
+    QPoint end=start+QPoint(int(std::round(v.dragScreenX_/v.dragMmPerPixel_)),int(std::round(v.dragScreenY_/v.dragMmPerPixel_)));
+    QMouseEvent drag(QEvent::MouseMove,QPointF(end),QPointF(end),Qt::NoButton,Qt::LeftButton,Qt::ShiftModifier);v.mouseMoveEvent(&drag);
+    check(v.commandSession_->valid&&v.commandSession_->value>2.345,"circular drag did not change radius");
+    QMouseEvent release(QEvent::MouseButtonRelease,QPointF(end),QPointF(end),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);v.mouseReleaseEvent(&release);
+    v.dragDimension_->setText("2.345");check(v.updateCommandParameter(false),"circular exact radius recovery");v.confirmCommandSession();
+    check(v.undoStack_.size()==1&&v.boxes_[0].blends.features.size()==1,"circular commit missing recipe/history");
+    v.undoPull();check(v.boxes_[0].shape.IsSame(original.shape),"circular Undo failed");v.redoPull();
+    TopoDS_Face cap,wall;
+    for(TopExp_Explorer it(v.boxes_[0].shape,TopAbs_FACE);it.More();it.Next()) {
+        auto f=TopoDS::Face(it.Current());BRepAdaptor_Surface a(f);
+        if(a.GetType()==GeomAbs_Plane) cap=f;
+        if(a.GetType()==GeomAbs_Cylinder) wall=f;
+    }
+    check(v.startMoveFace(0,cap),"ordinary circular supporting face selection failed");
+    v.dragDimension_->setText("1");check(v.updateCommandParameter(false)&&BRepCheck_Analyzer(v.commandSession_->candidate).IsValid(),"circular cap Keep ON reconstruction failed");
+    v.keepBlends_->setChecked(false);check(v.commandSession_->valid&&BRepCheck_Analyzer(v.commandSession_->candidate).IsValid(),"circular cap Keep OFF reconstruction failed");v.cancelCommandSession();
+    check(!v.startMoveFace(0,wall),"circular cylindrical support bypassed Keep refusal");
+    check(v.startEditEdgeBlend(0,v.boxes_[0].blends.features[0].faces.front()),"circular Edit unavailable");
+    checkFilletDirection(v);
+    check(std::abs(v.commandSession_->value-2.345)<1.e-9&&!v.moveFaceArrow_.IsNull(),"circular absolute radius/arrow incorrect");
+    v.dragDimension_->setText("1.25");v.confirmCommandSession();
+    NativeDocumentSnapshot saved,loaded;QTemporaryDir temp;QString error;
+    check(v.exportDocumentSnapshot(saved)&&NativeDocumentStorage::save(temp.filePath("circle.odc"),saved,error)
+        &&NativeDocumentStorage::load(temp.filePath("circle.odc"),loaded,error)&&v.importDocumentSnapshot(loaded,error),"circular native roundtrip failed");
+    check(v.startEditEdgeBlend(0,v.boxes_[0].blends.features[0].faces.front()),"loaded circular Edit unavailable");v.cancelCommandSession();
+    v.selectParts({0});v.duplicateSelectedParts();
+    check(v.startEditEdgeBlend(1,v.boxes_[1].blends.features[0].faces.front()),"duplicate circular Edit unavailable");
+    v.dragDimension_->setText("1.5");v.confirmCommandSession();
+    check(std::abs(v.boxes_[0].blends.features[0].size-1.25)<1.e-9,"duplicate circular edit changed original");
+    v.context_->ClearSelected(false);v.selectedPartIndices_.clear();
+    Handle(StdSelect_BRepOwner) owner=new StdSelect_BRepOwner(v.boxes_[0].blends.features[0].faces.front(),v.boxes_[0].presentation,5,true);
+    v.context_->AddOrRemoveSelected(owner,false);v.deleteFace();
+    check(v.commandSession_&&v.commandSession_->valid,"circular Delete preview unavailable");v.confirmCommandSession();
+    check(v.boxes_[0].blends.features.empty()&&std::abs(volume(v.boxes_[0].shape)-volume(original.shape))<1.e-6,"circular Delete did not restore sharp solid");
+    v.undoPull();check(v.boxes_[0].blends.features.size()==1,"circular Delete Undo lost recipe");
+}
+static void preselection() {
+    for(bool chamfer:{false,true}) {
+        CadViewport v;v.resize(1000,800);v.show();QApplication::processEvents();v.addBox();
+        const auto original=v.boxes_[0].shape;
+        TopExp_Explorer it(original,TopAbs_EDGE);const auto first=TopoDS::Edge(it.Current());it.Next();const auto second=TopoDS::Edge(it.Current());
+        const auto select=[&](const TopoDS_Shape& shape) {
+            Handle(StdSelect_BRepOwner) owner=new StdSelect_BRepOwner(shape,v.boxes_[0].presentation,5,Standard_True);
+            v.context_->AddOrRemoveSelected(owner,Standard_False);
+        };
+        v.startEdgeBlend(chamfer);check(!v.commandSession_->faceBefore,"empty selection adopted topology");v.cancelCommandSession();
+        v.selectParts({0});v.startEdgeBlend(chamfer);check(!v.commandSession_->faceBefore,"Part expanded into edges");v.cancelCommandSession();v.selectParts({});
+        TopExp_Explorer face(original,TopAbs_FACE);select(face.Current());v.startEdgeBlend(chamfer);
+        check(!v.commandSession_->faceBefore,"Face reinterpreted as Edge");v.cancelCommandSession();v.selectParts({});
+        QString message;QObject::connect(&v,&CadViewport::statusMessage,[&](const QString& text){message=text;});
+        select(first);select(second);v.startEdgeBlend(chamfer);
+        check(!v.commandSession_->faceBefore && message.contains("unsupported"),"multi-edge set silently truncated");
+        check(v.adoptEdgeBlend(0,second) && v.commandSession_->changes.size()==1,"cannot correct unsupported selection");
+        check(v.adoptEdgeBlend(0,first) && v.commandSession_->changes.size()==1 && v.commandSession_->edge.IsSame(first),"replacement Edge duplicated command changes");
+        v.cancelCommandSession();v.selectParts({});
+        const auto foreign=BRepPrimAPI_MakeBox(1,2,3).Shape();TopExp_Explorer stale(foreign,TopAbs_EDGE);
+        select(stale.Current());v.startEdgeBlend(chamfer);
+        check(!v.commandSession_->faceBefore && message.contains("unsupported"),"stale Edge adopted");v.cancelCommandSession();v.selectParts({});
+        select(first);select(face.Current());v.startEdgeBlend(chamfer);
+        check(!v.commandSession_->faceBefore && message.contains("unsupported"),"mixed selection reinterpreted");v.cancelCommandSession();v.selectParts({});
+        select(first);v.startEdgeBlend(chamfer);
+        check(v.commandSession_->valid && v.commandSession_->edge.IsSame(first) && !v.moveFaceArrow_.IsNull(),"preselected straight Edge not adopted with preview/arrow");
+        checkFilletDirection(v);
+        v.dragDimension_->setText("0");check(!v.updateCommandParameter(false),"invalid preselection value accepted");
+        v.dragDimension_->setText("1.23456789");check(v.updateCommandParameter(false),"exact preselection input failed");
+        QKeyEvent escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier);QApplication::sendEvent(v.commandPanel_,&escape);
+        check(!v.commandSession_ && v.boxes_[0].shape.IsSame(original) && v.undoStack_.empty(),"preselection Escape changed geometry/history");
+        v.selectParts({});select(first);v.startEdgeBlend(chamfer);v.confirmCommandSession();
+        check(v.undoStack_.size()==1 && !v.commandSession_,"preselection confirmation not atomic");
+        v.undoPull();check(v.boxes_[0].shape.IsSame(original),"preselection Undo failed");v.redoPull();check(v.undoStack_.size()==1,"preselection Redo failed");
+    }
+}
 static void run() {
     CadViewport v;v.resize(1000,800);v.show();QApplication::processEvents();v.addBox();v.addCylinder();
     const auto untouched=v.boxes_[1];
@@ -48,13 +397,14 @@ static void run() {
                 picked=v.pickEdgeBlend(QPoint(x,y));
         }
         check(picked && v.commandSession_->valid,"typed edge pick/preview failed");
+        checkFilletDirection(v);
         check(!v.moveFaceArrow_.IsNull(),"creation did not show orange Pull arrow");
     };
     for(bool chamfer:{false,true}) {
         arm(chamfer);
         check(v.boxes_[0].shape.IsSame(original.shape) && !v.commandSession_->preview.IsNull(),"preview changed canonical geometry");
         const auto& creation=*v.commandSession_;
-        const auto arrowMid=creation.pivot.Translated(gp_Vec(creation.direction)*(creation.value+15.5));
+        const auto arrowMid=creation.pivot.Translated(gp_Vec(creation.direction)*(creation.value+(chamfer?15.5:-15.5)));
         Standard_Integer ax,ay;v.view_->Convert(arrowMid.X(),arrowMid.Y(),arrowMid.Z(),ax,ay);QPoint dragStart(ax,ay);
         check(v.beginMoveFaceDrag(dragStart),"creation orange arrow did not capture");
         QPoint dragEnd=dragStart+QPoint(int(std::round(v.dragScreenX_*3/v.dragMmPerPixel_)),int(std::round(v.dragScreenY_*3/v.dragMmPerPixel_)));
@@ -139,9 +489,10 @@ static void features() {
         auto* edit=menu->findChild<QAction*>(i==0?"context.edit_fillet":"context.edit_chamfer");check(edit,"recognized transition missing Edit action");edit->trigger();
         check(v.commandSession_&&!v.moveFaceArrow_.IsNull()&&!v.commandSession_->preview.IsNull(),"Edit missing orange arrow or blue preview");
         check(std::abs(QLocale().toDouble(v.dragDimension_->text())-(i==0?5.:3.))<1.e-10,"Edit did not show absolute dimension");
+        checkFilletDirection(v);
         auto& session=*v.commandSession_;
         const auto origin=session.pivot.Translated(gp_Vec(session.direction)*session.value);
-        const auto midpoint=origin.Translated(gp_Vec(session.direction)*15.5);
+        const auto midpoint=origin.Translated(gp_Vec(session.direction)*(i==0?-15.5:15.5));
         Standard_Integer x,y;v.view_->Convert(midpoint.X(),midpoint.Y(),midpoint.Z(),x,y);
         const QPoint start(x,y);check(v.beginMoveFaceDrag(start),"orange arrow did not capture drag");
         const double initial=session.value;
@@ -218,6 +569,9 @@ static void features() {
 }
 
 };
-void runEdgeBlendSessions() {EdgeBlendSessionTest::run();}
+void runEdgeBlendSessions() {EdgeBlendSessionTest::preselection();EdgeBlendSessionTest::run();EdgeBlendSessionTest::circular();}
 
 void runEdgeBlendFeatureSessions() {EdgeBlendSessionTest::features();}
+
+void runRegressionDocumentProbe() {EdgeBlendSessionTest::recovery(true);}
+void runDirectModelingRecovery() {EdgeBlendSessionTest::recovery(false);}

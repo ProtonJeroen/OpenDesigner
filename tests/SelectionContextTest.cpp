@@ -14,6 +14,12 @@
 #include <QContextMenuEvent>
 #include <QMouseEvent>
 #include <QTimer>
+#include <QEventLoop>
+#include <BRepAdaptor_Curve.hxx>
+#include <Prs3d_Drawer.hxx>
+#include <Graphic3d_Group.hxx>
+#include <PrsMgr_Presentation.hxx>
+#include <Prs3d_LineAspect.hxx>
 #include <QTreeWidget>
 #include <QLineEdit>
 #include <QLabel>
@@ -25,6 +31,8 @@
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <Quantity_Color.hxx>
+#include <Image_PixMap.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
 #include <iostream>
 #include <stdexcept>
 namespace {
@@ -34,6 +42,103 @@ QAction* action(QMenu& menu,const char* id) {
 }
 }
 struct SelectionContextTest {
+    static void contourPixels() {
+        CadViewport v;v.resize(1000,800);v.show();QApplication::processEvents();v.addBox();
+        const Quantity_Color blue(135./255,206./255,250./255,Quantity_TOC_sRGB);
+        const auto blueAt=[&](const gp_Pnt& point) {
+            Standard_Integer width,height;v.view_->Window()->Size(width,height);
+            Image_PixMap pixels;require(v.view_->ToPixMap(pixels,width,height),"contour raster capture failed");
+            const auto p=project(v,point);
+            for(int dy=-3;dy<=3;++dy)for(int dx=-3;dx<=3;++dx)
+                if(pixels.PixelColor(p.x()+dx,p.y()+dy,true).GetRGB().Distance(blue)<0.03)return true;
+            return false;
+        };
+        for(bool reverse:{false,true}) {
+            v.view_->SetProj(reverse?-1:1,reverse?1:-1,1);v.fitAll();
+            v.view_->FitAll(0.1,Standard_False);v.selectParts({0});v.refreshActivePart();
+            const gp_Pnt front=reverse?gp_Pnt(0,80,30):gp_Pnt(100,0,30);
+            const gp_Pnt back=reverse?gp_Pnt(100,0,30):gp_Pnt(0,80,30);
+            require(blueAt(front),"selected Part missing visible sharp edge inside silhouette");
+            require(!blueAt(back),"selected Part shows occluded back edge");
+            v.selectParts({});chooseFace(v,0,topFace(v.boxes_[0].shape));v.refreshActivePart();
+            require(!blueAt(front),"selected Face leaked complete Part edge network");
+        }
+        v.selectParts({0});v.addBox();auto blocker=v.boxes_[1];
+        blocker.shape=BRepPrimAPI_MakeBox(gp_Pnt(-50,-50,-50),200,180,160).Shape();
+        v.applyFaceState(1,blocker);v.selectParts({0});v.refreshActivePart();
+        require(!blueAt(gp_Pnt(0,80,30)),"Part edge highlighted through another solid");
+    }
+    static void automatic() {
+        contourPixels();
+        CadViewport v;v.resize(1000,800);v.show();QApplication::processEvents();v.addBox();
+        v.view_->SetProj(V3d_Zpos);v.fitAll();v.view_->FitAll(0.1,Standard_False);QApplication::processEvents();
+        const auto face=project(v,gp_Pnt(50,40,60)),edge=project(v,gp_Pnt(100,40,60));
+        using Kind=CadViewport::SelectionContext::Kind;
+        click(v,edge);require(v.selectionContext().kind==Kind::Edges&&v.selectionContext().edges.size()==1,"first click did not select Edge");
+        auto selected=v.selectionContext().edges[0].edge;BRepAdaptor_Curve visible(selected);
+        require(std::abs(visible.Value((visible.FirstParameter()+visible.LastParameter())/2).Z()-60)<1.e-6,"occluded back edge won visible picking");
+        QEventLoop delayed;QTimer::singleShot(QApplication::doubleClickInterval()+50,&delayed,&QEventLoop::quit);delayed.exec();
+        click(v,edge);require(v.selectionContext().kind==Kind::Parts,"delayed Edge click did not promote to Part");
+        click(v,face);require(v.selectionContext().kind==Kind::Faces,"Part did not return to Face");
+        click(v,face);require(v.selectionContext().kind==Kind::Parts,"repeated Face click did not promote");
+        click(v,edge);require(v.selectionContext().kind==Kind::Edges,"Part did not return to Edge");
+        click(v,face);require(v.selectionContext().kind==Kind::Faces,"different element did not replace selection");
+        click(v,face,Qt::AltModifier);require(v.selectionContext().kind==Kind::Parts,"Alt click did not select Part");
+        v.selectParts({0});click(v,edge);require(v.selectionContext().kind==Kind::Edges,"browser Part could not return to Edge");
+        click(v,edge,Qt::ControlModifier);require(v.selectionContext().kind==Kind::None,"Ctrl did not toggle Edge off");
+        click(v,edge);click(v,project(v,gp_Pnt(0,40,60)),Qt::ControlModifier);
+        require(v.selectionContext().edges.size()==2,"Ctrl did not add a second Edge");
+        click(v,face,Qt::ControlModifier);require(v.selectionContext().kind==Kind::Faces&&v.selectionContext().faces.size()==1,"mixed-type Ctrl set was not restarted");
+        auto hover=[&](const QPoint& p,Qt::KeyboardModifiers modifiers=Qt::NoModifier) {
+            QMouseEvent event(QEvent::MouseMove,QPointF(p),QPointF(p),Qt::NoButton,Qt::NoButton,modifiers);v.mouseMoveEvent(&event);
+        };
+        const auto contourStyle=[&](const Quantity_Color& color,double width) {
+            const auto presentation=v.context_->MainPrsMgr()->Presentation(v.boxes_[0].presentation,AIS_Shaded);
+            for(const auto& group:presentation->Groups()) {
+                const auto aspect=group->Aspects();
+                if(!group->IsClosed() && !aspect.IsNull() && aspect->Color().IsEqual(color)
+                    && std::abs(aspect->LineWidth()-width*v.devicePixelRatioF())<0.001)return true;
+            }
+            return false;
+        };
+        hover(face);require(v.context_->HasDetected()&&v.context_->DetectedOwner()->IsSelected(),"selected Face could not be hovered");
+        require(v.context_->ToHilightSelected(),"hover over selected geometry disabled");
+        require(contourStyle(Quantity_Color(0.,1.,1.,Quantity_TOC_sRGB),4),"Face hover contour missing from shaded presentation");
+        QEvent faceLeave(QEvent::Leave);v.leaveEvent(&faceLeave);
+        require(contourStyle(Quantity_Color(135./255,206./255,250./255,Quantity_TOC_sRGB),2),"Face selection contour not restored after hover");
+
+        for(bool local:{false,true}) {
+            auto chosen=v.context_->HighlightStyle(local?Prs3d_TypeOfHighlight_LocalSelected:Prs3d_TypeOfHighlight_Selected);
+            auto dynamic=v.context_->HighlightStyle(local?Prs3d_TypeOfHighlight_LocalDynamic:Prs3d_TypeOfHighlight_Dynamic);
+            require(chosen->Color()==Quantity_Color(135./255,206./255,250./255,Quantity_TOC_sRGB),"selection is not light blue");
+            require(dynamic->Color()==Quantity_Color(0.,1.,1.,Quantity_TOC_sRGB),"hover is not cyan");
+            require(std::abs(chosen->LineAspect()->Aspect()->Width()-2*v.devicePixelRatioF())<0.01,"selected width not DPI aware");
+            require(std::abs(dynamic->LineAspect()->Aspect()->Width()-4*v.devicePixelRatioF())<0.01,"hover width not DPI aware");
+            require(chosen->ZLayer()==Graphic3d_ZLayerId_Top&&dynamic->ZLayer()==Graphic3d_ZLayerId_Top,"highlight lost depth-tested layer");
+        }
+        hover(face,Qt::AltModifier);require(v.context_->HasDetected(),"Part hover unavailable");
+        QEvent leave(QEvent::Leave);v.leaveEvent(&leave);require(!v.context_->HasDetected(),"hover persisted after leaving viewport");
+        click(v,QPoint(5,5));
+        require(v.selectionContext().kind==Kind::None,"empty click did not clear selection");
+        // A point well inside the face must not acquire nearby edge sensitivity.
+        click(v,face+QPoint(10,10));require(v.selectionContext().kind==Kind::Faces,"face interior snapped to Edge");
+        click(v,edge+QPoint(-2,0));require(v.selectionContext().kind==Kind::Edges,"near-edge aperture did not select Edge");
+        hover(edge+QPoint(-2,0));require(v.context_->HasDetected()&&v.context_->DetectedOwner()->IsSelected(),"selected Edge could not be hovered");
+        click(v,edge+QPoint(-15,0));require(v.selectionContext().kind==Kind::Faces,"edge aperture swallowed face interior");
+        CadViewport c;c.resize(1000,800);c.show();QApplication::processEvents();c.addCylinder();c.view_->SetProj(V3d_Zpos);c.fitAll();
+        QPoint rim;bool found=false;
+        for(TopExp_Explorer it(c.boxes_[0].shape,TopAbs_EDGE);it.More();it.Next()) {
+            BRepAdaptor_Curve curve(TopoDS::Edge(it.Current()));if(curve.GetType()!=GeomAbs_Circle) continue;
+            rim=project(c,curve.Value((curve.FirstParameter()+curve.LastParameter())/2));found=true;break;
+        }
+        require(found,"missing circle fixture");click(c,rim);
+        require(c.selectionContext().kind==Kind::Edges&&BRepAdaptor_Curve(c.selectionContext().edges[0].edge).GetType()==GeomAbs_Circle,"circular Edge picking failed");
+        c.fillet();require(c.commandSession_&&c.commandSession_->valid&&c.commandSession_->faceBefore,"Fillet Edge picking was promoted or lost");
+        c.confirmCommandSession();c.undoPull();require(c.selectionContext().kind==Kind::None,"Undo retained stale owner");c.redoPull();
+        click(c,project(c,gp_Pnt(0,0,0)));require(c.selectionContext().kind==Kind::Faces,"selection after replacement/Redo failed");
+        auto stale=owners(c);c.undoPull();c.redoPull();
+        for(const auto& owner:stale)require(!owner->IsSelected(),"geometry replacement kept old subshape selected");
+    }
     static QPoint project(const CadViewport& v,const gp_Pnt& p) {
         Standard_Integer x,y;v.view_->Convert(p.X(),p.Y(),p.Z(),x,y);return QPoint(x,y);
     }
@@ -43,7 +148,7 @@ struct SelectionContextTest {
         QMouseEvent release(QEvent::MouseButtonRelease,QPointF(point),QPointF(point),Qt::LeftButton,Qt::NoButton,modifiers);
         v.mouseReleaseEvent(&release);
     }
-    static auto owners(CadViewport& v) {
+    static std::vector<Handle(SelectMgr_EntityOwner)> owners(CadViewport& v) {
         std::vector<Handle(SelectMgr_EntityOwner)> result;
         for(v.context_->InitSelected();v.context_->MoreSelected();v.context_->NextSelected())result.push_back(v.context_->SelectedOwner());
         return result;
@@ -256,7 +361,9 @@ struct SelectionContextTest {
         require(v.beginArrowDrag(project(v,gp_Pnt(50,40,75))),"explicit Box Pull drag failed");
         v.previewCommand(5); require(v.undoStack_.size()==history,"Pull preview created history");
         v.cancelCommandSession(); idle(); require(v.boxes_[0].shape.IsSame(pullShape) && v.boxes_[0].max==pullMax,"Pull Cancel did not restore exact geometry");
-        click(v,p0); v.startPrimitivePull(); require(v.beginArrowDrag(project(v,gp_Pnt(50,40,75))),"second explicit Pull failed");
+        // Cancel retains the Face: a repeated click now intentionally promotes
+        // it. Start this independent modeling case from a fresh selection.
+        v.selectParts({});click(v,p0); v.startPrimitivePull(); require(v.beginArrowDrag(project(v,gp_Pnt(50,40,75))),"second explicit Pull failed");
         v.dragDimension_->setText("5"); v.confirmCommandSession(); idle(); require(v.undoStack_.size()==history+1,"Pull did not commit exactly once");
         v.undoPull(); idle(); require(v.boxes_[0].shape.IsSame(pullShape),"Pull Undo did not restore original");
         // Multi-Face Box Pull commits/rolls back the entire group in one history entry.
@@ -381,9 +488,12 @@ void runProfileRevolutionSessions();
 void runActivePartSessions();
 void runDeletePartSessions();
 void runEdgeBlendSessions();
+void runRegressionDocumentProbe();
+void runDirectModelingRecovery();
 void runEdgeBlendFeatureSessions();
 void runSketchEllipseSessions();
 void runSketchEllipseDrawing();
+void runSelectionContours();
 int main(int argc,char** argv) {
 #if defined(Q_OS_LINUX)
     if(qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM") && !qEnvironmentVariableIsEmpty("DISPLAY"))qputenv("QT_QPA_PLATFORM","xcb");
@@ -391,7 +501,11 @@ int main(int argc,char** argv) {
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc,argv);
     try {
-        if(app.arguments().contains("--edge-blend-features")) runEdgeBlendFeatureSessions();
+        if(app.arguments().contains("--contours")) runSelectionContours();
+        else if(app.arguments().contains("--automatic-selection")) SelectionContextTest::automatic();
+        else if(app.arguments().contains("--edge-blend-features")) runEdgeBlendFeatureSessions();
+        else if(app.arguments().contains("--direct-modeling-recovery")) runDirectModelingRecovery();
+        else if(app.arguments().contains("--regression-document")) runRegressionDocumentProbe();
         else if(app.arguments().contains("--edge-blends")) runEdgeBlendSessions();
         else if(app.arguments().contains("--delete-parts")) runDeletePartSessions();
         else if(app.arguments().contains("--active-part")) runActivePartSessions();

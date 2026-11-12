@@ -3,6 +3,9 @@
 #include "PartPresentation.h"
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepTools.hxx>
+#include <BRepFilletAPI_MakeFillet.hxx>
+#include <BRepFilletAPI_MakeChamfer.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <sstream>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
@@ -52,13 +55,13 @@ static void run() {
     AIS_ListOfInteractive displayedBefore;v.context_->DisplayedObjects(displayedBefore);
     const auto selectionColor=v.context_->SelectionStyle()->Color();
     const auto hoverColor=v.context_->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->Color();
-    const auto featureLines=[&](const Handle(AIS_Shape)& part,const Quantity_Color& color) {
+    const auto featureLines=[&](const Handle(AIS_Shape)& part,const Quantity_Color& color,double width=2.8) {
         const auto presentation=v.context_->MainPrsMgr()->Presentation(part,AIS_Shaded);
         if(presentation.IsNull())return false;
         for(const auto& group:presentation->Groups()) {
             const auto aspect=group->Aspects();
             if(!group->IsClosed() && !aspect.IsNull() && aspect->Color().IsEqual(color)
-                && std::abs(aspect->LineWidth()-2.8)<0.001)return true;
+                && std::abs(aspect->LineWidth()-width*v.devicePixelRatioF())<0.001)return true;
         }
         return false;
     };
@@ -83,7 +86,7 @@ static void run() {
         return double(drawer->FaceBoundaryAspect()->Aspect()->Width());
     };
     auto drawer=v.boxes_[0].presentation->Attributes();
-    check(std::abs(outlineWidth(*drawer->ShadingAspect()->Aspect(),drawer)-2.8)<0.001,"active outline width wrong");
+    check(std::abs(outlineWidth(*drawer->ShadingAspect()->Aspect(),drawer)-2.8*v.devicePixelRatioF())<0.001,"active outline width wrong");
     check(v.context_->SelectionStyle()->ZLayer()==Graphic3d_ZLayerId_Top
         && v.viewer_->ZLayerSettings(Graphic3d_ZLayerId_Top).ToEnableDepthTest()
         && !v.viewer_->ZLayerSettings(Graphic3d_ZLayerId_Top).ToClearDepth(),"whole Part selection ignores scene depth");
@@ -92,10 +95,13 @@ static void run() {
     v.selectParts({0});
     check(outlineColor(*drawer->ShadingAspect()->Aspect(),drawer).IsEqual(selectionColor)
         && !drawer->FaceBoundaryDraw() && !drawer->ShadingAspect()->Aspect()->ToDrawEdges()
-        && std::abs(outlineWidth(*drawer->ShadingAspect()->Aspect(),drawer)-2.8)<0.001,"selected silhouette did not override Active Part in cyan");
+        && std::abs(outlineWidth(*drawer->ShadingAspect()->Aspect(),drawer)-2*v.devicePixelRatioF())<0.001,"selected silhouette did not override Active Part in cyan");
     check(v.context_->IsSelected(v.boxes_[0].presentation->GlobalSelOwner())
         && !v.context_->MainPrsMgr()->IsHighlighted(v.boxes_[0].presentation,AIS_WireFrame),"whole Part still draws selection wireframe edges");
-    check(featureLines(v.boxes_[0].presentation,selectionColor),"selected feature edges did not take cyan priority");
+    check(featureLines(v.boxes_[0].presentation,selectionColor,2),"selected Part lost styled sharp edges");
+    TopTools_IndexedMapOfShape selectedEdges;
+    TopExp::MapShapes(dynamic_cast<PartPresentation*>(v.boxes_[0].presentation.get())->highlightedEdges(),TopAbs_EDGE,selectedEdges);
+    check(selectedEdges.Extent()==12,"selected box lost physical sharp edges");
     check(v.boxes_[0].shape.IsSame(shape) && v.partColor(0)==color,"selected contour changed geometry/material");
     v.selectParts({1});
     check(outlineColor(*drawer->ShadingAspect()->Aspect(),drawer).IsEqual(expectedGreen)
@@ -191,6 +197,8 @@ static void run() {
     check(edgeCount(sewing.SewedShape())==7 && edgeCount(PartPresentation::featureEdges(sewing.SewedShape()))==6,
         "geometrically tangent join was highlighted");
     v.setActivePart(v.partId(0));v.selectParts({0});
+    check(edgeCount(dynamic_cast<PartPresentation*>(cylinder.get())->highlightedEdges())==2,
+        "selected cylinder lost physical cap boundaries");
     auto cylinderDrawer=cylinder->Attributes();
     check(outlined(cylinder) && !cylinderDrawer->FaceBoundaryDraw()
         && !cylinderDrawer->ShadingAspect()->Aspect()->ToDrawEdges()
@@ -223,3 +231,75 @@ static void run() {
 }
 };
 void runActivePartSessions(){ActivePartSessionTest::run();}
+
+void runSelectionContours() {
+    const auto count=[](const TopoDS_Shape& shape) {
+        TopTools_IndexedMapOfShape edges;TopExp::MapShapes(shape,TopAbs_EDGE,edges);return edges.Extent();
+    };
+    const auto box=BRepPrimAPI_MakeBox(20,30,40).Shape();
+    check(count(PartPresentation::featureEdges(box))==12,"box lost sharp planar intersections");
+    const auto cylinder=BRepPrimAPI_MakeCylinder(10,30).Shape();
+    check(count(PartPresentation::featureEdges(cylinder))==2,"Part lost circular cap boundaries");
+    std::ostringstream beforeContour;BRepTools::Write(cylinder,beforeContour);
+    TopoDS_Face side,cap;
+    for(TopExp_Explorer it(cylinder,TopAbs_FACE);it.More();it.Next()) {
+        auto f=TopoDS::Face(it.Current());
+        if(BRepAdaptor_Surface(f).GetType()==GeomAbs_Cylinder)side=f;else cap=f;
+    }
+    for(const auto direction:{gp_Dir(1,0,0),gp_Dir(0,1,0),gp_Dir(1,1,1)}) {
+        const HLRAlgo_Projector projector(gp_Ax2(gp_Pnt(),direction));
+        const auto contour=PartPresentation::faceContour(side,projector);
+        int generators=0;
+        for(TopExp_Explorer it(contour,TopAbs_EDGE);it.More();it.Next()) {
+            BRepAdaptor_Curve curve(TopoDS::Edge(it.Current()));
+            if(curve.GetType()!=GeomAbs_Line)continue;
+            const auto mid=curve.Value((curve.FirstParameter()+curve.LastParameter())/2);
+            // Silhouette generators lie in the axial plane perpendicular to view.
+            check(std::abs(mid.X()*direction.X()+mid.Y()*direction.Y())<1e-5,
+                  "cylinder contour retained its front seam instead of silhouette");
+            ++generators;
+        }
+        check(count(contour)>2,"curved Face lost visible trimmed rims");
+        check(generators==2,"curved Face lost view-dependent silhouette generators");
+    }
+    PartPresentation cached(cylinder);
+    const HLRAlgo_Projector orthographic(gp_Ax2(gp_Pnt(),gp_Dir(1,0,0)));
+    const std::vector<PartPresentation::FaceContour> selectedFace{{side,Quantity_NOC_LIGHTBLUE,2.}};
+    check(cached.setFaceContours(selectedFace,orthographic),"initial Face contour not generated");
+    check(!cached.setFaceContours(selectedFace,orthographic),"unchanged Face contour cache missed");
+    check(cached.setFaceContours(selectedFace,HLRAlgo_Projector(gp_Ax2(gp_Pnt(),gp_Dir(0,1,0)))),"camera rotation did not invalidate Face contour");
+    std::ostringstream afterContour;BRepTools::Write(cylinder,afterContour);
+    check(beforeContour.str()==afterContour.str(),"Face contour rendering mutated canonical BRep");
+    check(count(PartPresentation::faceContour(cap,HLRAlgo_Projector(gp_Ax2(gp_Pnt(),gp_Dir(0,0,1)))))==1,
+          "planar disk contour lost its outline");
+    TopExp_Explorer rim(cylinder,TopAbs_EDGE);
+    BRepFilletAPI_MakeFillet fillet(cylinder);fillet.Add(2,TopoDS::Edge(rim.Current()));fillet.Build();
+    check(fillet.IsDone(),"contour fillet fixture failed");
+    std::vector<TopoDS_Face> blends;
+    for(TopExp_Explorer it(fillet.Shape(),TopAbs_FACE);it.More();it.Next())
+        if(BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType()==GeomAbs_Torus)blends.push_back(TopoDS::Face(it.Current()));
+    check(blends.size()==1,"missing toroidal Fillet fixture");
+    check(PartPresentation::geometricFilletFaces(fillet.Shape()).size()==1,"imported toroidal Fillet not classified geometrically");
+    check(PartPresentation::geometricFilletFaces(cylinder).empty(),"ordinary cylinder misclassified as Fillet");
+    for(const auto direction:{gp_Dir(1,0,0),gp_Dir(1,1,1)})
+        check(count(PartPresentation::faceContour(blends.front(),HLRAlgo_Projector(gp_Ax2(gp_Pnt(),direction))))>0,
+              "toroidal Face lost visible contour under camera rotation");
+    check(count(PartPresentation::featureEdges(fillet.Shape(),blends,true))==2,
+          "Part contour lost tangent Fillet transitions or kept unrelated edges");
+    check(count(PartPresentation::featureEdges(fillet.Shape()))==count(PartPresentation::featureEdges(fillet.Shape(),blends)),
+          "analytic boundaries depend on Fillet-specific classification");
+    check(count(PartPresentation::featureEdges(fillet.Shape(),blends))>=3,
+          "Part lost sharp circular boundaries alongside tangent transitions");
+    BRepFilletAPI_MakeFillet roundedBox(box);TopExp_Explorer boxEdge(box,TopAbs_EDGE);
+    roundedBox.Add(2,TopoDS::Edge(boxEdge.Current()));roundedBox.Build();
+    check(roundedBox.IsDone() && count(PartPresentation::featureEdges(roundedBox.Shape()))>12,
+          "filleted box lost sharp or tangent design edges");
+    BRepFilletAPI_MakeChamfer chamfer(box);TopExp_Explorer sharp(box,TopAbs_EDGE);
+    chamfer.Add(2,TopoDS::Edge(sharp.Current()));chamfer.Build();
+    check(chamfer.IsDone() && count(PartPresentation::featureEdges(chamfer.Shape()))>12,
+          "Chamfer boundaries missing from Part features");
+    gp_Trsf transform;transform.SetTranslation(gp_Vec(100,20,40));
+    const auto shifted=TopoDS::Face(side.Moved(TopLoc_Location(transform)));
+    check(count(PartPresentation::faceContour(shifted,HLRAlgo_Projector(gp_Ax2(gp_Pnt(100,20,40),gp_Dir(1,0,0)))))==
+          count(PartPresentation::faceContour(side,HLRAlgo_Projector(gp_Ax2(gp_Pnt(),gp_Dir(1,0,0))))),"transformed Face changed contour topology");
+}

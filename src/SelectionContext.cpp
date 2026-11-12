@@ -1,5 +1,6 @@
 #include "CadViewport.h"
 #include <QIcon>
+#include <TColStd_ListOfInteger.hxx>
 #include "MoveFaceGeometry.h"
 #include "BRepReconstruction.h"
 #include "CylindricalMoveGeometry.h"
@@ -29,7 +30,7 @@
 CadViewport::SelectionContext CadViewport::selectionContext() const {
     SelectionContext result;
     if (context_.IsNull()) return result;
-    bool faces=false,parts=false;
+    bool faces=false,parts=false,edges=false;
     for (context_->InitSelected();context_->MoreSelected();context_->NextSelected()) {
         const auto object=context_->SelectedInteractive();
         bool sketch=false;
@@ -56,25 +57,49 @@ CadViewport::SelectionContext CadViewport::selectionContext() const {
                 if(f.Current().IsSame(face)) member=true;
             if(!member) return {}; // Never offer an edit for stale topology.
             result.faces.push_back({index,face}); faces=true;
+        } else if(!owner.IsNull()&&!owner->Shape().IsNull()&&owner->Shape().ShapeType()==TopAbs_EDGE) {
+            const auto edge=TopoDS::Edge(owner->Shape());bool member=false;
+            for(TopExp_Explorer it(boxes_[index].shape,TopAbs_EDGE);it.More();it.Next()) if(it.Current().IsSame(edge)) member=true;
+            if(!member) return {};
+            result.edges.push_back({index,edge});edges=true;
         } else parts=true;
     }
     if(!result.sketches.empty()) {
-        if(faces || parts || !result.constructions.empty()) return {};
+        if(faces || parts || edges || !result.constructions.empty()) return {};
         result.kind=SelectionContext::Kind::Sketches;return result;
     }
     if(!result.constructions.empty()) {
-        if(faces || parts) return {};
+        if(faces || parts || edges) return {};
         result.kind=SelectionContext::Kind::Constructions;return result;
     }
-    if(!faces && !parts) {
+    if(!faces && !parts && !edges) {
         // Some existing Undo paths refresh geometry before restoring OCCT owners.
         // Whole-part IDs remain authoritative; face picks clear this list explicitly.
         for(const auto index:selectedPartIndices_) if(isPartVisible(index)) result.parts.push_back(index);
         parts=!result.parts.empty();
     }
-    if(faces && parts) return {};
-    result.kind=faces ? SelectionContext::Kind::Faces : parts ? SelectionContext::Kind::Parts : SelectionContext::Kind::None;
+    if(int(faces)+int(parts)+int(edges)>1) return {};
+    result.kind=edges ? SelectionContext::Kind::Edges : faces ? SelectionContext::Kind::Faces : parts ? SelectionContext::Kind::Parts : SelectionContext::Kind::None;
     return result;
+}
+// Normal viewport picking shares AIS owners with commands. Only change active
+// modes when needed; repeated hover must not recreate owners or lose selection.
+void CadViewport::activateAutomaticSelection(bool parts) {
+    for(auto& part:boxes_) if(part.active&&part.visible) {
+        TColStd_ListOfInteger modes;context_->ActivatedModes(part.presentation,modes);
+        bool global=false,face=false,edge=false;
+        for(int mode:modes) {global|=mode==0;face|=mode==AIS_Shape::SelectionMode(TopAbs_FACE);edge|=mode==AIS_Shape::SelectionMode(TopAbs_EDGE);}
+        if(parts?global&&!face&&!edge:!global&&face&&edge) continue;
+        context_->Deactivate(part.presentation);
+        if(parts) context_->Activate(part.presentation,0,Standard_False);
+        else {
+            context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
+            context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_EDGE),Standard_False);
+        }
+    }
+    // QMouseEvent and the native view use logical viewport coordinates. Keep a
+    // four-logical-pixel aperture rather than scaling it a second time on HiDPI.
+    if(context_->PixelTolerance()!=4) context_->SetPixelTolerance(4);
 }
 void CadViewport::setSelectionMode(SelectionMode mode) {
     if(selectionMode_==mode && !(mode==SelectionMode::Face && (movePartMode_ || directMoveMode_ || rotateMode_))) return;
@@ -125,8 +150,10 @@ bool CadViewport::supportsResize(const SelectionContext& selection) const {
         const bool primitive=recognizePullPrimitive(part);
         const BRepAdaptor_Surface surface(selected.face);
         if(selection.faces.size()==1 && primitive) return true;
-        if(selection.faces.size()==1&&surface.GetType()==GeomAbs_Plane)
-            return bool(CylindricalMoveGeometry::bossHeightReference(part.shape,selected.face));
+        if(selection.faces.size()==1&&surface.GetType()==GeomAbs_Plane) {
+            gp_Pnt center;gp_Dir normal;QString error;
+            return MoveFaceGeometry::reference(part.shape,selected.face,center,normal,error);
+        }
         if(selection.faces.size()==1 && surface.GetType()==GeomAbs_Cylinder) {
             double volume=0.0;
             return BRepReconstruction::validSolid(part.shape,volume);
@@ -162,7 +189,10 @@ QMenu* CadViewport::createSelectionMenu(const QPoint& anchor) {
     else if(selection.kind==SelectionContext::Kind::Parts) populatePartMenu(*menu,selection);
     else if(selection.kind==SelectionContext::Kind::Constructions) populateConstructionMenu(*menu);
     else if(selection.kind==SelectionContext::Kind::Sketches) populateSketchMenu(*menu);
-    else populateFaceMenu(*menu,selection,anchor);
+    else if(selection.kind==SelectionContext::Kind::Edges) {
+        connect(menu->addAction(tr("Fillet")),&QAction::triggered,this,&CadViewport::fillet);
+        connect(menu->addAction(tr("Chamfer")),&QAction::triggered,this,&CadViewport::chamfer);
+    } else populateFaceMenu(*menu,selection,anchor);
     if(selection.kind==SelectionContext::Kind::Parts || selection.kind==SelectionContext::Kind::Faces) {
         menu->addSeparator();
         auto* fit=menu->addAction(tr("Fit Selected"));fit->setObjectName("context.fit_selected");
@@ -281,9 +311,10 @@ void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection
     const bool moveSupported=blendIndex>=0 || supported || (selection.faces.size()==1 && moveFaceReference(
         boxes_[selection.faces.front().partIndex].shape,selection.faces.front().face,feature,center,direction,error));
     const bool cylinder=selection.faces.size()==1&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Cylinder;
-    if(!moveSupported&&!cylinder) { delete move; move=nullptr; }
+    const bool cone=selection.faces.size()==1&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Cone;
+    if(!moveSupported&&!cylinder&&!cone) { delete move; move=nullptr; }
     else {
-        move->setEnabled(moveSupported);move->setToolTip(error);move->setStatusTip(error);
+        move->setEnabled(moveSupported||cone);move->setToolTip(error);move->setStatusTip(error);
         if(!moveSupported) menu.setToolTipsVisible(true);
     }
     if(move) connect(move,&QAction::triggered,this,&CadViewport::moveFace);
@@ -310,7 +341,8 @@ void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection
         }
     }
     auto* resize=menu.addAction(tr("Pull / Resize"));resize->setObjectName(QStringLiteral("context.resize"));
-    if(!supportsResize(selection)) { delete resize; return; }
+    const bool conicalTarget=selection.faces.size()==1&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Cone;
+    if(!supportsResize(selection)&&!conicalTarget) { delete resize; return; }
     connect(resize,&QAction::triggered,this,[this,anchor]() { previous_=anchor; startPrimitivePull(); });
 }
 void CadViewport::contextMenuEvent(QContextMenuEvent* event) {
@@ -383,6 +415,7 @@ void CadViewport::resetModelingTools() {
     emit transformModesChanged(false,false,false);
     emit selectionModeChanged(selectionMode_);
     refreshSketchPicking();
+    if(!context_.IsNull()) {context_->ClearDetected(Standard_False);refreshActivePart();}
     if(!view_.IsNull()) view_->Redraw();
 }
 void CadViewport::startPrimitivePull() {
@@ -399,8 +432,27 @@ void CadViewport::startPrimitivePull() {
             }
         }
     }
+    if(selection.faces.size()==1) {
+        const auto& selected=selection.faces.front();auto part=boxes_[selected.partIndex];
+        if(BRepAdaptor_Surface(selected.face).GetType()==GeomAbs_Plane&&!recognizePullPrimitive(part)
+           &&!CylindricalMoveGeometry::bossHeightReference(part.shape,selected.face)) {
+            if(startMoveFace(selected.partIndex,selected.face)) commandPanel_->setWindowTitle(tr("Pull / Resize Preview"));
+            return;
+        }
+        auto state=part.blends;QString diagnostic;
+        if(BRepAdaptor_Surface(selected.face).GetType()==GeomAbs_Cylinder&&EdgeBlendFeatures::resolve(part.shape,state,diagnostic)
+           &&std::any_of(state.features.begin(),state.features.end(),[](const auto& feature){return feature.cylinders[0]||feature.cylinders[1];})) {
+            emit statusMessage(tr("Pull / Resize of a cylindrical support with circular Fillets is not certified. Planar cap Pull and Edit Fillet remain available."));return;
+        }
+    }
     if(!supportsResize(selection)) {
-        emit statusMessage(tr("Pull / Resize: the selected faces have no certified individual or joint reconstruction. No command started."));
+        if(selection.faces.size()==1&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Cone)
+            emit statusMessage(tr("Pull / Resize: this conical face is not a complete editable cone primitive or a certified transition. Conical support reconstruction with transitions is unsupported; original geometry was kept."));
+        else if(selection.faces.size()==1&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Torus)
+            emit statusMessage(tr("Pull / Resize: this toroidal transition has no certified Fillet recipe or sharp source. Original geometry was kept."));
+        else if(selection.kind==SelectionContext::Kind::Parts)
+            emit statusMessage(tr("Pull / Resize: select a Face first. Part selection does not identify a Face to resize. No command started."));
+        else emit statusMessage(tr("Pull / Resize: the selected faces have no certified individual or joint reconstruction. No command started."));
         return;
     }
     if(!selection.faces.empty()&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Cylinder) {
