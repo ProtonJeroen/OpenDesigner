@@ -6,6 +6,7 @@
 #include <gp_Pln.hxx>
 #include <gp_Circ.hxx>
 #include <gp_Cylinder.hxx>
+#include <gp_Cone.hxx>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -175,6 +176,26 @@ int main() {
     check(resolved.frame.Location().IsEqual(gp_Pnt(0,0,5).Transformed(placement),1.e-9),"face placement");
     const auto saved=compute(Method::PlaneFace,{resolved}); // No source handle retained.
     resolved.frame.SetLocation(gp_Pnt(900,900,900));check(saved.frame.Location().Distance(resolved.frame.Location())>100,"persistent construction dependency");
+    // v0.5.3: cone axes through the same Cylinder role, with placement.
+    {
+        const auto cone=BRepBuilderAPI_MakeFace(gp_Cone(gp_Ax3(gp_Pnt(1,2,3),gp_Dir(0,0,1)),0.3,10),0,6.28318530717958647692,0,20).Face();
+        check(resolve(cone,placement,ReferenceKind::Cylinder,resolved,error),"conical face axis resolver");
+        check(resolved.frame.Location().IsEqual(gp_Pnt(1,2,3).Transformed(placement),1.e-9)
+            && resolved.frame.Direction().IsEqual(gp_Dir(0,0,1).Transformed(placement),1.e-12),"cone axis placement");
+        const auto axisFromCone=compute(Method::AxisCylinder,{resolved});
+        check(axisFromCone.kind==Kind::Axis && axisFromCone.frame.Direction().IsEqual(resolved.frame.Direction(),1.e-12),"Axis from cone");
+        check(!resolve(BRepBuilderAPI_MakeFace(gp_Pln(),-1,1,-1,1).Face(),placement,ReferenceKind::Cylinder,resolved,error),"plane accepted as cone/cylinder");
+    }
+    // v0.5.3: Axis normal to a plane through the projection of a point.
+    {
+        const auto tilted=ref(ReferenceKind::Plane,gp_Pnt(10,0,0),gp_Dir(1,1,0));
+        const auto normal=compute(Method::AxisFaceNormal,{tilted,ref(ReferenceKind::Point,gp_Pnt(0,0,7))});
+        check(normal.frame.Direction().IsEqual(gp_Dir(1,1,0),1.e-12),"face normal axis direction");
+        point(normal,5,5,7); // projection of (0,0,7) onto x+y=10
+        Request reversed{Method::AxisFaceNormal,{tilted,ref(ReferenceKind::Point,gp_Pnt(0,0,7))},{},{},0,true};Object r;r.id="r";r.name="R";
+        check(build(reversed,r,error) && r.frame.Direction().IsEqual(gp_Dir(-1,-1,0),1.e-12),"face normal axis Reverse");
+        rejects(Method::AxisFaceNormal,{tilted});
+    }
     std::cout<<"All construction methods, analytic references and refusal checks passed.\n";return 0;
  } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

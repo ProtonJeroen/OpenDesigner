@@ -97,9 +97,10 @@ const std::vector<Definition>& definitions() {
         {M::AxisPlanes,K::Axis,"Intersection of workplanes",{{"First plane",R::Plane},{"Second plane",R::Plane}},{},{},{}},
         {M::AxisFaces,K::Axis,"Intersection of planar faces",{{"First plane",R::Plane},{"Second plane",R::Plane}},{},{},{}},
         {M::AxisEdge,K::Axis,"From straight edge",{{"Edge",R::Line}},{},{},{}},
-        {M::AxisCylinder,K::Axis,"From cylindrical face",{{"Cylinder",R::Cylinder}},{},{},{}},
+        {M::AxisCylinder,K::Axis,"From cylindrical / conical face",{{"Cylinder / cone",R::Cylinder}},{},{},{}},
         {M::AxisPointDirection,K::Axis,"Point and direction",{{"Origin",R::Point}},"World direction",{},{}},
         {M::AxisNormalPlane,K::Axis,"Normal to workplane",{{"Plane",R::Plane}},{},{},{}},
+        {M::AxisFaceNormal,K::Axis,"Face / workplane normal at point",{{"Plane",R::Plane},{"Point",R::Point}},{},{},{}},
         {M::AxisMove,K::Axis,"Move axis",{{"Axis",R::Axis}},"World displacement (mm)",{},{},true},
         {M::AxisRotate,K::Axis,"Rotate axis",{{"Axis",R::Axis}},"World axis direction",{},"Angle (degrees)",true},
         {M::PointXYZ,K::Point,"XYZ coordinates",{},"Position (mm)",{},{}},
@@ -186,8 +187,8 @@ bool resolve(const TopoDS_Shape& shape,const gp_Trsf& placement,ReferenceKind ex
                 r.frame=surface.Plane().Position().Transformed(placement);
                 if(shape.Orientation()==TopAbs_REVERSED) { r.frame.ZReverse();r.frame.YReverse(); }
             } else {
-                require(surface.GetType()==GeomAbs_Cylinder,"Select a cylindrical face.");
-                r.frame=surface.Cylinder().Position().Transformed(placement);
+                require(surface.GetType()==GeomAbs_Cylinder || surface.GetType()==GeomAbs_Cone,"Select a cylindrical or conical face.");
+                r.frame=(surface.GetType()==GeomAbs_Cylinder?surface.Cylinder().Position():surface.Cone().Position()).Transformed(placement);
             }
         } else if(shape.ShapeType()==TopAbs_EDGE && (expected==ReferenceKind::Line || expected==ReferenceKind::Circle || expected==ReferenceKind::Edge)) {
             BRepAdaptor_Curve curve(TopoDS::Edge(shape));
@@ -285,6 +286,11 @@ bool build(const Request& q,Object& result,QString& error) {
         case Method::AxisPlanes: case Method::AxisFaces: out=intersectPlanes(a,b);break;
         case Method::AxisEdge: case Method::AxisCylinder: case Method::AxisNormalPlane: break;
         case Method::AxisPointDirection: out=normalFrame(a.Location(),q.vector);break;
+        case Method::AxisFaceNormal: {
+            // Orthogonal projection of the point onto the infinite support plane.
+            const gp_Vec normal(a.Direction());
+            out=normalFrame(b.Location().Translated(normal*(-gp_Vec(a.Location(),b.Location()).Dot(normal))),normal);break;
+        }
         case Method::PointXYZ: out=point(gp_Pnt(q.vector.XYZ()));break;
         case Method::PointVertex: out=point(a.Location());break;
         case Method::PointEdgeMiddle: require(!q.references[0].closed,"A closed edge has no unique midpoint.");out=point(q.references[0].midpoint);break;

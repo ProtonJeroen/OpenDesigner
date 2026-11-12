@@ -35,7 +35,8 @@ enum class Method {
     AxisNormalPlane, AxisMove, AxisRotate,
     PointXYZ, PointVertex, PointEdgeMiddle, PointOnAxis, PointAxisPlane, PointAxes,
     PointCircleCenter, PointOffset, PointProject, PlaneMidplane,
-    PlaneXY, PlaneXZ, PlaneYZ
+    PlaneXY, PlaneXZ, PlaneYZ,
+    AxisFaceNormal // v0.5.3: normal of a plane through the projection of a point
 };
 struct Role { QString name; ReferenceKind kind; };
 struct Definition {
