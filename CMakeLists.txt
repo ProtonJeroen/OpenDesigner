@@ -249,7 +249,7 @@ if(OPENDESIGNER_BUILD_TESTS)
     set_tests_properties(cylindrical-move-face-sessions cylindrical-move-face-sessions-hidpi PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
     set_tests_properties(cylindrical-move-face-sessions-hidpi PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=2")
     add_executable(OpenDesignerSelectionContextTests
-        tests/SelectionContextTest.cpp tests/DeletePartSessionTest.cpp tests/ActivePartSessionTest.cpp tests/ProfileExtrusionSessionTest.cpp tests/ProfileRevolutionSessionTest.cpp tests/SketchDisplayBoundsSessionTest.cpp tests/WorkplaneRenderingTest.cpp tests/NativeDocumentSessionTest.cpp tests/ConstructionSessionTest.cpp tests/SketchSessionTest.cpp tests/SketchDrawingTest.cpp tests/SketchOrthogonalLineTest.cpp tests/SketchOverdrawSessionTest.cpp tests/SketchConstructionSessionTest.cpp tests/SketchReleaseSessionTest.cpp tests/SketchPointSessionTest.cpp tests/SketchEllipseSessionTest.cpp tests/SketchEllipseDrawingTest.cpp tests/CommandPanelSessionTest.cpp tests/SketchProjectionSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
+        tests/SelectionContextTest.cpp tests/DeletePartSessionTest.cpp tests/ActivePartSessionTest.cpp tests/ProfileExtrusionSessionTest.cpp tests/ProfileRevolutionSessionTest.cpp tests/SketchDisplayBoundsSessionTest.cpp tests/WorkplaneRenderingTest.cpp tests/NativeDocumentSessionTest.cpp tests/ConstructionSessionTest.cpp tests/SketchSessionTest.cpp tests/SketchDrawingTest.cpp tests/SketchOrthogonalLineTest.cpp tests/SketchOverdrawSessionTest.cpp tests/SketchConstructionSessionTest.cpp tests/SketchReleaseSessionTest.cpp tests/SketchPointSessionTest.cpp tests/SketchEllipseSessionTest.cpp tests/SketchEllipseDrawingTest.cpp tests/CommandPanelSessionTest.cpp tests/SketchProjectionSessionTest.cpp tests/WorkplaneReferenceSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
         src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
         src/MoveFace.cpp src/FaceOperations.cpp src/FaceTransformGeometry.cpp
         src/FaceTransformGeometry.h src/SelectionContext.cpp src/MoveFaceGeometry.h src/BRepReconstruction.cpp src/MoveFaceGeometry.cpp)
@@ -316,6 +316,10 @@ if(OPENDESIGNER_BUILD_TESTS)
     set_tests_properties(sketch-overdraw-sessions PROPERTIES TIMEOUT 120)
     set_tests_properties(sketch-drawing PROPERTIES TIMEOUT 120)
     set_tests_properties(sketch-sessions PROPERTIES TIMEOUT 120)
+    add_test(NAME workplane-reference-sessions COMMAND OpenDesignerSelectionContextTests --workplane-references)
+    add_test(NAME workplane-reference-sessions-hidpi COMMAND OpenDesignerSelectionContextTests --workplane-references)
+    set_tests_properties(workplane-reference-sessions workplane-reference-sessions-hidpi PROPERTIES TIMEOUT 180)
+    set_tests_properties(workplane-reference-sessions-hidpi PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=2")
     add_test(NAME construction-sessions COMMAND OpenDesignerSelectionContextTests --construction)
     set_tests_properties(construction-sessions PROPERTIES TIMEOUT 120)
     set_tests_properties(native-document-sessions PROPERTIES TIMEOUT 120)

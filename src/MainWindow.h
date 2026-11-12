@@ -31,6 +31,7 @@ private:
     friend struct ProfileRevolutionSessionTest;
     friend struct DeletePartSessionTest;
     friend struct ActivePartSessionTest;
+    friend struct WorkplaneReferenceSessionTest;
     bool maybeSave();
     bool saveDocument();
     bool saveDocumentAs();

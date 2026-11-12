@@ -69,7 +69,10 @@ Handle(AIS_Shape) CadViewport::constructionPresentation(const Object& object,boo
     result->SetWidth(2.0);
     if(object.kind==Kind::Axis) result->SetDisplayMode(AIS_Shaded);
     if(object.kind==Kind::Workplane) {
-        result->SetColor(workplaneColor(object.id));result->SetDisplayMode(AIS_Shaded);result->SetTransparency(0.5);
+        // A Move/Rotate candidate keeps the shaded ring in the preview colour so
+        // the frame stays visible while the original is erased (v0.5.3).
+        result->SetColor(preview?Quantity_Color(0.1,0.65,1.0,Quantity_TOC_RGB):workplaneColor(object.id));
+        result->SetDisplayMode(AIS_Shaded);result->SetTransparency(0.5);
         // This reference surface uses its UI color, without a specular highlight
         // washing green/light gray out when viewed normal to the plane.
         result->Attributes()->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
@@ -397,7 +400,11 @@ bool CadViewport::previewConstruction() {
         commandSession_->preview=constructionPresentation(state.candidate,true);
         constructionPreviewLabel_=constructionLabel(state.candidate,true);
         context_->Display(constructionPreviewLabel_,0,-1,Standard_False);context_->Deactivate(constructionPreviewLabel_);
-        context_->Display(commandSession_->preview,-1,-1,Standard_False);context_->Deactivate(commandSession_->preview);
+        // Display mode -1 computes no AIS_Shape presentation: use the preview's
+        // own mode (shaded ring/axis, wireframe point). Selection mode -1 keeps
+        // the preview non-selectable.
+        const auto& preview=commandSession_->preview;
+        context_->Display(preview,preview->HasDisplayMode()?preview->DisplayMode():int(AIS_WireFrame),-1,Standard_False);context_->Deactivate(preview);
         if(!state.targetId.isEmpty()) {
             context_->Erase(constructionPresentations_.at(state.targetId),Standard_False);
             context_->Erase(constructionLabels_.at(state.targetId),Standard_False);

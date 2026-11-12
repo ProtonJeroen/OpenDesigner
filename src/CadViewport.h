@@ -207,6 +207,7 @@ private:
     friend struct DeleteFaceTest;
     friend struct DeletePartSessionTest;
     friend struct EdgeBlendSessionTest;
+    friend struct WorkplaneReferenceSessionTest;
     struct SelectedEdge { size_t partIndex; TopoDS_Edge edge; };
     void activateAutomaticSelection(bool parts=false);
     void configureSelectionHighlights();

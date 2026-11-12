@@ -107,7 +107,7 @@ struct SketchDisplayBoundsSessionTest {
         check(!w.documentDirty_,"bounds Cancel dirtied document");
         check(v.previewSketchEntities({axis,segment},error),qPrintable(error));v.confirmCommandSession();frame(v,wp,expanded);
         const auto line=v.sketchPresentations_.at(axis.id)->Shape();
-        check(BRep_Tool::Pnt(TopExp::FirstVertex(TopoDS::Edge(line))).IsEqual(Sketch::worldPoint({975,3000},wp.frame),1.e-8),"line origin-based clipping survived resize");
+        check(BRep_Tool::Pnt(TopExp::FirstVertex(TopoDS::Edge(line))).IsEqual(Sketch::worldPoint({990-Sketch::WorkplaneBorderWidth,3000},wp.frame),1.e-8),"line origin-based clipping survived resize");
         v.selectConstructions({wp.id});const auto selected=v.constructionPresentations_.at(wp.id);
         check(v.context_->NbSelected()>0,"Workplane selection setup failed");
         v.workplaneDisplayRectangles_.clear();v.updateConstructionLabels();
