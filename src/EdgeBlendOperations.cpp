@@ -90,6 +90,8 @@ bool CadViewport::adoptEdgeBlend(size_t i,const TopoDS_Edge& edge) {
         if(session.kind==CommandSession::Kind::Fillet) {
             sum+=outwardNormal(TopoDS::Face(f),center);continue;
         }
+        // Conical supports of a circular Chamfer use their actual outward normal.
+        if(surface.GetType()==GeomAbs_Cone) {sum+=outwardNormal(TopoDS::Face(f),center);continue;}
         if(surface.GetType()!=GeomAbs_Plane) continue;
         gp_Vec n(surface.Plane().Axis().Direction());if(f.Orientation()==TopAbs_REVERSED) n.Reverse();sum+=n;
     }
@@ -176,11 +178,19 @@ bool CadViewport::startEditEdgeBlend(size_t index,const TopoDS_Face& face) {
         center=surface.Value((u0+u1)/2,(v0+v1)/2);
         normal=-outwardNormal(face,center);
     } else if(surface.GetType()==GeomAbs_Plane) normal=gp_Vec(surface.Plane().Axis().Direction());
-    else if(surface.GetType()==GeomAbs_Torus) {
+    else if(surface.GetType()==GeomAbs_Cone) {
+        // Circular Chamfer band: its centre of mass lies on the axis, so anchor
+        // the manipulator on the band itself. The unoriented carrier normal is
+        // oriented once below, like a planar Chamfer.
+        double u0,u1,v0,v1;BRepTools::UVBounds(face,u0,u1,v0,v1);
+        center=surface.Value((u0+u1)/2,(v0+v1)/2);
+        normal=outwardNormal(face,center);
+        if(face.Orientation()==TopAbs_REVERSED) normal.Reverse();
+    } else if(surface.GetType()==GeomAbs_Torus) {
         const auto circle=surface.Torus();
         center=circle.Location().Translated(gp_Vec(circle.XAxis().Direction())*circle.MajorRadius());
         normal=gp_Vec(circle.Axis().Direction());
-    } else {
+    } else if(surface.GetType()==GeomAbs_Cylinder) {
         const auto axis=surface.Cylinder().Axis();normal=gp_Vec(axis.Location(),center);
         normal-=gp_Vec(axis.Direction())*normal.Dot(gp_Vec(axis.Direction()));
     }
