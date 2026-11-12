@@ -754,9 +754,12 @@ regardless of creation method, trims or neighboring geometry.
   Add targeted geometry/session regressions and manual Fedora KDE acceptance
   for each independently scoped extension; avoid duplicating algorithms.
 
-## Priority — Workplane, reference and Sketch geometry foundations
+## Priority — Workplane, reference and Sketch geometry foundations (v0.5.3)
 
-Agreed priority (2026-11-11): finish the current v0.5.0 Fillet/Chamfer
+Priority decision (2026-11-12): **v0.5.2 = conical edge blends** (see below);
+this Workplane, Axis, Point, Sketch and reference foundation moves to **v0.5.3**.
+
+Agreed priority (2026-11-11): finish the current Fillet/Chamfer
 acceptance first, then strengthen these foundations **before Sweep, Loft and
 broader geometric alignment**. This is planned work, not an implementation claim.
 Every new modeling tool must explicitly assess applicable Workplane, Axis, Point,
@@ -797,8 +800,8 @@ Sketch and projected-geometry references during design and acceptance.
   persistent parametric dependencies; associativity is a separate future scope.
 
 ## Next milestones
-- Finish current v0.5.0 Fillet/Chamfer manual acceptance within its documented scope
-- Prioritize Workplane, reference and Sketch geometry foundations above
+- v0.5.2 conical Fillet/Chamfer: manual Fedora KDE/Wayland acceptance (FILLET_CHAMFER.md)
+- v0.5.3: Workplane, reference and Sketch geometry foundations above
 - Sweep (including 3D spline paths), then Loft, after the foundation gates
 - Broader cylindrical-face movement (holes and bosses) beyond the certified v0.4.9 scope
 - Assemblies and 3D copilot
@@ -1046,3 +1049,22 @@ Agreed targets (2026-11-11); these are planned deliverables, not certified build
 
 Elliptical, spline and freeform fillets remain future work. Circular contour
 creation does not imply arbitrary curved support reconstruction is available.
+
+### v0.5.2 — conical edge blends
+
+- [x] Analytic certification of plane/cone Fillets (coaxial torus, G1 on full
+  circles) and equal-distance Chamfers (coaxial cone band, distance measured
+  along each support from the sharp edge); ambiguity rule and body-cone guard.
+- [x] Recipe-free recognition of conical solids (two planar caps, one body cone,
+  one transition per cap) with sharp frustum replay and material equivalence.
+- [x] Conical Fillet and Chamfer creation through existing kernel paths; recipe
+  `cones` support persisted as edge-blend recipe version 3 (document schema unchanged).
+- [x] Edit Fillet / Edit Chamfer, Delete with sharp reconstruction, Undo/Redo,
+  Save/Open, Duplicate (v0.5.1 recipe-copy convention).
+- [x] Planar cap Pull/Move with Keep ON/OFF; unrelated transitions preserved.
+- [x] Safe refusals: cap Rotate (coaxiality), body-cone Pull/Move/Delete,
+  stepped/ambiguous/unequal geometry.
+- [ ] Manual DellJV Fedora KDE/Wayland acceptance (normal and HiDPI).
+- [ ] Optional/future: cap rotation with circular transitions, pointed cones,
+  conical holes with blends, plane/cylinder rim Chamfer recipes, recipe-free
+  cylinder recognition.

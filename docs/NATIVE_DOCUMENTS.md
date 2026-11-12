@@ -183,3 +183,17 @@ confirmed-only snapshots, Save/Save As history/selection preservation and New/Op
 cleanup are unchanged. `sketch-construction-points` inspects real BinXCAF root
 versions, verifies exact point roundtrips, legacy migration and malformed-file
 refusal; `sketch-point-sessions` exercises the document lifecycle through the GUI.
+
+## v0.5.2 edge-blend recipe version 3 (document schema unchanged)
+
+A Part's optional Fillet/Chamfer recipe is stored as an opaque JSON object inside
+the Part entry; the `.odc` document schema version (5) is unchanged. The recipe
+carries its own `version`: 1 = planar supports only, 2 = adds `cylinders`,
+3 = adds `cones` (per support `[x, y, z, dx, dy, dz, refRadius, semiAngle]` in
+Part coordinates). A writer emits the lowest version that represents the
+content, so documents without conical transitions remain byte-compatible with
+v0.5.1. Readers accept versions 1–3 and refuse `cones` in a v1/v2 recipe. A
+recipe is untrusted until replay of its sharp source reproduces the current
+B-Rep; otherwise geometry is re-recognized conservatively (see
+`FILLET_CHAMFER.md`). Older OpenDesigner builds ignore a v3 recipe safely and
+treat the Part as recipe-free geometry.
