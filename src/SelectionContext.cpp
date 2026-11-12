@@ -440,9 +440,12 @@ void CadViewport::startPrimitivePull() {
             return;
         }
         auto state=part.blends;QString diagnostic;
-        if(BRepAdaptor_Surface(selected.face).GetType()==GeomAbs_Cylinder&&EdgeBlendFeatures::resolve(part.shape,state,diagnostic)
-           &&std::any_of(state.features.begin(),state.features.end(),[](const auto& feature){return feature.cylinders[0]||feature.cylinders[1];})) {
-            emit statusMessage(tr("Pull / Resize of a cylindrical support with circular Fillets is not certified. Planar cap Pull and Edit Fillet remain available."));return;
+        const auto type=BRepAdaptor_Surface(selected.face).GetType();
+        if((type==GeomAbs_Cylinder||type==GeomAbs_Cone)&&EdgeBlendFeatures::resolve(part.shape,state,diagnostic)
+           &&std::any_of(state.features.begin(),state.features.end(),[](const auto& feature){return EdgeBlendFeatures::circular(feature);})) {
+            emit statusMessage(type==GeomAbs_Cone
+                ?tr("Pull / Resize of a conical support with circular Fillets/Chamfers is not certified. Planar cap Pull and Edit Fillet / Chamfer remain available.")
+                :tr("Pull / Resize of a cylindrical support with circular Fillets is not certified. Planar cap Pull and Edit Fillet remain available."));return;
         }
     }
     if(!supportsResize(selection)) {

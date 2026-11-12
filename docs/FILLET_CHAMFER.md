@@ -1,4 +1,4 @@
-# Fillet and Chamfer — v0.5.1
+# Fillet and Chamfer — v0.5.2
 
 Choose **3D Modeling > Fillet** or **3D Modeling > Chamfer**, then click one
 edge on a visible Part. Enter a positive radius or equal distance in millimeters
@@ -492,3 +492,147 @@ No geometry assertion or tolerance check was weakened. Application and directly
 affected test targets build successfully; `git diff --check` passes. The
 original document's SHA-256 remains unchanged. Manual recovery acceptance has
 not been performed by the agent.
+
+## v0.5.2 conical Fillets and Chamfers
+
+Priority decision (2026-11-12): v0.5.2 delivers conical edge blends; the
+Workplane, Axis, Point, Sketch and reference foundation moves to v0.5.3.
+
+### Supported conical transitions
+
+A *conical solid* is a frustum: one body cone (`GeomAbs_Cone`) between two
+planar caps perpendicular to its axis. Each cap/body circular edge may carry at
+most one transition:
+
+| Transition | Blend face | Creation | Recipe-free recognition |
+| --- | --- | --- | --- |
+| Fillet, constant radius | coaxial torus | yes | yes |
+| Chamfer, equal distance | coaxial cone band | yes | yes |
+
+`EdgeBlendFeatures` recipes now hold an optional `gp_Cone` support next to the
+existing plane/cylinder supports (one curved support per transition). Creation
+on a plane/cone circular edge requires a cap perpendicular to a coaxial cone.
+`FilletGeometry`/`ChamferGeometry` are unchanged kernel paths; no new engine.
+
+### Certification criteria (analytic, no topology indices)
+
+All tests use `1e-6` mm (lengths) and `1e-8` (directions/angles), in the
+meridian frame (axial `t`, radius `ρ`) of the body cone.
+
+**Fillet between plane and cone.** The blend face is a torus whose axis
+coincides with the body cone axis; its minor radius `r` is the Fillet radius;
+its tube-centre circle lies at distance `r` from the cap plane *and* from the
+body cone generator; the face is bounded by exactly two complete circles
+(sweep 2π) — one shared with the cap at the foot of the normal onto the plane,
+one shared with the body at the foot of the normal onto the generator (G1
+tangency on both sides); the extended cap plane and body cone intersect in one
+circle of positive radius (the sharp edge).
+
+**Chamfer between plane and cone.** The band is a cone coaxial with the body
+with a different half-angle (slope in the meridian frame); it is bounded by two
+complete circles, one shared with the cap and one with the body, each lying on
+both of its carriers; the extended cap plane and body cone meet in a unique
+sharp circle of radius `ρs > 0`; the distances from that sharp circle along both
+supports are equal within `1e-6`.
+
+**Distance convention.** For an equal-distance Chamfer at a non-right angle,
+the Chamfer distance is measured *along each supporting face* from the
+reconstructed sharp edge: radially in the cap plane (`|ρs − ρcap|`) and along the
+body cone generator (`hypot(Δt, Δρ)`). This matches OCCT's
+`BRepFilletAPI_MakeChamfer::Add(d, d, edge, face)` on plane/cone edges and is
+verified analytically in `conical-edge-blends` (Cone 3: R20 sharp circle, cap
+boundary R12, body boundary 8 mm down the generator).
+
+**Interpretation and ambiguity rule.** Recognition orders the faces as a chain
+`cap – [blend] – body – [blend] – cap` and tries every cone as body. An
+interpretation survives only when each blend certifies as above *and* the
+replayed sharp frustum plus recipes is material-equivalent
+(`BRepReconstruction::equivalent`) to the current B-Rep. Exactly one surviving
+interpretation is accepted; zero or several means ordinary geometry with a
+diagnostic (`No certified conical transition: …` / `Ambiguous conical
+geometry …`). A stepped cone with unequal distances, or a symmetric double cone
+where either cone reads as the other's Chamfer, is therefore refused; the body
+cone itself is never a Chamfer.
+
+### Sharp reconstruction
+
+The sharp source of a recognized Part is the frustum built from the two cap
+planes and the body cone carrier (`BRepPrimAPI_MakeCone`, radii taken from the
+carrier at the cap positions). Strict sharp validation now admits conical faces
+alongside planes and cylinders and keeps the `1e-6` tolerance ceiling. Replay
+binds the unique toroidal Fillet face or conical Chamfer band; other faces are
+never transitions.
+
+### Editing behaviour
+
+- **Edit Fillet / Edit Chamfer** from the context menu, Pull on the transition
+  face, or Move Face on it: absolute numeric value, orange Pull arrow, blue
+  preview, OK/Enter (one Undo step), Cancel/Escape (none). For a Fillet the
+  arrow sits outside the material and points toward the torus (inward increases
+  the radius, outward decreases it). For a conical Chamfer band the arrow is
+  anchored on the band at its UV midpoint along the outward normal (the centre
+  of mass of a full band lies on the axis); otherwise the existing Chamfer
+  manipulator behaviour is unchanged.
+- **Delete Face** on a recognized transition restores the sharp cap/cone edge by
+  replay and keeps the other transition (identity and dimension).
+- **Save/Open:** recipe version 3 (see `NATIVE_DOCUMENTS.md`); revalidated by
+  replay on Open. A recipe-free Cone 3 is recognized again from geometry.
+- **Duplicate:** follows the existing v0.5.1 convention — the Part receives a new
+  Part UUID and an independent copy of the recipe (feature IDs are Part-scoped
+  and copied unchanged); the copy is revalidated against its own geometry and
+  edits do not touch the source.
+- Transformed Parts work in Part coordinates; recognition also certifies tilted
+  axes (tested with a rotated + translated replica).
+
+### Keep ON/OFF boundary
+
+Move Face and Pull of a planar cap translate the cap along the cone axis on the
+sharp frustum (the cone carrier is unchanged), normalize, then replay.
+**Keep ON** preserves the Fillet radius and Chamfer distance on both caps.
+**Keep OFF** removes only the transition adjacent to the moved cap and keeps the
+other one. Both directions (outward/inward) are tested against independent
+kernel constructions.
+
+### Known unsupported cases (safe, atomic refusals)
+
+- **Rotate Face** of a cap with a circular (cylindrical/conical) transition:
+  rotation breaks coaxiality, which is the certification basis — refused with
+  “rotation breaks coaxiality”, Keep ON and OFF.
+- Pull/Resize, Move Face and Delete Face of the **body cone** with recognized
+  transitions: refused with a diagnostic; geometry and history unchanged.
+- Pointed cones (one cap), more than one blend face per cap, interacting
+  transitions, cylinder bodies without a recipe (v0.5.1 behaviour retained),
+  conical *holes* with blends, unequal-distance Chamfers, and Chamfers on
+  plane/cylinder rims (still created by the uncertified kernel path without an
+  editable recipe).
+
+### Automated verification (v0.5.2)
+
+- `conical-edge-blends` (`tests/ConicalEdgeBlendTest.cpp`): synthetic Cone 3
+  replica; ordinary cone refusal; Fillet/Chamfer creation; 8 mm / 11 mm
+  recovery; independent edits; Delete Fillet/Chamfer; cap Move ±5 mm for both
+  caps with Keep ON/OFF against kernel oracles; unrelated-transition
+  preservation; recipe v3 persistence and tampering; source immutability;
+  tilted and duplicated geometry; stepped, ambiguous and unequal-distance
+  refusal; Rotate refusal.
+- `direct-modeling-recovery` (session level, synthetic Cone 3): body-cone
+  refusals, context-menu Edit Fillet/Chamfer with exact input, Fillet arrow
+  direction, Cancel/OK/Undo/Redo, Pull and Move of both caps with Keep ON/OFF,
+  Delete Fillet/Chamfer, Rotate refusal, Save/Open (recipe v3) and Duplicate.
+
+### Manual acceptance (Fedora KDE/Wayland, 100% and 200% scaling)
+
+1. Open a **copy** of `fillet.odc`; select `Cone 3`. Right-click the top band:
+   *Edit Chamfer* shows `8`; right-click the bottom round: *Edit Fillet* shows `11`.
+2. Edit Chamfer to 6 and Fillet to 9 with typed values; inspect the blue preview,
+   drag the orange arrow (Fillet: inward grows), Escape cancels, Enter commits;
+   check one-step Undo/Redo for each.
+3. Delete Face on the band, then on the round: sharp edges return, the other
+   transition stays; Undo/Redo.
+4. Pull and Move Face on each cap by +3 and −3 mm with Keep ON (dimensions kept)
+   and Keep OFF (only the adjacent transition removed).
+5. Rotate Face on a cap: a clear refusal, no geometry change.
+6. Pull/Move/Delete the body cone: a clear refusal, no geometry change.
+7. Save As a new file, reopen, repeat step 1 with the edited values; Duplicate
+   the Part and edit the copy independently.
+8. Repeat steps 1–2 with `QT_SCALE_FACTOR=2`; arrow and panel remain usable.

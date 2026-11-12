@@ -136,8 +136,10 @@ bool CadViewport::startMoveFace(size_t index, const TopoDS_Face& face) {
     const bool recognized=EdgeBlendFeatures::resolve(part.shape,recipe,recipeError);
     if(recognized&&EdgeBlendFeatures::selected(recipe,face)>=0) return startEditEdgeBlend(index,face);
     if(recognized&&BRepAdaptor_Surface(face).GetType()!=GeomAbs_Plane
-       &&std::any_of(recipe.features.begin(),recipe.features.end(),[](const auto& f){return f.cylinders[0]||f.cylinders[1];})) {
-        emit statusMessage(tr("Cylindrical support edits with circular Fillets are not yet certified; remove the Fillet first."));return false;
+       &&std::any_of(recipe.features.begin(),recipe.features.end(),[](const auto& f){return EdgeBlendFeatures::circular(f);})) {
+        emit statusMessage(BRepAdaptor_Surface(face).GetType()==GeomAbs_Cone
+            ?tr("Conical support edits with circular Fillets/Chamfers are not yet certified; move a planar cap or remove the transition first.")
+            :tr("Cylindrical support edits with circular Fillets are not yet certified; remove the Fillet first."));return false;
     }
     if(!recognized&&!part.blends.features.empty()) {emit statusMessage(recipeError);return false;}
     gp_Pnt center; gp_Dir normal; QString error;MoveFaceFeature feature;

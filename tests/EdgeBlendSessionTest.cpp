@@ -194,27 +194,120 @@ static void recovery(bool external) {
     check(!v.updateCommandParameter(false)&&!v.commandSession_->geometryError.isEmpty()&&v.commandSession_->candidate.IsNull(),"oversized Fillet accepted after cap collapse");
     QTimer::singleShot(0,[]{for(auto* w:QApplication::topLevelWidgets())if(auto* box=qobject_cast<QMessageBox*>(w))box->accept();});
     v.confirmCommandSession();check(v.boxes_[cylinder].shape.IsSame(before.shape)&&v.undoStack_.empty(),"failed cap edit mutated source/history");v.cancelCommandSession();
-    // Recipe-free conical transitions remain distinct from ordinary cone walls.
+    // v0.5.2: recipe-free Cone 3 is certified from geometry alone: an 8 mm
+    // conical Chamfer and an 11 mm toroidal Fillet on a R40->R20 frustum.
+    // Independent oracle: kernel blends on an explicitly built frustum.
+    const double slope=20./80.;
+    auto coneOracle=[&](double z0,double z1,double chamferSize,double filletSize) {
+        TopoDS_Shape shape=BRepPrimAPI_MakeCone(gp_Ax2(gp_Pnt(250,0,z0),gp_Dir(0,0,1)),40-z0*slope,40-z1*slope,z1-z0).Shape();
+        if(chamferSize>0) {BRepFilletAPI_MakeChamfer c(shape);TopExp_Explorer e(cap(shape,true),TopAbs_EDGE);c.Add(chamferSize,TopoDS::Edge(e.Current()));c.Build();check(c.IsDone(),"oracle Chamfer");shape=c.Shape();}
+        if(filletSize>0) {BRepFilletAPI_MakeFillet f(shape);TopExp_Explorer e(cap(shape,false),TopAbs_EDGE);f.Add(filletSize,TopoDS::Edge(e.Current()));f.Build();check(f.IsDone(),"oracle Fillet");shape=f.Shape();}
+        return shape;
+    };
+    auto blendFace=[&](const CadViewport::CadPart& part,EdgeBlendFeatures::Kind kind,double& size) {
+        auto state=part.blends;check(EdgeBlendFeatures::resolve(part.shape,state,error),qPrintable(error));
+        for(const auto& f:state.features)if(f.kind==kind) {size=f.size;return f.faces.front();}
+        throw std::runtime_error("Cone 3 transition missing");
+    };
     load();before=v.boxes_[cone];const auto coneStamp=geometryStamp(before.shape);int cones=0,tori=0,planes=0;
+    {auto state=before.blends;check(EdgeBlendFeatures::resolve(before.shape,state,error)&&state.features.size()==2,"Cone 3 transitions not recognized");}
+    {double size=0;blendFace(before,EdgeBlendFeatures::Kind::Chamfer,size);check(std::abs(size-8)<1.e-6,"Cone 3 Chamfer is not 8 mm");
+     blendFace(before,EdgeBlendFeatures::Kind::Fillet,size);check(std::abs(size-11)<1.e-6,"Cone 3 Fillet is not 11 mm");}
+    check(BRepReconstruction::equivalent(before.shape,coneOracle(0,80,8,11)),"Cone 3 differs from measured dimensions");
     for(TopExp_Explorer it(before.shape,TopAbs_FACE);it.More();it.Next()) {
         auto face=TopoDS::Face(it.Current());auto type=BRepAdaptor_Surface(face).GetType();
         cones+=type==GeomAbs_Cone;tori+=type==GeomAbs_Torus;planes+=type==GeomAbs_Plane;
-        auto state=before.blends;check(!EdgeBlendFeatures::resolve(before.shape,state,error)&&!error.isEmpty()&&EdgeBlendFeatures::selected(state,face)<0,"cone misclassified as editable Chamfer");
-        check(!v.startEditEdgeBlend(cone,face)&&!status.isEmpty(),"uncertified cone Edit accepted silently");
-        choose(v,cone,face);v.startPrimitivePull();
-        if(type==GeomAbs_Plane) {
-            check(v.commandSession_&&v.commandSession_->face.IsSame(face),"cone cap Pull failed to initialize");
-            v.dragDimension_->setText("1");check(!v.updateCommandParameter(false)&&!v.commandSession_->geometryError.isEmpty(),"unsupported cone cap accepted");
-        } else check(!v.commandSession_&&!status.isEmpty(),"unsupported cone Pull accepted silently");
-        v.cancelCommandSession();choose(v,cone,face);v.moveFace();
-        if(type==GeomAbs_Plane) {check(v.commandSession_.has_value(),"cone cap Move failed to initialize");v.dragDimension_->setText("1");check(!v.updateCommandParameter(false)&&!v.commandSession_->geometryError.isEmpty(),"unsupported cone Move accepted");}
-        else check(!v.commandSession_&&!status.isEmpty(),"unsupported cone wall Move accepted silently");
-        v.cancelCommandSession();choose(v,cone,face);v.deleteFace();check(!v.commandSession_&&status.contains("toroidal"),"cone Delete session failed silently");
-        BRepReconstruction::Result result;
-        check(!DeleteFaceGeometry::remove(before.shape,{face},result,error)&&error.contains("toroidal"),"unsupported cone Delete not diagnosed");
-        check(v.boxes_[cone].shape.IsSame(before.shape)&&geometryStamp(before.shape)==coneStamp&&v.undoStack_.empty()&&v.redoStack_.empty(),"cone failure/Cancel changed geometry/history");
+        auto state=before.blends;EdgeBlendFeatures::resolve(before.shape,state,error);
+        if(EdgeBlendFeatures::selected(state,face)>=0||type==GeomAbs_Plane) continue;
+        // The body cone is ordinary geometry: every command refuses explicitly and atomically.
+        status.clear();check(!v.startEditEdgeBlend(cone,face)&&!status.isEmpty(),"body cone Edit accepted silently");
+        choose(v,cone,face);status.clear();v.startPrimitivePull();check(!v.commandSession_&&status.contains("not certified"),"body cone Pull not refused");
+        choose(v,cone,face);status.clear();v.moveFace();check(!v.commandSession_&&status.contains("not yet certified"),"body cone Move not refused");v.resetModelingTools();
+        choose(v,cone,face);status.clear();v.deleteFace();check(!v.commandSession_&&!status.isEmpty(),"body cone Delete not refused");
+        check(v.boxes_[cone].shape.IsSame(before.shape)&&geometryStamp(before.shape)==coneStamp&&v.undoStack_.empty()&&v.redoStack_.empty(),"body cone refusal changed geometry/history");
     }
     check(cones==2&&tori==1&&planes==2&&doc.parts[cone].edgeBlendRecipe.isEmpty(),"actual Cone 3 classification changed");
+    // Edit Fillet / Edit Chamfer through the context menu, exact input, preview, Cancel, OK, Undo/Redo.
+    for(bool fillet:{true,false}) {
+        load();before=v.boxes_[cone];double size=0;
+        const auto face=blendFace(before,fillet?EdgeBlendFeatures::Kind::Fillet:EdgeBlendFeatures::Kind::Chamfer,size);
+        choose(v,cone,face);std::unique_ptr<QMenu> menu(v.createSelectionMenu(QPoint(-10,-10)));
+        auto* edit=menu->findChild<QAction*>(fillet?"context.edit_fillet":"context.edit_chamfer");check(edit,"Cone 3 transition missing Edit action");edit->trigger();
+        check(v.commandSession_&&!v.moveFaceArrow_.IsNull()&&!v.commandSession_->preview.IsNull(),"Cone 3 Edit missing orange arrow or blue preview");
+        check(std::abs(QLocale().toDouble(v.dragDimension_->text())-(fillet?11.:8.))<1.e-6,"Cone 3 Edit did not show the recovered dimension");
+        checkFilletDirection(v);
+        const double changed=fillet?9:6;
+        v.dragDimension_->setText(QLocale().toString(changed));check(v.updateCommandParameter(false),qPrintable(v.commandSession_->geometryError));
+        const auto expected=coneOracle(0,80,fillet?8:changed,fillet?changed:11);
+        check(BRepReconstruction::equivalent(v.commandSession_->candidate,expected),"Cone 3 Edit preview material wrong");strictTolerances(v.commandSession_->candidate);
+        v.cancelCommandSession();check(v.boxes_[cone].shape.IsSame(before.shape)&&v.undoStack_.empty(),"Cone 3 Edit Cancel changed geometry/history");
+        check(v.startEditEdgeBlend(cone,face),"Cone 3 Edit restart failed");
+        v.dragDimension_->setText(QLocale().toString(changed));v.confirmCommandSession();
+        check(v.undoStack_.size()==1&&BRepReconstruction::equivalent(v.boxes_[cone].shape,expected)&&v.boxes_[cone].blends.features.size()==2,"Cone 3 Edit commit failed");
+        double other=0;blendFace(v.boxes_[cone],fillet?EdgeBlendFeatures::Kind::Chamfer:EdgeBlendFeatures::Kind::Fillet,other);
+        check(std::abs(other-(fillet?8:11))<1.e-10,"Cone 3 Edit changed the unrelated transition");
+        v.undoPull();check(v.boxes_[cone].shape.IsSame(before.shape),"Cone 3 Edit Undo failed");
+        v.redoPull();check(BRepReconstruction::equivalent(v.boxes_[cone].shape,expected),"Cone 3 Edit Redo failed");
+    }
+    // Pull and Move on both caps, Keep ON and OFF.
+    for(bool top:{false,true})for(bool pull:{false,true})for(bool keep:{false,true}) {
+        load();before=v.boxes_[cone];const auto stamp=geometryStamp(before.shape);auto face=cap(before.shape,top);choose(v,cone,face);
+        if(pull)v.startPrimitivePull();else v.moveFace();
+        check(v.commandSession_&&v.commandSession_->face.IsSame(face),"Cone 3 cap command lost selected Face");
+        v.keepBlends_->setChecked(keep);v.dragDimension_->setText("3");
+        check(v.updateCommandParameter(false),qPrintable(v.commandSession_->geometryError));
+        auto candidate=v.commandSession_->changes.front().faceChange->after;
+        strictTolerances(candidate.shape);strictTolerances(candidate.blends.sharp);
+        const bool chamferKept=keep||!top,filletKept=keep||top;
+        check(candidate.blends.features.size()==size_t(chamferKept)+size_t(filletKept),"Cone 3 Keep removed unrelated or retained affected transition");
+        for(const auto& f:candidate.blends.features) check(std::abs(f.size-(f.kind==EdgeBlendFeatures::Kind::Fillet?11:8))<1.e-10,"Cone 3 Keep changed a dimension");
+        const auto expected=coneOracle(top?0:-3,top?83:80,chamferKept?8:0,filletKept?11:0);
+        check(BRepReconstruction::equivalent(candidate.shape,expected),"Cone 3 cap result differs from independent construction");
+        v.cancelCommandSession();check(v.boxes_[cone].shape.IsSame(before.shape)&&geometryStamp(before.shape)==stamp&&v.undoStack_.empty(),"Cone 3 cap Cancel changed geometry/history");
+        choose(v,cone,face);if(pull)v.startPrimitivePull();else v.moveFace();v.keepBlends_->setChecked(keep);
+        v.dragDimension_->setText("3");v.confirmCommandSession();
+        check(v.undoStack_.size()==1&&BRepReconstruction::equivalent(v.boxes_[cone].shape,expected),"Cone 3 cap confirmation lost result");
+        v.undoPull();check(v.boxes_[cone].shape.IsSame(before.shape),"Cone 3 cap Undo failed");
+        v.redoPull();check(BRepReconstruction::equivalent(v.boxes_[cone].shape,expected),"Cone 3 cap Redo failed");
+    }
+    // Delete Fillet / Delete Chamfer restore the sharp supports.
+    for(bool fillet:{true,false}) {
+        load();before=v.boxes_[cone];double size=0;
+        const auto face=blendFace(before,fillet?EdgeBlendFeatures::Kind::Fillet:EdgeBlendFeatures::Kind::Chamfer,size);
+        choose(v,cone,face);v.deleteFace();check(v.commandSession_&&v.commandSession_->valid,"Cone 3 Delete transition failed");
+        v.confirmCommandSession();
+        const auto expected=coneOracle(0,80,fillet?8:0,fillet?0:11);
+        check(v.undoStack_.size()==1&&BRepReconstruction::equivalent(v.boxes_[cone].shape,expected)&&v.boxes_[cone].blends.features.size()==1,"Cone 3 Delete did not restore sharp supports");
+        v.undoPull();check(v.boxes_[cone].shape.IsSame(before.shape),"Cone 3 Delete Undo failed");
+        v.redoPull();check(BRepReconstruction::equivalent(v.boxes_[cone].shape,expected),"Cone 3 Delete Redo failed");
+    }
+    // Rotate Face on a cap breaks coaxiality: explicit atomic refusal.
+    load();before=v.boxes_[cone];choose(v,cone,cap(before.shape,true));
+    check(v.startRotateFace(cone,cap(before.shape,true)),"Cone 3 Rotate session unavailable");v.chooseFaceRotationAxis(1);
+    v.dragDimension_->setText("5");check(!v.updateCommandParameter(false)&&v.commandSession_->geometryError.contains("coaxiality"),"Cone 3 cap Rotate not refused");
+    v.cancelCommandSession();check(v.boxes_[cone].shape.IsSame(before.shape)&&v.undoStack_.empty(),"Cone 3 Rotate refusal changed geometry/history");
+    // Save/Open of an edited recipe (version 3) and Duplicate.
+    load();before=v.boxes_[cone];{double size=0;check(v.startEditEdgeBlend(cone,blendFace(before,EdgeBlendFeatures::Kind::Chamfer,size)),"Cone 3 pre-Save Edit failed");}
+    v.dragDimension_->setText(QLocale().toString(6.5,'f',1));v.confirmCommandSession();
+    {
+        NativeDocumentSnapshot saved,reopened;QTemporaryDir directory;
+        check(v.exportDocumentSnapshot(saved)&&saved.parts[cone].edgeBlendRecipe.value("version").toInt()==3,"conical recipe not saved as version 3");
+        check(NativeDocumentStorage::save(directory.filePath("cone.odc"),saved,error)&&NativeDocumentStorage::load(directory.filePath("cone.odc"),reopened,error)
+            &&v.importDocumentSnapshot(reopened,error),"Cone 3 Save/Open failed");
+        double size=0;check(v.boxes_[cone].blends.features.size()==2&&v.boxes_[cone].blends.certified.IsSame(v.boxes_[cone].shape),"Cone 3 recipe not certified after Open");
+        blendFace(v.boxes_[cone],EdgeBlendFeatures::Kind::Chamfer,size);check(std::abs(size-6.5)<1.e-10,"Cone 3 edited Chamfer lost on Open");
+        check(BRepReconstruction::equivalent(v.boxes_[cone].shape,coneOracle(0,80,6.5,11)),"Cone 3 geometry changed on Open");
+    }
+    {
+        const auto sourceShape=v.boxes_[cone].shape;const auto sourceRecipe=QJsonDocument(EdgeBlendFeatures::encode(v.boxes_[cone].blends)).toJson();
+        v.selectParts({cone});v.duplicateSelectedParts();const size_t copy=v.boxes_.size()-1;
+        check(copy!=cone&&v.partId(copy)!=v.partId(cone)&&v.boxes_[copy].blends.features.size()==2,"Cone 3 Duplicate lost recipe");
+        double size=0;check(v.startEditEdgeBlend(copy,blendFace(v.boxes_[copy],EdgeBlendFeatures::Kind::Fillet,size)),"Cone 3 duplicate not editable");
+        v.dragDimension_->setText("7");v.confirmCommandSession();
+        blendFace(v.boxes_[copy],EdgeBlendFeatures::Kind::Fillet,size);check(std::abs(size-7)<1.e-10,"Cone 3 duplicate Edit failed");
+        check(v.boxes_[cone].shape.IsSame(sourceShape)&&QJsonDocument(EdgeBlendFeatures::encode(v.boxes_[cone].blends)).toJson()==sourceRecipe,"duplicate Edit mutated source Part");
+    }
+    load();before=v.boxes_[cone];
     for(TopExp_Explorer it(before.shape,TopAbs_FACE);it.More();it.Next())if(BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType()==GeomAbs_Cone) {pickActual(v,cone,TopoDS::Face(it.Current()));break;}
     // Ordinary cones retain the preexisting certified cap offset route.
     v.resetModelingTools();v.addCone();const size_t ordinary=v.boxes_.size()-1;before=v.boxes_[ordinary];
