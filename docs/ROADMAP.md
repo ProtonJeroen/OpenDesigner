@@ -765,16 +765,20 @@ broader geometric alignment**. This is planned work, not an implementation claim
 Every new modeling tool must explicitly assess applicable Workplane, Axis, Point,
 Sketch and projected-geometry references during design and acceptance.
 
-- [ ] Complete the planned Workplane activation, frame visibility, minimum
+- [x] Complete the planned Workplane activation, frame visibility, minimum
   extent and Move/Rotate preview improvements below. Keep camera alignment an
-  explicit action independent of Workplane activation.
-- [ ] Share consistent target/reference picking and snapping for construction
+  explicit action independent of Workplane activation. (v0.5.3)
+- [x] Share consistent target/reference picking and snapping for construction
   objects, Sketch entities and solid geometry. Support points, endpoints,
   centers and unambiguous intersections/relevant curve points; state each
-  operation's supported reference types explicitly.
-- [ ] Resolve directions, axes and positions in world coordinates after Part
+  operation's supported reference types explicitly. (v0.5.3: `References`
+  resolver and `CadViewport::pickReference`, used by Move Face direction and
+  construction role picking; see [Workplane references](WORKPLANE_REFERENCES.md).
+  Other commands, e.g. Rotate/Align Face axes and Revolve axes, still use their
+  own pickers and migrate later.)
+- [x] Resolve directions, axes and positions in world coordinates after Part
   and Workplane transforms, including references from other Parts/Workplanes.
-  Integrate the planned Move Face geometric-direction controls below.
+  Integrate the planned Move Face geometric-direction controls below. (v0.5.3)
 - [ ] Extend Sketch geometry to **ellipses and elliptical arcs**, including
   editing/trimming and downstream profile construction; existing ellipse
   drawing alone does not establish complete modeling support.
@@ -796,12 +800,16 @@ Sketch and projected-geometry references during design and acceptance.
 - [ ] Preserve exact geometry, reference coordinates and editability through
   duplication, transforms, native Save/Open and Undo/Redo, with focused
   geometry/session regressions and manual acceptance.
-- [ ] Evaluate geometric references at operation time without introducing
+- [x] Evaluate geometric references at operation time without introducing
   persistent parametric dependencies; associativity is a separate future scope.
+  (v0.5.3: stale/deleted/hidden references are refused, never rebound.)
 
 ## Next milestones
 - v0.5.2 conical Fillet/Chamfer: manual Fedora KDE/Wayland acceptance (FILLET_CHAMFER.md)
-- v0.5.3: Workplane, reference and Sketch geometry foundations above
+- v0.5.3: Workplane, reference and Sketch geometry foundations above (implemented;
+  manual Fedora KDE/Wayland acceptance pending, see WORKPLANE_REFERENCES.md)
+- v0.5.4: exact ellipse/elliptical arc Sketch modeling, exact projection and 2D
+  interpolating splines on the v0.5.3 reference model
 - Sweep (including 3D spline paths), then Loft, after the foundation gates
 - Broader cylindrical-face movement (holes and bosses) beyond the certified v0.4.9 scope
 - Assemblies and 3D copilot
@@ -810,66 +818,68 @@ Sketch and projected-geometry references during design and acceptance.
 
 ## Planned — Move Face direction from geometric references
 
-- [ ] Extend **3D Modeling > Move Face** with an explicit **Direction** reference
+- [x] Extend **3D Modeling > Move Face** with an explicit **Direction** reference
   selector. Preserve the current face-normal/manipulator direction as the default.
-- [ ] Allow direction from a selected **Face** (its normal, with explicit
-  orientation), a straight **Edge** (tangent/axis), or a **Sketch line**
-  (line direction), independent of how the target Part was created.
-- [ ] Allow **Point-to-Point** direction from two picked Sketch points;
+- [x] Allow direction from a selected **Face** (its normal, with explicit
+  orientation), a straight **Edge** (tangent/axis), a **Sketch line**
+  (line direction), an **Axis** or a **Workplane** normal, independent of how
+  the target Part was created.
+- [x] Allow **Point-to-Point** direction from two picked Sketch points;
   calculate the signed 3D vector from the first point to the second. Support
-  construction points and snapped Sketch points where their positions are
-  unambiguous.
-- [ ] Support **Reverse Direction**, signed exact distance, and live arrow/blue
+  construction points, Part vertices and snapped Sketch points where their
+  positions are unambiguous.
+- [x] Support **Reverse Direction**, signed exact distance, and live arrow/blue
   preview. Keep the **target Face** separate from the **direction reference**;
   references may belong to another Part or Workplane without editing them.
-- [ ] Resolve references in world coordinates, respecting Part and Workplane
+- [x] Resolve references in world coordinates, respecting Part and Workplane
   transforms; avoid reliance on primitive metadata or feature history.
   Reject zero-length vectors, ambiguous curved-face normals/curved-edge tangents
   and unsupported reconstruction with clear diagnostics.
-- [ ] Preserve existing OK/Cancel, Undo/Redo, Part identity and native Save/Open;
+- [x] Preserve existing OK/Cancel, Undo/Redo, Part identity and native Save/Open;
   test transformed geometry, all reference types, reverse/signed input,
-  reference independence and safe refusal. Roll out in focused stages.
+  reference independence and safe refusal. (v0.5.3, planar Faces.)
+- [ ] Direction references for cylindrical hole/notch/boss walls (currently
+  refused; they keep the v0.4.9 lateral reference controls).
 
 ## Planned — View display modes and Workplane activation workflow
 
-- [ ] Add **View > Wireframe** and **View > Shaded** display modes, with
+- [x] Add **View > Wireframe** and **View > Shaded** display modes, with
   corresponding toolbar actions to switch the current 3D viewport mode.
   Keep the chosen display mode independent of Part selection and editing tools.
-- [ ] Add a **Show/Hide 3D Geometry** toggle to the View menu and toolbar.
+- [x] Add a **Show/Hide 3D Geometry** toggle to the View menu and toolbar.
   Temporarily hide or show all 3D solid geometry without changing individual
   Part visibility flags or deleting geometry. Keep Sketches, Workplanes and
   construction references available while solids are hidden.
-- [ ] Change **Edit Sketch** to activate the Sketch's Workplane (WP) and enter
+- [x] Change **Edit Sketch** to activate the Sketch's Workplane (WP) and enter
   the sketch-editing context **without automatically rotating the camera**.
   Preserve the current camera position, orientation and zoom.
-- [ ] Provide a separate explicit **Look at Workplane / Normal to WP** view
+- [x] Provide a separate explicit **Look at Workplane / Normal to WP** view
   action, so users may choose when to align the camera to the Workplane.
   Activating a WP and rotating the view must be independent operations.
-- [ ] Preserve viewport mode, temporary 3D-geometry visibility and user-chosen
+- [x] Preserve viewport mode, temporary 3D-geometry visibility and user-chosen
   camera orientation across appropriate tool changes; define any Save/Open
-  persistence behavior explicitly. Ensure selection/picking respects hidden
-  solids and all toggles behave consistently on Fedora KDE.
-- [ ] Add focused viewport, Sketch session and UI regressions, including
+  persistence behavior explicitly (view modes are not saved). Selection/picking
+  respects hidden solids. Fedora KDE consistency is part of manual acceptance.
+- [x] Add focused viewport, Sketch session and UI regressions, including
   switching Wireframe/Shaded, toggling 3D solids and Edit Sketch without
-  camera rotation. Keep this milestone separate from in-progress v0.4.9
-  geometry work.
+  camera rotation (`workplane-reference-sessions`, `sketch-drawing`).
 
 ## Planned — Workplane frame visibility and minimum extent
 
-- [ ] **Fix WP Move/Rotate preview:** the Workplane frame/ring must remain
+- [x] **Fix WP Move/Rotate preview:** the Workplane frame/ring must remain
   visible throughout translation and rotation previews, including active and
   inactive appearance, without flicker or disappearing behind the manipulator.
   Keep the preview aligned with the transformed WP and restore the original on Cancel.
-- [ ] **Minimum Workplane frame extent:** enforce at least **100 × 100 mm** in
+- [x] **Minimum Workplane frame extent:** enforce at least **100 × 100 mm** in
   Workplane-local coordinates, centered around the content-derived frame when
   smaller. Larger Sketch contents must continue to expand the frame dynamically;
   never clip them or change underlying Sketch/Workplane geometry.
-- [ ] **Reduce active green frame ring width from 15 mm to 10 mm**; keep its
+- [x] **Reduce active green frame ring width from 15 mm to 10 mm**; keep its
   open-ring styling and existing transparency unless separately changed.
   Apply consistent geometry to active/inactive and transformed previews.
-- [ ] Keep these as presentation-only changes; preserve picking, transforms,
+- [x] Keep these as presentation-only changes; preserve picking, transforms,
   Undo/Redo, active-WP state and native Save/Open. Add focused normal/HiDPI
-  viewport checks for small/empty WPs, Move/Rotate previews and Cancel.
+  viewport checks for small/empty WPs, Move/Rotate previews and Cancel. (v0.5.3)
 
 ## Planned — Sweep, Loft, and Materials & Colors
 
@@ -1068,3 +1078,29 @@ creation does not imply arbitrary curved support reconstruction is available.
 - [ ] Optional/future: cap rotation with circular transitions, pointed cones,
   conical holes with blends, plane/cylinder rim Chamfer recipes, recipe-free
   cylinder recognition.
+
+### v0.5.3 — Workplane and reference foundation
+
+See [Workplane references](WORKPLANE_REFERENCES.md) for the design.
+
+- [x] Synthetic `direct-modeling-recovery-document` fixture, no private `.odc`
+  dependency (separate PR, work package 0).
+- [x] Camera decoupling: Workplane activation / Edit Sketch never move the
+  camera; explicit **View → Look at Workplane** (+ 2D toolbar and context menu).
+- [x] Workplane frame: 10 mm ring, 100 × 100 mm minimum opening, visible blue
+  frame during Move/Rotate previews.
+- [x] Axes and Points: Axis from conical faces, Axis normal to a Face/Workplane
+  at a point, Point from Sketch point/center/intersection and Axis from Sketch
+  line through shared reference picking.
+- [x] Unified reference resolution (`References`), picking and snapping for
+  Part, Face, Edge, Vertex, Axis, Workplane, Point, Sketch line and Sketch
+  points (endpoint, midpoint, center, construction point, intersection), with
+  stale/hidden/deleted refusal.
+- [x] Move Face direction from Edge, Sketch line, Axis, Face, Workplane and
+  Point to Point, with Reverse and exact distance (planar Faces).
+- [x] View → Wireframe / Shaded and Show/Hide 3D Geometry (view-level, unsaved).
+- [ ] Manual DellJV Fedora KDE/Wayland acceptance at 100 % and 200 %
+  ([checklist](WORKPLANE_REFERENCES.md#10-manual-acceptance-fedora-kdewayland-100--and-qt_scale_factor2)).
+- [ ] Open: reference picking for Rotate/Align Face and Revolve axes through the
+  shared picker; direction references for cylindrical walls; solid-edge
+  intersection points; persistent (associative) references remain out of scope.

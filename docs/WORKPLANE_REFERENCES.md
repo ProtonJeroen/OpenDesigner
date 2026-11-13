@@ -156,13 +156,18 @@ rename, show/hide, lock, Move/Rotate, delete, Undo/Redo). Construction role
 picking now also accepts Sketch points and Sketch lines through `pickReference`,
 which adds **Point from Sketch point / center / intersection** and **Axis from
 Sketch line** without new methods or schema. **Axis from cylindrical face**
-also accepts conical faces (cone axis).
+also accepts conical faces (cone axis), and a new Axis method **Face / workplane
+normal at point** creates the plane normal through the orthogonal projection of
+a point (planar Face context menu: *Axis Normal at Point*). Methods are not
+persisted, so no schema change follows.
 
 ### 5.4 Move Face direction
 
 The Move Face panel gains **Direction**: *Face normal* (default, unchanged),
-*Edge / Sketch line / Axis*, or *Point to Point*, a **Pick** button, **Reverse**
-and the existing exact distance field. The reference is independent of the
+*Edge / Sketch line / Axis / Face* (a straight Edge, Sketch line, Axis, planar
+Face or Workplane), or *Point to Point* (construction Point, Part Vertex or
+Sketch point), a **Pick** button, **Reverse** and the existing exact distance
+field. Details: [Move Face](MOVE_FACE.md#direction-from-geometric-references-v053). The reference is independent of the
 moved Face and may belong to another Part or a Workplane.
 
 For a planar Face, translating its support plane by `s·d` is geometrically the
@@ -180,11 +185,15 @@ all other unsupported combinations.
 ### 5.5 View modes
 
 **View → Wireframe / Shaded** and **View → Show 3D Geometry** are view-level
-settings stored in `CadViewport`, not in Parts. Hiding 3D geometry erases Part
-presentations without touching `CadPart::visible`; showing restores exactly the
-Parts whose own flag is visible. Wireframe/Shaded changes the Part display mode
-only. Neither is saved in `.odc`, neither is undoable, and New/Open keep the
-current view settings.
+settings stored in `CadViewport`, not in Parts (also on the 3D toolbar).
+Hiding 3D geometry sets the Part presentations' view affinity to hidden and a
+single context selection filter rejects their owners, so solids are neither
+drawn nor pickable on any path, while `CadPart::visible` is untouched. Showing
+restores exactly the previous state; individually hidden Parts stay hidden.
+New, restored or opened Parts follow the current modes. Hiding cancels an open
+command and clears solid selection. Wireframe/Shaded changes the Part display
+mode only. Neither is saved in `.odc`, neither is undoable, and New/Open keep
+the current view settings.
 
 ## 6. Persistence
 
@@ -229,10 +238,23 @@ No `.odc` schema change: schema v5 remains current.
 
 ## 9. Tests
 
-Covered by `reference-geometry` (pure resolution, stale refusal, snapping
-identity) and `workplane-reference-sessions` (camera, frame presentation,
-picking, Move Face direction, Undo/Redo, Save/Open, view modes); see the
-roadmap entry for exact commands and results.
+| Test | Covers (prompt test numbers) |
+| --- | --- |
+| `reference-geometry` | Resolution of every reference type, Part and Workplane transforms (5), stale/deleted/hidden/locked refusal (6), snap reference identity (7) |
+| `construction-geometry` | Axis from cone, Axis normal at point, Reverse, refusal (4) |
+| `sketch-display-bounds` | 100 mm minimum opening, 10 mm ring (3) |
+| `workplane-reference-sessions` (+`-hidpi`) | Activation keeps the camera on every route (1); Look at Workplane direction/up (2); rendered frame during Move/Rotate preview, Cancel, minimum frame and ring (3); Axis/Point from Sketch references with Undo/Redo and Save/Open (4, 10); real picks equal snaps (7); Move Face per direction source, Reverse, exact distance with independent oracles, OK/Undo/Redo (8, 10); parallel and cylindrical refusal (9); stale Edge refusal (6); schema v2/v3 documents (11); view modes keep visibility flags (12) |
+| `sketch-drawing` | Edit Sketch leaves the camera unchanged; Look at Workplane aligns it |
+
+Commands (Release/Ninja, incremental):
+
+```sh
+cmake --build build -j4
+LC_ALL=C ctest --test-dir build -R '^(reference-geometry|construction-geometry|sketch-display-bounds|workplane-reference-sessions|workplane-reference-sessions-hidpi)$' --output-on-failure -j2
+```
+
+Existing session tests that draw on the Sketch plane now call Look at
+Workplane explicitly instead of relying on activation.
 
 ## 10. Manual acceptance (Fedora KDE/Wayland, 100 % and `QT_SCALE_FACTOR=2`)
 
