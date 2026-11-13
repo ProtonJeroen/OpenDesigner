@@ -29,13 +29,14 @@ void CadViewport::editSketchCurve(bool createSpline,Sketch::Role role) {
         }
         candidate=*it;
     }
+    const auto originalGeometry=candidate.geometry;
     cancelCommandSession();
     QDialog dialog(this);dialog.setObjectName("sketchCurveEditor");dialog.setWindowTitle(createSpline?tr("Interpolating Spline"):tr("Edit Curve"));
     auto* layout=new QVBoxLayout(&dialog);auto* form=new QFormLayout;layout->addLayout(form);
-    std::vector<QDoubleSpinBox*> values;
+    std::vector<QDoubleSpinBox*> values;std::vector<double> displayedValues;
     const auto number=[&](const QString& label,double value) {
         auto* spin=new QDoubleSpinBox(&dialog);spin->setDecimals(9);spin->setRange(-1.e9,1.e9);spin->setValue(value);
-        spin->setKeyboardTracking(false);form->addRow(label,spin);values.push_back(spin);return spin;
+        spin->setKeyboardTracking(false);form->addRow(label,spin);values.push_back(spin);displayedValues.push_back(spin->value());return spin;
     };
     QTableWidget* points=nullptr;QCheckBox* closed=nullptr;QLineEdit* startTangent=nullptr;QLineEdit* endTangent=nullptr;
     if(const auto* s=std::get_if<Sketch::Spline>(&candidate.geometry)) {
@@ -79,8 +80,19 @@ void CadViewport::editSketchCurve(bool createSpline,Sketch::Role role) {
             candidate.geometry=s;
         } else {
             const double radians=std::numbers::pi/180;
-            Sketch::Ellipse e{{values[0]->value(),values[1]->value()},values[2]->value(),values[3]->value(),values[4]->value()*radians};
-            candidate.geometry=values.size()==7?Sketch::Geometry{Sketch::EllipticalArc{e,values[5]->value()*radians,values[6]->value()*radians}}:Sketch::Geometry{e};
+            auto e=std::holds_alternative<Sketch::Ellipse>(originalGeometry)?std::get<Sketch::Ellipse>(originalGeometry):std::get<Sketch::EllipticalArc>(originalGeometry).ellipse;
+            // Display precision is not document precision. Preserve every
+            // untouched value, including radians and values outside UI ranges.
+            const auto changed=[&](size_t i){return values[i]->value()!=displayedValues[i];};
+            if(changed(0)) e.center.x=values[0]->value();if(changed(1)) e.center.y=values[1]->value();
+            if(changed(2)) e.majorRadius=values[2]->value();if(changed(3)) e.minorRadius=values[3]->value();
+            if(changed(4)) e.axisAngle=values[4]->value()*radians;
+            if(values.size()==7) {
+                auto arc=std::get<Sketch::EllipticalArc>(originalGeometry);arc.ellipse=e;
+                if(changed(5)) arc.startParameter=values[5]->value()*radians;
+                if(changed(6)) arc.sweepParameter=values[6]->value()*radians;
+                candidate.geometry=arc;
+            } else candidate.geometry=e;
         }
         if(!Sketch::valid(candidate,error)) {diagnostic->setText(error);return;}
         try {if(const auto* s=std::get_if<Sketch::Spline>(&candidate.geometry)) Sketch::splineCurve(*s);}

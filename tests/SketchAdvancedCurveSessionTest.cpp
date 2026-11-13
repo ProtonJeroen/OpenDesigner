@@ -52,6 +52,12 @@ struct SketchAdvancedCurveSessionTest {
         const auto moved=BRepAdaptor_Curve(TopoDS::Edge(v.sketchPresentations_.at(id)->Shape())).Value(0);
         check(v.sketchEntities_==confirmed && moved.Distance(before.Translated(gp_Vec(3,4,5)))<1.e-9,"Workplane transform rewrote local spline or lost exact world placement");
         v.undoPull();check(v.sketchEntities_==confirmed,"owner Undo changed spline values");
+        Sketch::Entity ellipse;ellipse.workplaneId=v.constructions_.front().id;ellipse.role=Sketch::Role::Construction;
+        ellipse.geometry=Sketch::EllipticalArc{{{1.1234567890123,2.2345678901234},13.12345678901234,3.23456789012345,.1234567890123456},.3456789012345678,-1.234567890123456};
+        auto values=confirmed;values.push_back(ellipse);check(v.previewSketchEntities(values,error),qPrintable(error));v.finishSketchEdit(true);
+        v.selectSketchEntities({ellipse.id});editDialog(true);v.editSketchCurve();
+        check(v.commandSession_ && v.commandSession_->sketch->after==values,"opening curve editor rounded untouched exact values");v.finishSketchEdit(false);
+        v.undoPull();check(v.sketchEntities_==confirmed,"precision fixture Undo changed spline");
         NativeDocumentSnapshot saved;check(v.exportDocumentSnapshot(saved),qPrintable(error));QTemporaryDir temp;
         check(NativeDocumentStorage::save(temp.filePath("curves.odc"),saved,error),qPrintable(error));
         NativeDocumentSnapshot loaded;check(NativeDocumentStorage::load(temp.filePath("curves.odc"),loaded,error) && loaded.sketchEntities==confirmed,"session Save/Open lost spline values");

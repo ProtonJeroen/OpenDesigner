@@ -77,7 +77,7 @@ struct SketchEllipseSessionTest {
         auto pending=ellipse;pending.id="pending-ellipse";auto candidates=entities;candidates.push_back(pending);
         check(v.previewSketchEntities(candidates,error) && window.saveDocument() && v.commandSession_,"Save lost pending ellipse session");
         NativeDocumentSnapshot saved;check(NativeDocumentStorage::load(window.documentPath_,saved,error) && saved.schemaVersion==NativeDocumentStorage::CurrentSchemaVersion && saved.sketchEntities==entities,"Save included pending ellipse or lost exact values");
-        for(int version:{3,4,6}) {auto invalid=saved;invalid.schemaVersion=version;check(!v.importDocumentSnapshot(invalid,error) && v.commandSession_ && v.sketchEntities_==entities,"invalid schema import damaged current ellipse document");}
+        for(int version:{3,4,NativeDocumentStorage::CurrentSchemaVersion+1}) {auto invalid=saved;invalid.schemaVersion=version;check(!v.importDocumentSnapshot(invalid,error) && v.commandSession_ && v.sketchEntities_==entities,"invalid schema import damaged current ellipse document");}
         chooseFile(window.documentPath_);window.openDocument();
         check(v.sketchEntities_==entities && v.undoStack_.empty() && v.redoStack_.empty() && v.sketchSelection().empty() && !v.commandSession_
             && window.constructionRoot_->child(0)->childCount()==2,"Open failed to restore conics/reset session/history/browser");

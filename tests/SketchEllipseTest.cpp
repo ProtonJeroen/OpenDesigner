@@ -208,7 +208,7 @@ void storage() {
         inspect(path,[&](const TDF_Label& root) {
             const auto record=firstRecord(root);Handle(TDataStd_RealArray) values;Handle(TDataStd_IntegerArray) flags;
             check(record.FindAttribute(TDataStd_RealArray::GetID(),values) && record.FindAttribute(TDataStd_IntegerArray::GetID(),flags),"invalid fixture record");
-            if(failure==0) {TDataStd_AsciiString::Set(root,TCollection_AsciiString("OpenDesigner.RootAssembly.v6"));TDataStd_Integer::Set(root,6);}
+            if(failure==0) {const int future=NativeDocumentStorage::CurrentSchemaVersion+1;TDataStd_AsciiString::Set(root,TCollection_AsciiString(QString("OpenDesigner.RootAssembly.v%1").arg(future).toUtf8().constData()));TDataStd_Integer::Set(root,future);}
             if(failure==1) TDataStd_Integer::Set(root,4);
             if(failure==2 || failure==3) {const int v=failure==2?3:4;TDataStd_AsciiString::Set(root,TCollection_AsciiString(QString("OpenDesigner.RootAssembly.v%1").arg(v).toUtf8().constData()));TDataStd_Integer::Set(root,v);}
             if(failure==4) flags->SetValue(0,7);

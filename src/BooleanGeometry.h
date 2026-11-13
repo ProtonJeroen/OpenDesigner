@@ -25,7 +25,10 @@ inline bool validSolid(const TopoDS_Shape& shape, double& volume) {
     for(TopExp_Explorer shell(shape,TopAbs_SHELL);shell.More();shell.Next())
         if(!BRep_Tool::IsClosed(shell.Current())) return false;
     GProp_GProps properties;
-    BRepGProp::VolumeProperties(shape,properties);
+    // Gauss-Kronrod integration resolves knot spans of exact spline boundaries;
+    // fixed quadrature can return a plausible but incorrect positive volume.
+    const double integrationError=BRepGProp::VolumePropertiesGK(shape,properties,1.e-12,false,true);
+    if(!std::isfinite(integrationError) || integrationError<0) return false;
     volume = properties.Mass();
     return std::isfinite(volume) && volume > 1.0e-12;
 }

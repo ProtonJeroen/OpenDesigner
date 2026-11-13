@@ -57,7 +57,10 @@ Construction still independently checks shared endpoint vertices, closure,
 orientation, source edge count, planar face validity, nesting, area and the
 existing vertex tolerance (default 1e-7 mm). No tolerance is relaxed and no shape
 healing is added. Extrude and Revolve use these same certified faces and their
-existing volume, solid-count and interference checks. Revolve retains its
+existing volume, solid-count and interference checks. Shared volume measurement
+uses Gauss–Kronrod integration with knot spans; source-face area and centroid
+measurement uses adaptive integration. This improves integration accuracy without
+relaxing the geometric acceptance tolerances. Revolve retains its
 in-plane axis, same-side and no pinched-solid restrictions.
 
 ## Projection scope
