@@ -79,6 +79,8 @@
 #include <gp_Sphere.hxx>
 #include <cmath>
 #include <algorithm>
+#include <functional>
+#include <SelectMgr_Filter.hxx>
 
 namespace {
 void stabilizeOrthographicCamera(const Handle(Graphic3d_Camera)& camera) {
@@ -147,6 +149,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     faceAxisSelector_->addItems({tr("Choose a straight edge…"),tr("World X axis"),tr("World Y axis"),tr("World Z axis")});
     faceAxisSelector_->hide(); commandLayout->addWidget(faceAxisSelector_);
     initializeCylindricalMoveControls();
+    initializeMoveDirectionControls();
     keepBlends_=new QCheckBox(tr("Keep Fillet / Chamfer"),commandPanel_);
     keepBlends_->setObjectName("keepFilletChamfer");keepBlends_->hide();commandLayout_->addWidget(keepBlends_);
     connect(keepBlends_,&QCheckBox::toggled,this,[this]{if(commandSession_) updateCommandParameter(false);});
@@ -186,6 +189,11 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
         }
     };
     connect(this,&CadViewport::partsChanged,this,[this]{refreshActivePart();});
+    // New, restored or imported Part presentations follow the view modes.
+    const auto followViewModes=[this]{if(wireframe_ || !show3DGeometry_) applyViewModes();};
+    connect(this,&CadViewport::partsChanged,this,followViewModes);
+    connect(this,&CadViewport::documentReplaced,this,followViewModes);
+    connect(this,&CadViewport::partCreated,this,followViewModes);
     connect(this,&CadViewport::partSelectionChanged,this,[this]{refreshActivePart();});
     connect(this,&CadViewport::partsChanged,this,invalidateProjection);
     connect(this,&CadViewport::constructionsChanged,this,invalidateProjection);
@@ -230,6 +238,7 @@ void CadViewport::beginCommandSession(CommandSession::Kind kind,
     faceAxisSelector_->setVisible(kind==CommandSession::Kind::RotateFace);
     cylinderMoveLabel_->hide(); cylinderMoveDirection_->hide();
     cylinderMoveAngle_->hide(); cylinderBossBoundary_->hide();
+    moveDirectionPicking_=false;moveDirectionSource_->hide();moveDirectionPick_->hide();moveDirectionReverse_->hide();moveDirectionLabel_->hide();
     faceAlignSelector_->setVisible(kind==CommandSession::Kind::AlignFace);
     faceAlignTargetLabel_->setVisible(kind==CommandSession::Kind::AlignFace);
     faceAlignReferenceLabel_->setVisible(kind==CommandSession::Kind::AlignFace);
@@ -469,6 +478,46 @@ bool CadViewport::eventFilter(QObject* watched, QEvent* event) {
     return QWidget::eventFilter(watched,event);
 }
 QPaintEngine* CadViewport::paintEngine() const { return nullptr; }
+namespace {
+class HiddenSolidFilter final : public SelectMgr_Filter {
+public:
+    explicit HiddenSolidFilter(std::function<bool(const Handle(SelectMgr_SelectableObject)&)> hidden) : hidden_(std::move(hidden)) {}
+    Standard_Boolean IsOk(const Handle(SelectMgr_EntityOwner)& owner) const override {
+        return owner.IsNull() || !hidden_(owner->Selectable());
+    }
+private:
+    std::function<bool(const Handle(SelectMgr_SelectableObject)&)> hidden_;
+};
+}
+int CadViewport::partDisplayMode() const {return wireframe_?AIS_WireFrame:AIS_Shaded;}
+void CadViewport::applyViewModes() {
+    if(context_.IsNull() || view_.IsNull()) return;
+    for(const auto& part:boxes_) if(!part.presentation.IsNull()) {
+        context_->SetViewAffinity(part.presentation,view_,show3DGeometry_);
+        // Erased (individually hidden) Parts keep the mode for their next Display.
+        if(context_->IsDisplayed(part.presentation)) context_->SetDisplayMode(part.presentation,partDisplayMode(),Standard_False);
+        else part.presentation->SetDisplayMode(partDisplayMode());
+    }
+    if(!show3DGeometry_) {
+        // Hidden solids cannot stay selected or highlighted.
+        context_->ClearDetected(Standard_False);
+        if(!selectedPartIndices_.empty() || selectionContext().kind==SelectionContext::Kind::Faces || selectionContext().kind==SelectionContext::Kind::Edges) {
+            context_->ClearSelected(Standard_False);selectedPartIndices_.clear();emit partSelectionChanged({});
+        }
+    }
+    view_->Invalidate();view_->Redraw();
+}
+void CadViewport::setWireframe(bool wireframe) {
+    if(wireframe_==wireframe) return;
+    initializeViewer();wireframe_=wireframe;applyViewModes();emit viewModesChanged();
+}
+void CadViewport::setShow3DGeometry(bool show) {
+    if(show3DGeometry_==show) return;
+    initializeViewer();
+    if(!show) cancelCommandSession();
+    show3DGeometry_=show;applyViewModes();emit viewModesChanged();
+    emit statusMessage(show?tr("3D geometry shown."):tr("3D geometry hidden (view only); Part visibility is unchanged."));
+}
 void CadViewport::initializeViewer() {
     if (!view_.IsNull()) return;
     display_ = new Aspect_DisplayConnection();
@@ -477,6 +526,12 @@ void CadViewport::initializeViewer() {
     viewer_->SetDefaultLights();
     viewer_->SetLightOn();
     context_ = new AIS_InteractiveContext(viewer_);
+    // View-level Hide 3D Geometry: one filter keeps hidden solids out of every
+    // detection/selection path without touching per-Part visibility.
+    context_->AddFilter(new HiddenSolidFilter([this](const Handle(SelectMgr_SelectableObject)& object) {
+        if(show3DGeometry_) return false;
+        return std::any_of(boxes_.begin(),boxes_.end(),[&](const CadPart& part){return part.presentation==object;});
+    }));
     configureSelectionHighlights();
     view_ = viewer_->CreateView();
 #if defined(Q_OS_WIN)
@@ -606,7 +661,7 @@ void CadViewport::addBox() {
     part.presentation = new PartPresentation(part.shape);
     part.presentation->SetColor(Quantity_NOC_LIGHTGRAY);
     context_->Display(part.presentation, Standard_False);
-    context_->SetDisplayMode(part.presentation, AIS_Shaded, Standard_False);
+    context_->SetDisplayMode(part.presentation, partDisplayMode(), Standard_False);
     // Disable global object selection (mode 0) before enabling subshape mode.
     context_->Deactivate(part.presentation);
     context_->Activate(part.presentation, AIS_Shape::SelectionMode(TopAbs_FACE),
@@ -639,7 +694,7 @@ void CadViewport::addCylinder() {
     part.presentation = new PartPresentation(part.shape);
     part.presentation->SetColor(Quantity_NOC_LIGHTGRAY);
     context_->Display(part.presentation, Standard_False);
-    context_->SetDisplayMode(part.presentation, AIS_Shaded, Standard_False);
+    context_->SetDisplayMode(part.presentation, partDisplayMode(), Standard_False);
     context_->Deactivate(part.presentation);
     context_->Activate(part.presentation, AIS_Shape::SelectionMode(TopAbs_FACE),
         Standard_False);
@@ -667,7 +722,7 @@ void CadViewport::addSphere() {
     part.presentation = new PartPresentation(part.shape);
     part.presentation->SetColor(Quantity_NOC_LIGHTGRAY);
     context_->Display(part.presentation,Standard_False);
-    context_->SetDisplayMode(part.presentation,AIS_Shaded,Standard_False);
+    context_->SetDisplayMode(part.presentation,partDisplayMode(),Standard_False);
     context_->Deactivate(part.presentation);
     context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
     boxes_.push_back(part);
@@ -693,7 +748,7 @@ void CadViewport::addCone() {
     part.presentation = new PartPresentation(part.shape);
     part.presentation->SetColor(Quantity_NOC_LIGHTGRAY);
     context_->Display(part.presentation,Standard_False);
-    context_->SetDisplayMode(part.presentation,AIS_Shaded,Standard_False);
+    context_->SetDisplayMode(part.presentation,partDisplayMode(),Standard_False);
     context_->Deactivate(part.presentation);
     context_->Activate(part.presentation,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
     boxes_.push_back(part);
@@ -759,7 +814,7 @@ void CadViewport::duplicateSelectedParts() {
         copy.presentation->SetColor(Quantity_Color(copy.color.redF(),copy.color.greenF(),copy.color.blueF(),Quantity_TOC_RGB));
         copy.presentation->SetLocalTransformation(copy.orientation);
         context_->Display(copy.presentation, Standard_False);
-        context_->SetDisplayMode(copy.presentation, AIS_Shaded, Standard_False);
+        context_->SetDisplayMode(copy.presentation, partDisplayMode(), Standard_False);
         context_->Deactivate(copy.presentation);
         context_->Activate(copy.presentation,
             selectionMode_==SelectionMode::Part ? 0 : AIS_Shape::SelectionMode(TopAbs_FACE),
@@ -1453,7 +1508,7 @@ bool CadViewport::importDocumentSnapshot(const NativeDocumentSnapshot& snapshot,
         // graphics failures still leave the old geometry and history intact.
         for (auto& loaded : imported) {
             context_->Display(loaded.presentation, Standard_False);
-            context_->SetDisplayMode(loaded.presentation, AIS_Shaded, Standard_False);
+            context_->SetDisplayMode(loaded.presentation, partDisplayMode(), Standard_False);
             context_->Deactivate(loaded.presentation);
             if (!loaded.visible) context_->Erase(loaded.presentation,Standard_False);
             if (loaded.visible)
@@ -2424,6 +2479,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             if(!error.isEmpty()){emit statusMessage(error);return;}
             const auto id=partId(*index);auto accepted=targetAccepted_;cancelTargetPicking();accepted(id);return;
         }
+        if(pickMoveDirection(e->pos())) return;
         if(commandSession_ && commandSession_->sweep) {
             if(commandSession_->kind==CommandSession::Kind::Revolve && commandSession_->sweep->axisPicking) {
                 context_->MoveTo(e->pos().x(),e->pos().y(),view_,Standard_True);

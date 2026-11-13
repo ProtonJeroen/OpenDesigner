@@ -47,7 +47,7 @@ struct SketchDrawingTest {
     }
     static void arcDirections() {
         MainWindow w;w.resize(1400,1000);w.show();QApplication::processEvents();auto& v=*w.viewport_;QString error;
-        check(v.importDocumentSnapshot(fixture(),error),qPrintable(error));v.activateSketchWorkplane("wp1");v.setSketchSnapping(false);w.documentDirty_=false;
+        check(v.importDocumentSnapshot(fixture(),error),qPrintable(error));(v.activateSketchWorkplane("wp1")&&v.lookAtWorkplane("wp1"));v.setSketchSnapping(false);w.documentDirty_=false;
         struct Case {double start,end,sweep;bool clockwise;};
         for(const auto c:std::vector<Case>{{350,10,20,false},{350,10,-340,true},{10,350,-20,true},{10,350,340,false},{30,150,120,false},{30,150,-240,true}}) {
             const auto before=v.sketchEntities_;const auto history=v.undoStack_.size();
@@ -122,8 +122,11 @@ struct SketchDrawingTest {
         const auto base=fixture();check(v.importDocumentSnapshot(base,error),qPrintable(error));w.documentDirty_=false;
         check(w.findChild<QComboBox*>("sketchWorkplane")->count()==3,"Workplane chooser missing");
         check(!v.activateSketchWorkplane(),"ambiguous Workplane silently chosen");
-        v.selectConstructions({"wp1"});action(w,"sketch.edit");
+        v.selectConstructions({"wp1"});const gp_Dir viewBefore=v.view_->Camera()->Direction();action(w,"sketch.edit");
         check(v.activeSketchWorkplaneId_=="wp1" && !w.documentDirty_,"activation dirtied document");
+        // v0.5.3: activation never moves the camera; Look at Workplane is explicit.
+        check(v.view_->Camera()->Direction().IsEqual(viewBefore,1.e-12),"Edit Sketch rotated the camera");
+        action(w,"sketch.normal");check(!w.documentDirty_,"Look at Workplane dirtied document");
         check(v.view_->Camera()->Direction().Dot(base.constructions[0].frame.Direction())<-0.999999,"camera not normal to WP");
         check(w.constructionRoot_->child(0)->font(0).bold(),"active WP not identified in browser");
         w.findChild<QSpinBox*>("sketchSnapPixels")->setValue(14);check(v.sketchSnapPixels()==14,"pixel setting ignored");
@@ -210,7 +213,7 @@ struct SketchDrawingTest {
             TColStd_ListOfInteger modes;v.context_->ActivatedModes(presentation,modes);
             check(!modes.IsEmpty(),"Open retained old Workplane picking restrictions");
         }
-        v.activateSketchWorkplane("wp1");v.addBox();check(v.activeSketchWorkplaneId_.isEmpty(),"3D primitive did not exit 2D");
+        (v.activateSketchWorkplane("wp1")&&v.lookAtWorkplane("wp1"));v.addBox();check(v.activeSketchWorkplaneId_.isEmpty(),"3D primitive did not exit 2D");
         snapCases(w);w.documentDirty_=false;
     }
     static void snapCases(MainWindow& w) {
@@ -229,7 +232,7 @@ struct SketchDrawingTest {
             auto data=fixture();int i=0;for(const auto& shape:c.sources) {
                 Entity e;e.id=QString("source%1").arg(++i);e.workplaneId="wp1";e.geometry=shape;e.role=Role::Construction;data.sketchEntities.push_back(e);
             }
-            QString error;check(v.importDocumentSnapshot(data,error),qPrintable(error));v.activateSketchWorkplane("wp1");
+            QString error;check(v.importDocumentSnapshot(data,error),qPrintable(error));(v.activateSketchWorkplane("wp1")&&v.lookAtWorkplane("wp1"));
             v.view_->SetScale(scale);v.view_->Redraw();v.setSketchSnapping(true);v.setSketchSnapPixels(10);
             v.startSketchDrawing(DrawTool::Segment);xy(v,c.anchor.x,c.anchor.y);
             const QPoint pos=pixel(v,c.target)+QPoint(3,2);mouse(v,QEvent::MouseMove,pos);

@@ -153,9 +153,10 @@ bool CadViewport::startMoveFace(size_t index, const TopoDS_Face& face) {
     commandSession_->face=face;
     commandSession_->faceBefore=std::make_shared<CadPart>(part);
     commandSession_->moveFeature=feature;
+    commandSession_->faceNormal=worldNormal;
     commandSession_->blendSource=recipe;
     commandSession_->blendSupport=recognized&&feature==MoveFaceFeature::Planar;
-    moveFacePicking_=false;
+    moveFacePicking_=false;moveDirectionPicking_=false;updateMoveDirectionControls();
     commandPanel_->setWindowTitle(tr("Move Face Preview"));
     dragDimension_->setToolTip(tr("Signed face offset in mm; positive is outward"));
     if(feature==MoveFaceFeature::Planar) {
@@ -255,10 +256,18 @@ bool CadViewport::previewMoveFace(double value) {
     session.geometryError.clear();
     const auto& before=*session.faceBefore;
     QString error;
-    const double localDistance=value/std::abs(before.orientation.ScaleFactor());
+    // v0.5.3: a planar Face translated by value*d is the same solid as a normal
+    // offset by value*(d.n); the certified planar path is reused unchanged.
+    double normalFactor=1;bool directionReady=true;
+    if(session.moveFeature==MoveFaceFeature::Planar) {
+        gp_Dir direction;directionReady=moveFaceDirection(session,direction,normalFactor,error);
+        if(directionReady) session.direction=direction;
+    }
+    const double localDistance=value*normalFactor/std::abs(before.orientation.ScaleFactor());
     TopoDS_Shape candidate;
     EdgeBlendFeatures::State candidateBlends;
-    if(session.blendSupport) {
+    if(!directionReady) {}
+    else if(session.blendSupport) {
         if(std::abs(value)<1.e-7) {candidate=before.shape;candidateBlends=before.blends;}
         else EdgeBlendFeatures::move(before.shape,session.blendSource,session.face,localDistance,
             keepBlends_->isChecked(),candidateBlends,candidate,error);

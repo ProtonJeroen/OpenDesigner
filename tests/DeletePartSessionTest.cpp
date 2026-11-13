@@ -72,7 +72,7 @@ static void run() {
     focus(v);key(v,Qt::Key_Delete);
     check(v.commandSession_ && v.isPartActive(0) && !v.deleteParts({0}),"Delete interrupted active modeling command");v.cancelCommandSession();
     Construction::Object wp;wp.id="delete-wp";wp.name="WP";wp.kind=Construction::Kind::Workplane;
-    v.restoreConstructions({wp});check(v.activateSketchWorkplane(wp.id,false),"sketch guard fixture failed");
+    v.restoreConstructions({wp});check(v.activateSketchWorkplane(wp.id),"sketch guard fixture failed");
     focus(v);key(v,Qt::Key_Delete);check(!v.deleteParts({0}) && v.isPartActive(0),"Delete interrupted sketch editing");v.endSketchEditing();
     // Hidden rows are deletable through browser focus and restore as hidden.
     v.setPartVisible(2,false);tree.clearSelection();tree.setCurrentItem(window.root_->child(2));window.root_->child(2)->setSelected(true);

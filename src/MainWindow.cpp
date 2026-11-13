@@ -29,7 +29,7 @@
 #include <algorithm>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.5.2");
+    setWindowTitle("OpenDesigner 0.5.3");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     connect(viewport_,&CadViewport::geometryOperationFailed,this,[this](const QString& operation,const QString& reason) {
@@ -106,7 +106,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(editSketch,&QAction::triggered,viewport_,[this]{viewport_->activateSketchWorkplane();});
     auto* finishSketch=sketchMenu->addAction(tr("Finish 2D"));finishSketch->setObjectName("sketch.finish");finishSketch->setEnabled(false);
     connect(finishSketch,&QAction::triggered,viewport_,&CadViewport::endSketchEditing);
-    auto* normalSketch=sketchMenu->addAction(tr("Look Normal"));normalSketch->setObjectName("sketch.normal");normalSketch->setEnabled(false);
+    auto* normalSketch=sketchMenu->addAction(tr("Look at Workplane"));normalSketch->setObjectName("sketch.normal");normalSketch->setEnabled(false);
     connect(normalSketch,&QAction::triggered,viewport_,&CadViewport::lookNormalToSketch);
     sketchMenu->addSeparator();
     auto* construction2D=sketchMenu->addAction(tr("Construction geometry"));construction2D->setObjectName("sketch.construction");construction2D->setCheckable(true);
@@ -232,9 +232,33 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
     auto* fitAction = viewMenu->addAction(tr("&Fit All"));
     connect(fitAction, &QAction::triggered, viewport_, &CadViewport::fitAll);
+    // v0.5.3 view-level display modes (not saved, not undoable).
+    viewMenu->addSeparator();
+    auto* displayModes=new QActionGroup(this);
+    auto* shaded=viewMenu->addAction(tr("&Shaded"));shaded->setObjectName("view.shaded");shaded->setCheckable(true);shaded->setChecked(true);
+    auto* wireframe=viewMenu->addAction(tr("&Wireframe"));wireframe->setObjectName("view.wireframe");wireframe->setCheckable(true);
+    displayModes->addAction(shaded);displayModes->addAction(wireframe);
+    connect(shaded,&QAction::triggered,viewport_,[this]{viewport_->setWireframe(false);});
+    connect(wireframe,&QAction::triggered,viewport_,[this]{viewport_->setWireframe(true);});
+    auto* show3D=viewMenu->addAction(tr("Show &3D Geometry"));show3D->setObjectName("view.show_3d");show3D->setCheckable(true);show3D->setChecked(true);
+    show3D->setToolTip(tr("Temporarily show or hide all solids without changing Part visibility"));
+    connect(show3D,&QAction::toggled,viewport_,[this](bool on){viewport_->setShow3DGeometry(on);});
+    connect(viewport_,&CadViewport::viewModesChanged,this,[this,shaded,wireframe,show3D] {
+        const QSignalBlocker a(shaded),b(wireframe),c(show3D);
+        wireframe->setChecked(viewport_->wireframe());shaded->setChecked(!viewport_->wireframe());show3D->setChecked(viewport_->show3DGeometry());
+    });
+    viewMenu->addSeparator();
+    // Explicit camera alignment; activating a Workplane never moves the camera.
+    auto* lookAtWorkplane=viewMenu->addAction(tr("&Look at Workplane"));lookAtWorkplane->setObjectName("view.look_at_workplane");
+    lookAtWorkplane->setToolTip(tr("Look normal to the active or selected Workplane (+Y up)"));lookAtWorkplane->setEnabled(false);
+    connect(lookAtWorkplane,&QAction::triggered,viewport_,[this]{viewport_->lookAtWorkplane();});
+    const auto updateLookAt=[this,lookAtWorkplane]{lookAtWorkplane->setEnabled(!viewport_->lookAtWorkplaneCandidate().isEmpty());};
+    connect(viewport_,&CadViewport::activeSketchWorkplaneChanged,lookAtWorkplane,updateLookAt);
+    connect(viewport_,&CadViewport::constructionSelectionChanged,lookAtWorkplane,updateLookAt);
+    connect(viewport_,&CadViewport::constructionsChanged,lookAtWorkplane,updateLookAt);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.5.2 — Conical Fillet and Chamfer."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.5.3 — Workplanes and geometric references."));
     });
     auto* toolbar = addToolBar(tr("3D Modeling"));toolbar->setObjectName("modeling3DToolbar");
     connect(viewport_,&CadViewport::transformModesChanged,this,[interactiveMove,directMove,interactiveRotate](bool faceNormal,bool move,bool rotate) {
@@ -255,6 +279,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     toolbar->addAction(interactiveRotate);
     toolbar->addAction(directMove);
     toolbar->addAction(fitAction);
+    toolbar->addAction(shaded);toolbar->addAction(wireframe);toolbar->addAction(show3D);
     toolbar->addSeparator();
     toolbar->addAction(undoAction);
     toolbar->addAction(redoAction);
@@ -525,7 +550,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 void MainWindow::updateWindowTitle() {
     const QString name = documentPath_.isEmpty()
         ? tr("Untitled") : QFileInfo(documentPath_).fileName();
-    setWindowTitle(tr("OpenDesigner 0.5.2 — %1%2").arg(name, documentDirty_ ? QStringLiteral(" *") : QString()));
+    setWindowTitle(tr("OpenDesigner 0.5.3 — %1%2").arg(name, documentDirty_ ? QStringLiteral(" *") : QString()));
 }
 
 void MainWindow::markDocumentDirty() {

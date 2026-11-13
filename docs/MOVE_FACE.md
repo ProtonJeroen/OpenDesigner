@@ -103,6 +103,47 @@ the cached direct-edit result. Names, colors, visibility, presentation identity
 and Structure Browser row IDs are preserved. Confirmation replaces obsolete face
 owners with a whole-part selection; Cancel restores the original face owners.
 
+## Direction from geometric references (v0.5.3)
+
+The Move Face panel of a planar Face has a **Direction** selector:
+
+| Direction | Source | Resolves to |
+| --- | --- | --- |
+| Face normal (default) | the moved Face | its outward normal (unchanged behaviour) |
+| Edge / Sketch line / Axis / Face | a straight Edge (edge orientation), a Sketch Segment (start → end) or Infinite Line, a construction Axis, a planar Face (outward normal) or a Workplane (normal) | the reference direction |
+| Point to Point | two of: construction Point, Part Vertex, Sketch point (endpoint, midpoint, center, construction point, intersection) | the unit vector from the first to the second point |
+
+Selecting a non-default source arms picking; **Pick direction reference**
+re-arms it (Point to Point restarts with a new first point). Picking uses the
+shared reference picker of [Workplane references](WORKPLANE_REFERENCES.md):
+Sketch points use the same snap targets and pixel radius as Sketch drawing.
+**Reverse direction** flips the resolved direction. The orange arrow shows the
+direction; the typed value is the signed distance **along that direction**.
+
+The reference is independent of the moved Face: it may belong to another Part,
+a Workplane or a Sketch, and it is not edited. It is resolved in world
+coordinates (Part placement and Workplane frames applied) on every preview and
+again on OK. A Face/Edge/Vertex whose topology has since been rebuilt is stale
+and refused ("… no longer exists in the current geometry …"); it is never
+rebound to similar geometry.
+
+Geometry: a planar Face translated by `s·d` produces the same solid as offsetting
+its plane by `s·(d·n)` along the outward normal `n` (tangential components do not
+change a plane). Move Face therefore uses the existing certified planar path
+(`MoveFaceGeometry::move`, or `EdgeBlendFeatures::move` with Keep ON/OFF) with
+the projected distance; certification, validation and Keep rules are unchanged.
+
+Refused atomically (no geometry, selection or history change; the session stays
+open): a direction with `|d·n| < 1e-9` ("parallel to the Face"), stale, deleted,
+hidden or locked references, coincident Point-to-Point points, references with
+no unique direction (curved non-circular edges, free-form faces, Vertex/Point as
+a direction), and any direction reference on cylindrical hole/notch/boss walls,
+which keep their lateral reference controls.
+
+Tests: `workplane-reference-sessions` (+`-hidpi`) checks every source, Reverse
+and exact distance against independent `MoveFaceGeometry` oracles, OK/Undo/Redo,
+Part identity, real viewport picks, parallel/stale/cylindrical refusal.
+
 ## Planar faces containing cylindrical openings (Phase 9F.1B)
 
 A planar face remains recognizable when its boundary contains inner wires,

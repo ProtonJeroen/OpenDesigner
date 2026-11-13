@@ -218,35 +218,70 @@ std::optional<Point> nearestPoint(const Geometry& curve,Point point) {
     }
     return {};
 }
+namespace {
+struct FeaturePoint { Point point; SnapKind kind; const char* label; PointFeature feature; };
+bool snapEligible(const Entity& e) {return supportedSketchToolCurve(e.geometry) || isElliptical(e.geometry);}
+// Cursor-independent features, in the historical snap order.
+std::vector<FeaturePoint> featurePoints(const Entity& e) {
+    std::vector<FeaturePoint> result;
+    if(const auto* point=std::get_if<ConstructionPoint>(&e.geometry)) {
+        if(std::isfinite(point->position.x) && std::isfinite(point->position.y))
+            result.push_back({point->position,SnapKind::ConstructionPoint,"Construction point",PointFeature::Position});
+        return result;
+    }
+    if(!snapEligible(e)) return result;
+    if(const auto support=ellipse(e.geometry)) {
+        result.push_back({support->center,SnapKind::Center,"Ellipse center",PointFeature::Center});
+        if(const auto* arc=std::get_if<EllipticalArc>(&e.geometry)) {
+            const auto ends=ellipticalArcEndpoints(*arc);
+            result.push_back({ends[0],SnapKind::Endpoint,"Elliptical arc start",PointFeature::Start});
+            result.push_back({ends[1],SnapKind::Endpoint,"Elliptical arc end",PointFeature::End});
+            result.push_back({ellipsePoint(*support,arc->startParameter+arc->sweepParameter/2),SnapKind::Midpoint,"Elliptical arc parametric midpoint",PointFeature::Midpoint});
+        }
+    }
+    if(const auto* s=std::get_if<Segment>(&e.geometry)) {
+        result.push_back({s->start,SnapKind::Endpoint,"Endpoint",PointFeature::Start});
+        result.push_back({s->end,SnapKind::Endpoint,"Endpoint",PointFeature::End});
+        result.push_back({mul(add(s->start,s->end),0.5),SnapKind::Midpoint,"Midpoint",PointFeature::Midpoint});
+    }
+    if(const auto* arc=std::get_if<Arc>(&e.geometry)) {
+        const Circle c{arc->center,arc->radius};
+        result.push_back({onCircle(c,arc->startAngle),SnapKind::Endpoint,"Arc endpoint",PointFeature::Start});
+        result.push_back({onCircle(c,arc->startAngle+arc->sweepAngle),SnapKind::Endpoint,"Arc endpoint",PointFeature::End});
+        result.push_back({onCircle(c,arc->startAngle+arc->sweepAngle/2),SnapKind::Midpoint,"Arc midpoint",PointFeature::Midpoint});
+    }
+    if(const auto c=circle(e.geometry)) result.push_back({c->center,SnapKind::Center,"Center",PointFeature::Center});
+    return result;
+}
+}
+std::optional<Point> resolvePoint(const std::vector<Entity>& entities,const PointReference& reference,QString& error) {
+    const auto find=[&](const QString& id)->const Entity* {
+        const auto it=std::find_if(entities.begin(),entities.end(),[&](const Entity& e){return e.id==id;});
+        return it==entities.end()?nullptr:&*it;
+    };
+    const auto* entity=find(reference.entity);
+    if(!entity) {error=QStringLiteral("The referenced Sketch entity no longer exists; pick it again.");return {};}
+    if(!entity->visible || !entity->selectable) {error=QStringLiteral("Hidden or locked Sketch entities cannot supply a reference.");return {};}
+    if(reference.feature==PointFeature::Intersection) {
+        const auto* other=find(reference.other);
+        if(!other || other->workplaneId!=entity->workplaneId) {error=QStringLiteral("The referenced intersection curve no longer exists; pick it again.");return {};}
+        if(!other->visible || !other->selectable) {error=QStringLiteral("Hidden or locked Sketch entities cannot supply a reference.");return {};}
+        if(!snapEligible(*entity) || !snapEligible(*other)) {error=QStringLiteral("These Sketch curves do not supply intersections.");return {};}
+        const auto points=intersect(entity->geometry,other->geometry).points;
+        if(reference.index<0 || size_t(reference.index)>=points.size()) {error=QStringLiteral("The referenced intersection no longer exists; pick it again.");return {};}
+        error.clear();return points[size_t(reference.index)];
+    }
+    for(const auto& f:featurePoints(*entity)) if(f.feature==reference.feature) {error.clear();return f.point;}
+    error=QStringLiteral("The referenced Sketch point no longer exists on this entity; pick it again.");return {};
+}
 std::vector<SnapTarget> snapTargets(const std::vector<Entity>& entities,const QString& workplaneId,Point cursor,std::optional<Point> anchor,bool intersections) {
     std::vector<SnapTarget> targets;std::vector<const Entity*> eligible;
     const auto addTarget=[&](Point p,SnapKind kind,const char* label){targets.push_back({p,kind,QString::fromLatin1(label)});};
     for(const auto& e:entities) if(e.workplaneId==workplaneId && e.visible && e.selectable) {
-        if(const auto* point=std::get_if<ConstructionPoint>(&e.geometry)) {
-            if(std::isfinite(point->position.x) && std::isfinite(point->position.y)) addTarget(point->position,SnapKind::ConstructionPoint,"Construction point");
-            continue;
-        }
-        if(!supportedSketchToolCurve(e.geometry) && !isElliptical(e.geometry)) continue;
+        for(const auto& f:featurePoints(e)) targets.push_back({f.point,f.kind,QString::fromLatin1(f.label),PointReference{e.id,{},f.feature,0}});
+        if(!snapEligible(e)) continue;
         eligible.push_back(&e);
-        if(const auto support=ellipse(e.geometry)) {
-            addTarget(support->center,SnapKind::Center,"Ellipse center");
-            if(const auto* arc=std::get_if<EllipticalArc>(&e.geometry)) {
-                const auto ends=ellipticalArcEndpoints(*arc);
-                addTarget(ends[0],SnapKind::Endpoint,"Elliptical arc start");addTarget(ends[1],SnapKind::Endpoint,"Elliptical arc end");
-                addTarget(ellipsePoint(*support,arc->startParameter+arc->sweepParameter/2),SnapKind::Midpoint,"Elliptical arc parametric midpoint");
-            }
-        }
-        if(const auto* s=std::get_if<Segment>(&e.geometry)) {
-            addTarget(s->start,SnapKind::Endpoint,"Endpoint");addTarget(s->end,SnapKind::Endpoint,"Endpoint");
-            addTarget(mul(add(s->start,s->end),0.5),SnapKind::Midpoint,"Midpoint");
-        }
-        if(const auto* arc=std::get_if<Arc>(&e.geometry)) {
-            const Circle c{arc->center,arc->radius};
-            addTarget(onCircle(c,arc->startAngle),SnapKind::Endpoint,"Arc endpoint");addTarget(onCircle(c,arc->startAngle+arc->sweepAngle),SnapKind::Endpoint,"Arc endpoint");
-            addTarget(onCircle(c,arc->startAngle+arc->sweepAngle/2),SnapKind::Midpoint,"Arc midpoint");
-        }
         if(const auto c=circle(e.geometry)) {
-            addTarget(c->center,SnapKind::Center,"Center");
             if(anchor) {
                 for(const auto p:tangentPoints(*anchor,e.geometry)) addTarget(p,SnapKind::Tangent,"Tangent");
                 if(contains(e.geometry,*anchor)) {
@@ -258,8 +293,11 @@ std::vector<SnapTarget> snapTargets(const std::vector<Entity>& entities,const QS
         }
         if(const auto p=nearestPoint(e.geometry,cursor)) addTarget(*p,SnapKind::Nearest,circle(e.geometry) || isElliptical(e.geometry)?"On curve":"On line");
     }
-    if(intersections) for(size_t i=0;i<eligible.size();++i) for(size_t j=i+1;j<eligible.size();++j)
-        for(Point p:intersect(eligible[i]->geometry,eligible[j]->geometry).points) addTarget(p,SnapKind::Intersection,"Intersection");
+    if(intersections) for(size_t i=0;i<eligible.size();++i) for(size_t j=i+1;j<eligible.size();++j) {
+        const auto points=intersect(eligible[i]->geometry,eligible[j]->geometry).points;
+        for(size_t k=0;k<points.size();++k)
+            targets.push_back({points[k],SnapKind::Intersection,QStringLiteral("Intersection"),PointReference{eligible[i]->id,eligible[j]->id,PointFeature::Intersection,int(k)}});
+    }
     return targets;
 }
 std::optional<SnapTarget> closestSnap(const std::vector<SnapTarget>& targets,Point cursor,double radius,const Projector& project) {

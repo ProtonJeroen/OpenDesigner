@@ -31,7 +31,8 @@ void offsetLines() {
     Entity line;line.workplaneId=wp.id;line.role=Role::Construction;
     const double q=std::sqrt(0.5);
     const std::vector<InfiniteLine> sources{{{200,10000},{0,1}},{{-10000,-200},{1,0}},{{200,-200},{q,q}}};
-    const std::vector<DisplayRectangle> finiteExpected{{-31,-12,221,12},{-12,-221,12,31},{-31,-221,221,31}};
+    // v0.5.3: spans below the 100 mm minimum opening are centered at 100 mm.
+    const std::vector<DisplayRectangle> finiteExpected{{-31,-50,221,50},{-50,-221,50,31},{-31,-221,221,31}};
     const std::vector<DisplayRectangle> emptyExpected{{-130,-120,230,120},{-120,-230,120,130},{-130,-230,230,130}};
     const auto compare=[](DisplayRectangle a,DisplayRectangle b) {
         near(a.minX,b.minX);near(a.minY,b.minY);near(a.maxX,b.maxX);near(a.maxY,b.maxY);
@@ -79,12 +80,12 @@ int main() {
             int wires=0,edges=0;for(TopExp_Explorer it(border,TopAbs_WIRE);it.More();it.Next()) ++wires;
             for(TopExp_Explorer it(border,TopAbs_EDGE);it.More();it.Next()) ++edges;
             check(wires==2 && edges==8,"ring is not exactly one outer wire and one hole");
-            for(double width:{opening.minX-outer.minX,opening.minY-outer.minY,outer.maxX-opening.maxX,outer.maxY-opening.maxY}) near(width,15);
+            for(double width:{opening.minX-outer.minX,opening.minY-outer.minY,outer.maxX-opening.maxX,outer.maxY-opening.maxY}) near(width,WorkplaneBorderWidth);near(WorkplaneBorderWidth,10);
             GProp_GProps area;BRepGProp::SurfaceProperties(border,area);
             near(area.Mass(),(outer.maxX-outer.minX)*(outer.maxY-outer.minY)-(opening.maxX-opening.minX)*(opening.maxY-opening.minY));
             const auto face=TopoDS::Face(border);
             check(BRepClass_FaceClassifier(face,worldPoint({opening.minX+1,opening.minY+1},frame),1.e-7).State()==TopAbs_OUT,"Workplane center is filled");
-            check(BRepClass_FaceClassifier(face,worldPoint({outer.minX+7,opening.minY+1},frame),1.e-7).State()==TopAbs_IN,"15 mm border missing");
+            check(BRepClass_FaceClassifier(face,worldPoint({outer.minX+7,opening.minY+1},frame),1.e-7).State()==TopAbs_IN,"10 mm border missing");
         }
         rectangle(Segment{{8,-3},{-2,5}},{-2,-3,8,5});
         rectangle(ConstructionPoint{{10,-20}},{10,-20,10,-20});
@@ -118,13 +119,19 @@ int main() {
         auto other=entity;other.workplaneId="other";other.geometry=Circle{{-1.e8,0},1.e7};
         auto infinite=entity;infinite.geometry=InfiniteLine{{-1.e12,3010},{1,0}};
         const auto bounds=displayRectangle(wp,{entity,other,infinite});
-        check(bounds==DisplayRectangle{990,2998,1110,3022},"roles/visibility/owner filtering or 10% margin incorrect");
+        check(bounds==DisplayRectangle{990,2960,1110,3060},"roles/visibility/owner filtering, 10% margin or 100 mm minimum incorrect");
         entity.role=Role::Profile;check(displayRectangle(wp,{entity})==bounds,"Profile ignored");
         auto point=entity;point.geometry=ConstructionPoint{{1.e12,-1.e12}};
-        check(displayRectangle(wp,{point})==DisplayRectangle{1.e12-10,-1.e12-10,1.e12+10,-1.e12+10},"remote point minimum size");
+        check(displayRectangle(wp,{point})==DisplayRectangle{1.e12-50,-1.e12-50,1.e12+50,-1.e12+50},"remote point minimum size");
+        // Empty or small Face-derived Workplanes also open at least 100 x 100 mm.
+        {auto small=wp;small.extent=10;check(displayRectangle(small,{})==DisplayRectangle{-37,-58,63,42},"small empty Workplane below 100 mm minimum");}
+        {Entity tiny;tiny.workplaneId=wp.id;tiny.geometry=Segment{{0,0},{5,0}};const auto r=displayRectangle(wp,{tiny});
+         near(r.maxX-r.minX,100);near(r.maxY-r.minY,100);near((r.minX+r.maxX)/2,2.5);near((r.minY+r.maxY)/2,0);}
+        {Entity wide;wide.workplaneId=wp.id;wide.geometry=Segment{{0,0},{500,0}};const auto r=displayRectangle(wp,{wide});
+         near(r.minX,-50);near(r.maxX,550);near(r.maxY-r.minY,100);}
         wp.frame=gp_Ax3(gp_Pnt(11,22,33),gp_Dir(1,2,3),gp_Dir(2,-1,0));
         const auto corners=displayCorners(bounds,wp.frame);
-        check(corners[0].IsEqual(worldPoint({990,2998},wp.frame),1.e-9),"rotated/translated Workplane frame lost");
+        check(corners[0].IsEqual(worldPoint({990,2960},wp.frame),1.e-9),"rotated/translated Workplane frame lost");
         const DisplayRectangle clip{-10,-5,30,15};
         auto line=InfiniteLine{{100000,0},{1,0}};auto segment=clipLine(line,clip).value();
         endpoint(segment.start,{-10,0});endpoint(segment.end,{30,0});

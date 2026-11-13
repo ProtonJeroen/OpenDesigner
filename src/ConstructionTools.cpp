@@ -69,7 +69,10 @@ Handle(AIS_Shape) CadViewport::constructionPresentation(const Object& object,boo
     result->SetWidth(2.0);
     if(object.kind==Kind::Axis) result->SetDisplayMode(AIS_Shaded);
     if(object.kind==Kind::Workplane) {
-        result->SetColor(workplaneColor(object.id));result->SetDisplayMode(AIS_Shaded);result->SetTransparency(0.5);
+        // A Move/Rotate candidate keeps the shaded ring in the preview colour so
+        // the frame stays visible while the original is erased (v0.5.3).
+        result->SetColor(preview?Quantity_Color(0.1,0.65,1.0,Quantity_TOC_RGB):workplaneColor(object.id));
+        result->SetDisplayMode(AIS_Shaded);result->SetTransparency(0.5);
         // This reference surface uses its UI color, without a specular highlight
         // washing green/light gray out when viewed normal to the plane.
         result->Attributes()->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
@@ -210,8 +213,8 @@ void CadViewport::populateConstructionMenu(QMenu& menu) {
         if(object->kind==Kind::Workplane) {
             auto* edit=menu.addAction(tr("Edit Sketch"));edit->setObjectName("context.edit_sketch");
             connect(edit,&QAction::triggered,this,[this,id=object->id]{activateSketchWorkplane(id);});
-            auto* normal=menu.addAction(tr("Look Normal to Workplane"));
-            connect(normal,&QAction::triggered,this,[this,id=object->id]{activateSketchWorkplane(id);});
+            auto* normal=menu.addAction(tr("Look at Workplane"));normal->setObjectName("context.look_at_workplane");
+            connect(normal,&QAction::triggered,this,[this,id=object->id]{lookAtWorkplane(id);});
             add(tr("Move Workplane"),Method::PlaneMove);add(tr("Rotate Workplane"),Method::PlaneRotate);add(tr("Offset Workplane"),Method::PlaneOffset);add(tr("Normal Axis"),Method::AxisNormalPlane);}
         else if(object->kind==Kind::Axis) {add(tr("Move Axis"),Method::AxisMove);add(tr("Rotate Axis"),Method::AxisRotate);add(tr("Point on Axis"),Method::PointOnAxis);add(tr("Workplane Normal through Point"),Method::PlaneNormalAxisPoint);add(tr("Workplane through Axis and Point"),Method::PlaneThroughAxisPoint);add(tr("Workplane at Angle"),Method::PlaneAxisAngle);}
         else {add(tr("Offset Point"),Method::PointOffset);add(tr("Edit Coordinates"),Method::PointXYZ);add(tr("Axis and Direction"),Method::AxisPointDirection);add(tr("Project Point"),Method::PointProject);}
@@ -331,7 +334,29 @@ void CadViewport::restoreConstructionPicker() {
 bool CadViewport::captureConstructionReference(const QPoint& point) {
     auto& state=*commandSession_->construction;
     if(state.pickRole<0) return false;
-    const size_t role=size_t(state.pickRole);context_->MoveTo(point.x(),point.y(),view_,Standard_True);
+    const size_t role=size_t(state.pickRole);
+    // v0.5.3: Sketch points and lines supply Point / Line / Axis operands
+    // through the shared reference picking and resolution.
+    {
+        const auto expected=definition(state.request.method).roles[role].kind;
+        if(expected==ReferenceKind::Point || expected==ReferenceKind::Line || expected==ReferenceKind::Axis) {
+            QString error;
+            const auto kinds=expected==ReferenceKind::Point?std::vector<References::Kind>{References::Kind::SketchPoint}
+                                                           :std::vector<References::Kind>{References::Kind::SketchLine};
+            if(const auto target=pickReference(point,kinds,error)) {
+                References::Resolved resolved;
+                if(!resolveReference(*target,resolved,error)) {constructionPanel_->setValid(false,error);return true;}
+                Reference ref;ref.kind=expected;
+                if(expected==ReferenceKind::Point) {ref.frame.SetLocation(*resolved.point);ref.anchor=*resolved.point;}
+                else {ref.frame=gp_Ax3(resolved.line->Location(),resolved.line->Direction());ref.anchor=resolved.point;}
+                const QString key="picked:"+QString::number(role)+":"+QString::number(state.choices[role].size());
+                const auto label=expected==ReferenceKind::Point?tr("Picked Sketch point"):tr("Picked %1").arg(resolved.label);
+                state.choices[role].push_back({key,label,{},ref});
+                constructionPanel_->roles[role]->addItem(label,key);acceptConstructionChoice(role,key);return true;
+            }
+        }
+    }
+    context_->MoveTo(point.x(),point.y(),view_,Standard_True);
     if(!context_->HasDetected()) return true;
     const auto detected=context_->DetectedInteractive();
     for(const auto& [id,presentation]:constructionPresentations_) if(detected==presentation) {
@@ -397,7 +422,11 @@ bool CadViewport::previewConstruction() {
         commandSession_->preview=constructionPresentation(state.candidate,true);
         constructionPreviewLabel_=constructionLabel(state.candidate,true);
         context_->Display(constructionPreviewLabel_,0,-1,Standard_False);context_->Deactivate(constructionPreviewLabel_);
-        context_->Display(commandSession_->preview,-1,-1,Standard_False);context_->Deactivate(commandSession_->preview);
+        // Display mode -1 computes no AIS_Shape presentation: use the preview's
+        // own mode (shaded ring/axis, wireframe point). Selection mode -1 keeps
+        // the preview non-selectable.
+        const auto& preview=commandSession_->preview;
+        context_->Display(preview,preview->HasDisplayMode()?preview->DisplayMode():int(AIS_WireFrame),-1,Standard_False);context_->Deactivate(preview);
         if(!state.targetId.isEmpty()) {
             context_->Erase(constructionPresentations_.at(state.targetId),Standard_False);
             context_->Erase(constructionLabels_.at(state.targetId),Standard_False);

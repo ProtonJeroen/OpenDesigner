@@ -111,7 +111,7 @@ struct CommandPanelSessionTest {
         check(!v.commandSession_ && v.undoStack_.size()==history+1,"Enter no longer confirms one transaction");v.undoPull();v.redoPull();
         v.startConstruction(Construction::Method::PlaneXY);anchored(v,v.constructionPanel_);at=place(v,v.constructionPanel_);
         v.constructionPanel_->name->setText("WP2");v.constructionPanel_->setValue(15);retained(v,v.constructionPanel_,at);v.confirmCommandSession();settle();
-        const auto owner=v.constructions_.front().id;check(v.activateSketchWorkplane(owner),"cannot activate Workplane");
+        const auto owner=v.constructions_.front().id;check((v.activateSketchWorkplane(owner)&&v.lookAtWorkplane(owner)),"cannot activate Workplane");
         v.startSketchDrawing(Sketch::DrawTool::Arc,Sketch::Role::Construction);anchored(v,v.sketchDrawingPanel_);completeForm(v.sketchDrawingPanel_);at=place(v,v.sketchDrawingPanel_);
         const auto drawingHistory=v.undoStack_.size();v.acceptSketchPoint({0,0});v.acceptSketchPoint({10,0});completeForm(v.sketchDrawingPanel_);
         v.acceptSketchPoint({0,10});completeForm(v.sketchDrawingPanel_);retained(v,v.sketchDrawingPanel_,at);

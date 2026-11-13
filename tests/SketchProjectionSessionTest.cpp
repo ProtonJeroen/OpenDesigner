@@ -119,7 +119,7 @@ struct SketchProjectionSessionTest {
     }
     static void setup(MainWindow& w) {
         w.resize(1250,950);w.show();settle();QString error;check(w.viewport_->importDocumentSnapshot(fixture(),error),qPrintable(error));
-        check(w.viewport_->activateSketchWorkplane("projection-wp",false),"cannot activate projection target");
+        check(w.viewport_->activateSketchWorkplane("projection-wp"),"cannot activate projection target");
         w.viewport_->selectSketchEntities({w.viewport_->sketchEntities_.front().id});w.documentDirty_=false;settle();
     }
     static TopoDS_Face top(CadViewport& v,size_t part=0) {
@@ -244,7 +244,7 @@ struct SketchProjectionSessionTest {
         doc.sketchEntities[0].geometry=Sketch::Segment{{-11,-59},{89,-59}};
         doc.parts[0].shape=BRepPrimAPI_MakeBox(gp_Pnt(-17.224,-59,30),96.593,20,10).Shape();
         QString error;auto& v=*w.viewport_;check(v.importDocumentSnapshot(doc,error),qPrintable(error));
-        check(v.activateSketchWorkplane("projection-wp",false),"cannot activate reported WP1");w.documentDirty_=false;
+        check(v.activateSketchWorkplane("projection-wp"),"cannot activate reported WP1");w.documentDirty_=false;
         const auto baseline=v.sketchEntities_;const auto history=v.undoStack_.size();const auto face=top(v);
         v.startSketchProjection();pick(v,{{0,face}});preview(v,4);
         const auto checkBoundary=[](const auto& entities) {
@@ -339,17 +339,17 @@ struct SketchProjectionSessionTest {
             else if(route==1) v.startSketchDrawing(Sketch::DrawTool::Segment);
             else v.endSketchEditing();
             check(v.sketchPreviews_.empty() && !v.sketchProjectionPanel_ && v.sketchEntities_==baseline && v.undoStack_.size()==history,"close/switch/Finish 2D leaked projection transaction");
-            v.cancelCommandSession();if(v.activeSketchWorkplaneId_.isEmpty()) check(v.activateSketchWorkplane("projection-wp",false),"reactivation failed");
+            v.cancelCommandSession();if(v.activeSketchWorkplaneId_.isEmpty()) check(v.activateSketchWorkplane("projection-wp"),"reactivation failed");
         }
         v.startSketchProjection();pick(v,{{0,face}});
         auto moved=v.boxes_[0].orientation;moved.SetTranslationPart(gp_Vec(5,0,0));v.boxes_[0].orientation=moved;
         v.confirmCommandSession();check(!v.commandSession_ && v.sketchPreviews_.empty() && v.context_->NbSelected()==0,"stale Part placement committed projection");v.boxes_[0].orientation=gp_Trsf();
         v.startSketchProjection();pick(v,{{0,face}});v.boxes_[0].active=false;v.refreshSketchProjection();check(!v.commandSession_ && v.sketchPreviews_.empty(),"deleted source left dangling command");v.boxes_[0].active=true;
         v.startSketchProjection();pick(v,{{0,face}});v.setPartVisible(0,false);
-        check(!v.commandSession_ && !v.activeSketchWorkplaneId_.isEmpty() && v.sketchPreviews_.empty(),"hiding a source leaked projection or lost valid Sketch context");v.setPartVisible(0,true);v.activateSketchWorkplane("projection-wp",false);
+        check(!v.commandSession_ && !v.activeSketchWorkplaneId_.isEmpty() && v.sketchPreviews_.empty(),"hiding a source leaked projection or lost valid Sketch context");v.setPartVisible(0,true);v.activateSketchWorkplane("projection-wp");
         v.startSketchProjection();pick(v,{{0,face}});auto target=v.constructions_.front();target.visible=false;check(v.updateConstruction(target),"hide target failed");
         check(!v.commandSession_ && !v.sketchProjectionPanel_ && v.sketchPreviews_.empty() && v.activeSketchWorkplaneId_.isEmpty(),"hidden target retained projection context");
-        v.undoPull();check(v.activateSketchWorkplane("projection-wp",false),"target restore failed");
+        v.undoPull();check(v.activateSketchWorkplane("projection-wp"),"target restore failed");
         v.startSketchProjection();mode(v,Mode::Vertex);const auto vertex=TopoDS::Vertex(TopExp_Explorer(v.boxes_[0].shape,TopAbs_VERTEX).Current());pick(v,{{0,vertex}});preview(v,1);
         BRep_Builder builder;builder.UpdateVertex(vertex,BRep_Tool::Pnt(vertex).Translated(gp_Vec(1,2,3)),1.e-7);
         v.confirmCommandSession();check(!v.commandSession_ && v.sketchPreviews_.empty() && v.context_->NbSelected()==0,"in-place source geometry changed after preview but still committed");

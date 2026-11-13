@@ -58,7 +58,7 @@ struct SketchOverdrawSessionTest {
         const auto make=[&](const char* id,Sketch::Geometry geometry) {Sketch::Entity e;e.id=id;e.name=id;e.workplaneId="wp";e.role=Sketch::Role::Construction;e.geometry=geometry;return e;};
         base.sketchEntities={make("A",a),make("line",Sketch::Segment{arcPoint(b,0),arcPoint(a,1)}),make("B",b)};
         for(bool reverse:{false,true}) {
-            check(v.importDocumentSnapshot(base,error),qPrintable(error));v.activateSketchWorkplane("wp");w.documentDirty_=false;
+            check(v.importDocumentSnapshot(base,error),qPrintable(error));(v.activateSketchWorkplane("wp")&&v.lookAtWorkplane("wp"));w.documentDirty_=false;
             const auto begin=reverse?arcPoint(b,1):arcPoint(a,0);
             const auto middle=Sketch::Point{(arcPoint(b,0).x+arcPoint(a,1).x)/2,(arcPoint(b,0).y+arcPoint(a,1).y)/2};
             const auto line=std::get<Sketch::Segment>(base.sketchEntities[1].geometry);
@@ -109,7 +109,7 @@ struct SketchOverdrawSessionTest {
         }
         // An isolated large arc traversed backwards must remain large.
         const Sketch::Arc large{{0,0},60,350*pi/180,300*pi/180};base.sketchEntities={make("large",large)};
-        check(v.importDocumentSnapshot(base,error),qPrintable(error));v.activateSketchWorkplane("wp");start(w);mouse(v,arcPoint(large,1),true);mouse(v,arcPoint(large,0.5));
+        check(v.importDocumentSnapshot(base,error),qPrintable(error));(v.activateSketchWorkplane("wp")&&v.lookAtWorkplane("wp"));start(w);mouse(v,arcPoint(large,1),true);mouse(v,arcPoint(large,0.5));
         checkOrientedPreview(v,v.overdrawHover_,Sketch::reversedArc(large));mouse(v,arcPoint(large,0.5),true);v.confirmCommandSession();
         check(std::abs(std::get<Sketch::Arc>(v.sketchEntities_.back().geometry).sweepAngle+300*pi/180)<1.e-12,"reverse large arc became short complement");w.documentDirty_=false;
     }
@@ -146,7 +146,7 @@ struct SketchOverdrawSessionTest {
         MainWindow w;w.resize(1400,1000);w.show();QApplication::processEvents();auto& v=*w.viewport_;QString error;
         const auto initial=fixture();check(v.importDocumentSnapshot(initial,error),"fixture import failed");w.documentDirty_=false;
         check(!w.findChild<QAction*>("sketch.overdraw")->isEnabled(),"Overdraw enabled outside active 2D context");
-        v.startSketchOverdraw();check(!v.commandSession_,"Overdraw implicitly activated a Workplane");v.activateSketchWorkplane("wp");
+        v.startSketchOverdraw();check(!v.commandSession_,"Overdraw implicitly activated a Workplane");(v.activateSketchWorkplane("wp")&&v.lookAtWorkplane("wp"));
         w.findChild<QAction*>("sketch.construction")->setChecked(true); // Geometry output remains Profile.
         start(w);auto* panel=v.sketchOverdrawPanel_;
         check(!panel->buttons->button(QDialogButtonBox::Ok)->isEnabled() && !w.documentDirty_,"empty Overdraw dirtied document or enabled OK");
@@ -203,7 +203,7 @@ struct SketchOverdrawSessionTest {
         check(v.sketchEntities_==confirmed && v.undoStack_.empty() && v.redoStack_.empty() && !v.commandSession_
             && v.activeSketchWorkplaneId_.isEmpty() && v.overdrawHover_.IsNull() && !v.sketchOverdrawPanel_,"Open retained Overdraw state");
         // Shared chronological history still interleaves with a 3D Move.
-        check(v.importDocumentSnapshot(initial,error),"reset fixture failed");v.addBox();v.activateSketchWorkplane("wp");
+        check(v.importDocumentSnapshot(initial,error),"reset fixture failed");v.addBox();(v.activateSketchWorkplane("wp")&&v.lookAtWorkplane("wp"));
         start(w);mouse(v,{80,0},true);mouse(v,{60,0},true);v.confirmCommandSession();
         const auto profileSet=v.sketchEntities_;const auto originalTransform=v.boxes_[0].orientation;
         v.selectParts({0});v.beginCommandSession(CadViewport::CommandSession::Kind::Move,{0},gp_Dir(1,0,0),gp_Pnt());check(v.previewCommand(12),"3D Move failed");v.closeCommandSession(true);
@@ -212,10 +212,10 @@ struct SketchOverdrawSessionTest {
         check(v.sketchEntities_==profileSet && v.context_->NbSelected()==0,"mixed Redo failed");
         // Unsupported cases are explicit, noncommittable, and cancellable.
         auto single=initial;single.sketchEntities.erase(single.sketchEntities.begin());
-        check(v.importDocumentSnapshot(single,error),"single circle fixture failed");v.activateSketchWorkplane("wp");w.documentDirty_=false;start(w);
+        check(v.importDocumentSnapshot(single,error),"single circle fixture failed");(v.activateSketchWorkplane("wp")&&v.lookAtWorkplane("wp"));w.documentDirty_=false;start(w);
         check(v.sketchOverdrawPanel_->findChild<QLabel*>("overdrawPrompt")->text().contains("two distinct") && !v.commandSession_->valid,"unsupported circle has no useful explanation");
         key(v.sketchOverdrawPanel_,Qt::Key_Escape);check(v.sketchEntities_==single.sketchEntities && v.undoStack_.empty() && !w.documentDirty_,"unsupported Cancel changed document");
-        check(v.importDocumentSnapshot(initial,error),"node ambiguity fixture failed");v.activateSketchWorkplane("wp");
+        check(v.importDocumentSnapshot(initial,error),"node ambiguity fixture failed");(v.activateSketchWorkplane("wp")&&v.lookAtWorkplane("wp"));
         v.view_->Camera()->SetScale(10000); // World-space height; V3d_View::SetScale is a relative zoom factor.
         start(w);mouse(v,{0,0});
         check(v.commandSession_->overdraw->hits.size()>1 && !v.commandSession_->overdraw->nodeHover,"ambiguous start point was guessed");
@@ -223,10 +223,10 @@ struct SketchOverdrawSessionTest {
         v.sketchOverdrawPanel_->candidates->setCurrentIndex(1);v.sketchOverdrawPanel_->chooseButton->click();
         check(v.commandSession_->overdraw->currentNode.has_value(),"explicit start-point choice ignored");v.cancelCommandSession();
         // A Workplane switch cancels all chosen/green geometry; New also cleans it.
-        check(v.importDocumentSnapshot(initial,error),"switch fixture failed");v.activateSketchWorkplane("wp");start(w);mouse(v,{80,0},true);mouse(v,{60,0},true);mouse(v,{0,0});
+        check(v.importDocumentSnapshot(initial,error),"switch fixture failed");(v.activateSketchWorkplane("wp")&&v.lookAtWorkplane("wp"));start(w);mouse(v,{80,0},true);mouse(v,{60,0},true);mouse(v,{0,0});
         auto* chooser=w.findChild<QComboBox*>("sketchWorkplane");chooser->setCurrentIndex(chooser->findData("wp2"));
         check(v.activeSketchWorkplaneId_=="wp2" && !v.commandSession_ && v.sketchEntities_==initial.sketchEntities && v.overdrawHover_.IsNull(),"WP switch committed or leaked Overdraw");
-        v.activateSketchWorkplane("wp");start(w);mouse(v,{80,0},true);mouse(v,{60,0},true);w.documentDirty_=false;w.newDocument();
+        (v.activateSketchWorkplane("wp")&&v.lookAtWorkplane("wp"));start(w);mouse(v,{80,0},true);mouse(v,{60,0},true);w.documentDirty_=false;w.newDocument();
         check(v.sketchEntities_.empty() && !v.commandSession_ && v.sketchPreviews_.empty() && !v.sketchOverdrawPanel_
             && v.overdrawHover_.IsNull() && !w.findChild<QAction*>("sketch.overdraw")->isEnabled(),"New retained Overdraw state");
         w.documentDirty_=false;

@@ -69,7 +69,7 @@ struct SketchConstructionSessionTest {
         MainWindow w;w.resize(1600,1100);w.show();QApplication::processEvents();auto& v=*w.viewport_;QString error;const auto initial=fixture();
         check(v.importDocumentSnapshot(initial,error),"fixture import failed");w.documentDirty_=false;
         check(!w.findChild<QAction*>("sketch.offset_line")->isEnabled() && !w.findChild<QAction*>("sketch.common_tangent")->isEnabled(),"new tools enabled outside active WP");
-        v.startSketchConstruction(Sketch::ConstructionTool::OffsetLine);check(!v.commandSession_,"tool implicitly activated WP");v.activateSketchWorkplane("wp");
+        v.startSketchConstruction(Sketch::ConstructionTool::OffsetLine);check(!v.commandSession_,"tool implicitly activated WP");(v.activateSketchWorkplane("wp")&&v.lookAtWorkplane("wp"));
         v.selectSketchEntities({"profile"});action(w,"sketch.offset_line");auto* p=v.sketchConstructionPanel_;
         check(p && p->references[0]->currentData()=="profile" && v.commandSession_->valid,"Profile preselection not accepted by Offset");
         for(const auto* id:{"hidden","locked","other","c1"}) check(p->references[0]->findData(id)==-1,"ineligible Offset reference in list");
@@ -135,21 +135,21 @@ struct SketchConstructionSessionTest {
             && v.undoStack_.empty() && v.redoStack_.empty() && v.activeSketchWorkplaneId_.isEmpty(),"Open did not restore/reset construction lines");
         // No-solution and touching cases remain repairable/cancellable.
         auto touching=initial;touching.sketchEntities[2].geometry=Sketch::Circle{{0,0},20};touching.sketchEntities[3].geometry=Sketch::Circle{{10,0},10};
-        check(v.importDocumentSnapshot(touching,error),"touching import failed");v.activateSketchWorkplane("wp");v.selectSketchEntities({"c1","c2"});action(w,"sketch.common_tangent");p=v.sketchConstructionPanel_;
+        check(v.importDocumentSnapshot(touching,error),"touching import failed");(v.activateSketchWorkplane("wp")&&v.lookAtWorkplane("wp"));v.selectSketchEntities({"c1","c2"});action(w,"sketch.common_tangent");p=v.sketchConstructionPanel_;
         check(p->solutions->count()==2,"shared-contact infinite tangent missing or duplicated");p->solutions->setCurrentIndex(1);check(v.commandSession_->valid,"unique shared-contact infinite tangent invalid");
         p->output->setCurrentIndex(1);check(p->solutions->count()==1 && !v.commandSession_->valid && v.sketchPreviews_.empty()
             && p->findChild<QLabel*>("constructionLinePrompt")->text().contains("zero finite span"),"zero finite contact span silently accepted");
         p->output->setCurrentIndex(0);p->solutions->setCurrentIndex(1);check(v.commandSession_->valid,"output repair failed");v.cancelCommandSession();
         auto concentric=initial;concentric.sketchEntities[2].geometry=Sketch::Circle{{0,0},20};concentric.sketchEntities[3].geometry=Sketch::Circle{{0,0},10};
-        check(v.importDocumentSnapshot(concentric,error),"concentric import failed");v.activateSketchWorkplane("wp");v.selectSketchEntities({"c1","c2"});action(w,"sketch.common_tangent");p=v.sketchConstructionPanel_;
+        check(v.importDocumentSnapshot(concentric,error),"concentric import failed");(v.activateSketchWorkplane("wp")&&v.lookAtWorkplane("wp"));v.selectSketchEntities({"c1","c2"});action(w,"sketch.common_tangent");p=v.sketchConstructionPanel_;
         check(!v.commandSession_->valid && p->findChild<QLabel*>("constructionLinePrompt")->text().contains("Concentric"),"concentric case has no useful message");key(p,Qt::Key_Escape);
         // Ambiguous acquisition uses lists rather than guessing; WP changes cancel.
-        check(v.importDocumentSnapshot(initial,error),"reset failed");v.activateSketchWorkplane("wp");v.view_->Camera()->SetScale(10000);action(w,"sketch.offset_line");mouse(v,{0,0},true);
+        check(v.importDocumentSnapshot(initial,error),"reset failed");(v.activateSketchWorkplane("wp")&&v.lookAtWorkplane("wp"));v.view_->Camera()->SetScale(10000);action(w,"sketch.offset_line");mouse(v,{0,0},true);
         check(v.commandSession_->lineConstruction->referenceHits.size()>1 && v.commandSession_->lineConstruction->pickRole==0,"ambiguous reference was guessed");
         p=v.sketchConstructionPanel_;p->references[0]->setCurrentIndex(p->references[0]->findData("profile"));check(v.commandSession_->valid,"explicit reference list did not resolve ambiguity");
-        v.activateSketchWorkplane("wp2");check(!v.commandSession_ && !v.sketchConstructionPanel_ && v.sketchEntities_==initial.sketchEntities,"WP switch committed or leaked Offset");
+        (v.activateSketchWorkplane("wp2")&&v.lookAtWorkplane("wp2"));check(!v.commandSession_ && !v.sketchConstructionPanel_ && v.sketchEntities_==initial.sketchEntities,"WP switch committed or leaked Offset");
         // New and switching to Overdraw clean all construction-line UI/overlays.
-        v.activateSketchWorkplane("wp");v.selectSketchEntities({"c1","c2"});action(w,"sketch.common_tangent");v.startSketchOverdraw();
+        (v.activateSketchWorkplane("wp")&&v.lookAtWorkplane("wp"));v.selectSketchEntities({"c1","c2"});action(w,"sketch.common_tangent");v.startSketchOverdraw();
         check(v.commandSession_->overdraw && !v.sketchConstructionPanel_ && v.constructionLineAlternatives_.empty(),"Overdraw switch leaked tangent tool");v.cancelCommandSession();
         action(w,"sketch.offset_line");w.documentDirty_=false;w.newDocument();
         check(!v.commandSession_ && !v.sketchConstructionPanel_ && v.sketchEntities_.empty() && v.constructionLineAlternatives_.empty(),"New retained construction-line session");w.documentDirty_=false;

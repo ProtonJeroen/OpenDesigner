@@ -67,6 +67,16 @@ void expand(double& low,double& high) {
     }
 }
 }
+namespace {
+void minimumOpening(double& low,double& high) {
+    const long double span=static_cast<long double>(high)-low;
+    if(!(span<WorkplaneMinimumOpening)) return;
+    const long double center=static_cast<long double>(low)+span/2,half=WorkplaneMinimumOpening/2;
+    const auto limit=static_cast<long double>(std::numeric_limits<double>::max());
+    low=static_cast<double>(std::max(-limit,center-half));high=static_cast<double>(std::min(limit,center+half));
+}
+DisplayRectangle withMinimumOpening(DisplayRectangle r) {minimumOpening(r.minX,r.maxX);minimumOpening(r.minY,r.maxY);return r;}
+}
 std::optional<DisplayRectangle> finiteBounds(const Geometry& geometry) {
     return std::visit([](const auto& g)->std::optional<DisplayRectangle> {
         using T=std::decay_t<decltype(g)>;
@@ -90,6 +100,7 @@ DisplayRectangle displayRectangle(const Construction::Object& owner,const std::v
                                        owner.displayOffset.X()+owner.extent,owner.displayOffset.Y()+owner.extent};
     auto base=*bounds;
     if(finite) {expand(base.minX,base.maxX);expand(base.minY,base.maxY);}
+    base=withMinimumOpening(base);
     bool outside=false;
     for(const auto& e:entities) if(e.workplaneId==owner.id) if(const auto* line=std::get_if<InfiniteLine>(&e.geometry)) {
         if(clipLine(*line,base)) continue; // Already visible, even on a long/narrow frame.
@@ -98,7 +109,7 @@ DisplayRectangle displayRectangle(const Construction::Object& owner,const std::v
         include(*bounds,closestLinePoint(*line,base));outside=true;
     }
     if(!outside) return base;
-    expand(bounds->minX,bounds->maxX);expand(bounds->minY,bounds->maxY);return *bounds;
+    expand(bounds->minX,bounds->maxX);expand(bounds->minY,bounds->maxY);return withMinimumOpening(*bounds);
 }
 std::array<gp_Pnt,4> displayCorners(const DisplayRectangle& r,const gp_Ax3& frame) {
     return {worldPoint({r.minX,r.minY},frame),worldPoint({r.maxX,r.minY},frame),

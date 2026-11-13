@@ -239,7 +239,7 @@ QMenu* CadViewport::createSelectionMenu(const QPoint& anchor) {
         add(tr("Construction Arc"),Sketch::DrawTool::Arc,Sketch::Role::Construction);
         add(tr("Construction Ellipse"),Sketch::DrawTool::Ellipse,Sketch::Role::Construction);
         add(tr("Construction Elliptical Arc"),Sketch::DrawTool::EllipticalArc,Sketch::Role::Construction);
-        connect(menu->addAction(tr("Look Normal")),&QAction::triggered,this,&CadViewport::lookNormalToSketch);
+        connect(menu->addAction(tr("Look at Workplane")),&QAction::triggered,this,&CadViewport::lookNormalToSketch);
         connect(menu->addAction(tr("Finish 2D")),&QAction::triggered,this,&CadViewport::endSketchEditing);
     }
     if(menu->isEmpty()) { delete menu; return nullptr; }
@@ -328,7 +328,7 @@ void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection
     }
     if(selection.faces.size()==1) {
         const BRepAdaptor_Surface surface(selection.faces.front().face);
-        if(surface.GetType()==GeomAbs_Plane || surface.GetType()==GeomAbs_Cylinder) {
+        if(surface.GetType()==GeomAbs_Plane || surface.GetType()==GeomAbs_Cylinder || surface.GetType()==GeomAbs_Cone) {
             auto* construction=menu.addMenu(tr("Construction Geometry"));
             const auto add=[&](const QString& text,Construction::Method method) {
                 auto* action=construction->addAction(text);
@@ -337,7 +337,8 @@ void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection
             if(surface.GetType()==GeomAbs_Plane) {
                 add(tr("Workplane from Face"),Construction::Method::PlaneFace);
                 add(tr("Offset Workplane"),Construction::Method::PlaneOffset);
-            } else add(tr("Axis from Cylinder"),Construction::Method::AxisCylinder);
+                add(tr("Axis Normal at Point"),Construction::Method::AxisFaceNormal);
+            } else add(surface.GetType()==GeomAbs_Cone?tr("Axis from Cone"):tr("Axis from Cylinder"),Construction::Method::AxisCylinder);
         }
     }
     auto* resize=menu.addAction(tr("Pull / Resize"));resize->setObjectName(QStringLiteral("context.resize"));
@@ -411,6 +412,7 @@ void CadViewport::resetModelingTools() {
     faceAxisSelector_->hide(); faceAlignSelector_->hide();
     cylinderMoveLabel_->hide(); cylinderMoveDirection_->hide();
     cylinderMoveAngle_->hide(); cylinderBossBoundary_->hide();
+    moveDirectionPicking_=false;moveDirectionSource_->hide();moveDirectionPick_->hide();moveDirectionReverse_->hide();moveDirectionLabel_->hide();
     faceAlignTargetLabel_->hide(); faceAlignReferenceLabel_->hide();
     emit transformModesChanged(false,false,false);
     emit selectionModeChanged(selectionMode_);

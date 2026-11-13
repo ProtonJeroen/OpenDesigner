@@ -346,7 +346,7 @@ void CadViewport::restoreBooleanChange(const BooleanChange& change, bool after) 
         }
         if (part.visible) {
             context_->Display(part.presentation,Standard_False);
-            context_->SetDisplayMode(part.presentation,AIS_Shaded,Standard_False);
+            context_->SetDisplayMode(part.presentation,partDisplayMode(),Standard_False);
             context_->Deactivate(part.presentation);
             context_->Activate(part.presentation,(directMoveMode_ || rotateMode_) ? 0
                 : AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);

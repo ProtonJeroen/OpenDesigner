@@ -7,9 +7,13 @@ struct DisplayRectangle {
     double minX=0,minY=0,maxX=0,maxY=0;
     bool operator==(const DisplayRectangle&) const = default;
 };
-// Presentation only: an exact 15 mm ring is added outside the Sketch bounds.
-// Keeping it separate retains 6B.1's analytic bounds and snapping semantics.
-inline constexpr double WorkplaneBorderWidth = 15.0;
+// Presentation only: an exact 10 mm ring (15 mm before v0.5.3) is added
+// outside the Sketch bounds. Keeping it separate retains 6B.1's analytic
+// bounds and snapping semantics.
+inline constexpr double WorkplaneBorderWidth = 10.0;
+// v0.5.3: the free opening spans at least 100 x 100 mm in Workplane-local
+// coordinates, centered on the content-derived rectangle.
+inline constexpr double WorkplaneMinimumOpening = 100.0;
 DisplayRectangle borderedDisplayRectangle(const DisplayRectangle& inner);
 std::optional<DisplayRectangle> finiteBounds(const Geometry& geometry);
 // Includes hidden/locked entities of both roles, but only on this Workplane.
