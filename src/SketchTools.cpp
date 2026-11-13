@@ -193,6 +193,9 @@ void CadViewport::finishSketchEdit(bool confirm) {
     if(confirm && commandSession_->trim && (!commandSession_->valid || commandSession_->sketch->before!=sketchEntities_)) {
         emit statusMessage(tr("Trim needs a valid segment preview on the unchanged Sketch before OK."));return;
     }
+    if(confirm && commandSession_->drawing && commandSession_->drawing->tool==Sketch::DrawTool::Spline) {
+        commandSession_->drawing->cursor.reset();commandSession_->drawing->snap.reset();refreshSketchDrawing();
+    }
     if(confirm && commandSession_->drawing && (Sketch::ellipseTool(commandSession_->drawing->tool) || Sketch::orthogonalLineTool(commandSession_->drawing->tool)) && sketchDrawingPanel_)
         sketchDrawingPanel_->finishEditing();
     if(confirm && commandSession_->projection && !confirmSketchProjection()) return;

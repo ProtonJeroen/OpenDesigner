@@ -126,8 +126,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* arc2D=drawAction(tr("Arc (center/start/end)"),"sketch.arc",Sketch::DrawTool::Arc);
     auto* ellipse2D=drawAction(tr("Ellipse"),"sketch.ellipse",Sketch::DrawTool::Ellipse);
     auto* ellipticalArc2D=drawAction(tr("Elliptical Arc"),"sketch.elliptical_arc",Sketch::DrawTool::EllipticalArc);
-    auto* spline2D=sketchMenu->addAction(tr("Interpolating Spline"));spline2D->setObjectName("sketch.spline");
-    connect(spline2D,&QAction::triggered,viewport_,[this,construction2D]{viewport_->editSketchCurve(true,construction2D->isChecked()?Sketch::Role::Construction:Sketch::Role::Profile);});
+    auto* spline2D=drawAction(tr("Interpolating Spline"),"sketch.spline",Sketch::DrawTool::Spline);
     auto* editCurve2D=sketchMenu->addAction(tr("Edit Curve / Trim Parameters"));editCurve2D->setObjectName("sketch.edit_curve");
     connect(editCurve2D,&QAction::triggered,viewport_,[this]{viewport_->editSketchCurve();});
     auto* duplicateCurve2D=sketchMenu->addAction(tr("Duplicate Selected Curves"));duplicateCurve2D->setObjectName("sketch.duplicate_curves");

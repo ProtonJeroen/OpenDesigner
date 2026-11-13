@@ -128,6 +128,13 @@ void SketchDrawingPanel::setCursor(Sketch::Point p,double length,double degrees)
 }
 void SketchDrawingPanel::setArcSweep(double degrees) {const QSignalBlocker block(angle);angle->setValue(degrees);}
 void SketchDrawingPanel::setStep(int points,bool complete,bool valid,const QString& message) {
+    if(tool_==Sketch::DrawTool::Spline) {
+        for(auto* field:{distance,angle}) {field->hide();if(auto* label=form_->labelForField(field)) label->hide();}
+        polarButton->hide();xyButton->setEnabled(true);backButton->setEnabled(points>0);
+        buttons_->button(QDialogButtonBox::Ok)->setEnabled(points>=3 && valid);
+        status_->setText(tr("%1 points accepted. Click or use XY to append; Back removes the last point.\nAt least 3 valid points: OK/Enter finishes accepted points only. Cancel/Esc discards.").arg(points)
+                         +(message.isEmpty()?QString():"\n"+message));return;
+    }
     if(Sketch::ellipseTool(tool_)) {setEllipseStep(points,complete,valid,message);return;}
     if(Sketch::orthogonalLineTool(tool_)) {
         const bool horizontal=tool_==Sketch::DrawTool::HorizontalInfiniteLine;

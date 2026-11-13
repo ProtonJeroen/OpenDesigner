@@ -167,11 +167,14 @@ struct SketchDrawingTest {
             && close(arc.sweepAngle,-120.123456789*pi/180),"arc numeric radius/start/signed sweep changed");
         action(w,"sketch.construction");action(w,"sketch.arc");xy(v,0,0);polar(v,20,0);
         v.sketchDrawingPanel_->direction->setCurrentIndex(1);v.setSketchSnapping(false);
+        // Keep the 20 mm mouse target resolved well inside the angular assertion tolerance.
+        const double arcViewScale=v.view_->Scale();v.view_->SetScale(100);v.view_->Redraw();
         v.setFocus();mouse(v,QEvent::MouseMove,pixel(v,{0,80}));
         check(close(v.sketchDrawingPanel_->distance->value(),20),"arc-end feedback changed fixed radius");
         click(v,pixel(v,{0,20}));check(v.commandSession_->valid,"mouse arc did not complete");confirm(v);
         arc=std::get<Sketch::Arc>(v.sketchEntities_.back().geometry);
         check(close(arc.sweepAngle,-1.5*pi,0.03) && v.sketchEntities_.back().role==Sketch::Role::Construction,"clockwise construction arc wrong");
+        v.view_->SetScale(arcViewScale);v.view_->Redraw();
         // A Workplane switch cancels pending geometry and updates all ownership/UI state.
         const auto count=v.sketchEntities_.size(),history=v.undoStack_.size();w.documentDirty_=false;
         action(w,"sketch.line");xy(v,0,0);polar(v,20,0);
@@ -247,6 +250,13 @@ struct SketchDrawingTest {
             check(close(line.end.x,c.target.x,1.e-8) && close(line.end.y,c.target.y,1.e-8),"confirmed snap lost precision");
             v.undoPull();v.redoPull();check(v.context_->NbSelected()==0,"drawing history restored selection");
         }
+        const auto beforeSpline=v.sketchEntities_;action(w,"sketch.spline");
+        xy(v,0,0);xy(v,10,20);xy(v,20,0);xy(v,30,10);
+        v.sketchDrawingPanel_->backButton->click();v.sketchDrawingPanel_->backButton->click();
+        check(!v.sketchDrawingPanel_->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->isEnabled(),"Back below three points left spline OK enabled");
+        xy(v,20,0);confirm(v);
+        check(std::get<Sketch::Spline>(v.sketchEntities_.back().geometry).points==std::vector<Sketch::Point>{{0,0},{10,20},{20,0}},"numeric spline confirmation changed points");
+        v.undoPull();check(v.sketchEntities_==beforeSpline,"numeric spline Undo changed prior geometry");
         // New cancels a partially entered draw and resets context/history.
         v.startSketchDrawing(DrawTool::Circle);xy(v,0,0);w.documentDirty_=false;w.newDocument();
         check(v.activeSketchWorkplaneId_.isEmpty() && !v.commandSession_ && v.sketchEntities_.empty()

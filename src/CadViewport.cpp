@@ -469,6 +469,7 @@ bool CadViewport::eventFilter(QObject* watched, QEvent* event) {
             event->accept();
             if (event->type()==QEvent::KeyPress) {
                 if (key->key()==Qt::Key_Escape) {if(targetPicking()) cancelTargetPicking();else cancelCommandSession();}
+                else if(commandSession_->drawing && commandSession_->drawing->tool==Sketch::DrawTool::Spline) confirmCommandSession();
                 else if(commandSession_->drawing && !commandSession_->drawing->complete && sketchDrawingPanel_) {
                     const bool polar=sketchDrawingPanel_->parameterWidget(widget);
                     useSketchNumeric(polar);

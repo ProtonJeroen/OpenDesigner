@@ -116,6 +116,7 @@ std::optional<Sketch::Point> CadViewport::sketchPlanePoint(const QPoint& pixel) 
 void CadViewport::startSketchDrawing(Sketch::DrawTool tool,Sketch::Role role) {
     if(activeSketchWorkplaneId_.isEmpty() && !activateSketchWorkplane()) return;
     const auto* owner=constructionObject(activeSketchWorkplaneId_);if(!owner) return;
+    if(tool==Sketch::DrawTool::Spline && (!constructionShown(*owner) || !owner->selectable)) return;
     cancelCommandSession();clearHistorySelection();refreshSketchPicking();
     commandSession_.emplace();auto& session=*commandSession_;session.kind=CommandSession::Kind::Sketch;
     session.sketch=std::make_shared<SketchChange>(SketchChange{sketchEntities_,sketchEntities_});
@@ -150,7 +151,7 @@ void CadViewport::startSketchDrawing(Sketch::DrawTool tool,Sketch::Role role) {
 }
 bool CadViewport::sketchDrawingMove(const QPoint& pixel,Qt::KeyboardModifiers modifiers) {
     if(!commandSession_ || !commandSession_->drawing) return false;
-    auto& d=*commandSession_->drawing;if(d.complete) return true;
+    auto& d=*commandSession_->drawing;if(d.complete && d.tool!=Sketch::DrawTool::Spline) return true;
     d.snap.reset();d.cursor=sketchPlanePoint(pixel);
     if(!d.cursor) {clearSketchFeedback();sketchDrawingPanel_->setStep(int(d.points.size()),false,false,tr("Workplane is edge-on; use Look at Workplane."));return true;}
     const auto* owner=constructionObject(activeSketchWorkplaneId_);
@@ -174,15 +175,23 @@ bool CadViewport::sketchDrawingMove(const QPoint& pixel,Qt::KeyboardModifiers mo
 }
 bool CadViewport::sketchDrawingClick(const QPoint& pixel,Qt::KeyboardModifiers modifiers) {
     if(!commandSession_ || !commandSession_->drawing) return false;
-    if(commandSession_->drawing->complete) return true;
+    if(commandSession_->drawing->complete && commandSession_->drawing->tool!=Sketch::DrawTool::Spline) return true;
     sketchDrawingMove(pixel,modifiers);
     if(commandSession_->drawing->cursor) acceptSketchPoint(*commandSession_->drawing->cursor);
     return true;
 }
 void CadViewport::acceptSketchPoint(Sketch::Point point) {
     if(!commandSession_ || !commandSession_->drawing || !std::isfinite(point.x) || !std::isfinite(point.y)) return;
-    auto& d=*commandSession_->drawing;if(d.complete) return;
+    auto& d=*commandSession_->drawing;if(d.complete && d.tool!=Sketch::DrawTool::Spline) return;
     if(Sketch::ellipseTool(d.tool)) {acceptSketchEllipsePoint(point);return;}
+    if(d.tool==Sketch::DrawTool::Spline) {
+        auto points=d.points;points.push_back(point);
+        if(points.size()>=2) {
+            auto candidate=d.candidate;candidate.geometry=Sketch::Spline{points};QString error;
+            if(!Sketch::valid(candidate,error)) {sketchDrawingPanel_->setStep(int(d.points.size()),d.complete,commandSession_->valid,error);return;}
+        }
+        d.points=std::move(points);d.cursor.reset();d.snap.reset();refreshSketchDrawing();return;
+    }
     if(!d.points.empty()) {
         const auto anchor=d.tool==Sketch::DrawTool::Arc?d.points[0]:d.points.back();
         if(distance(anchor,point)<=1.e-7) {sketchDrawingPanel_->setStep(int(d.points.size()),false,false,tr("Choose a distinct point."));return;}
@@ -198,7 +207,7 @@ void CadViewport::acceptSketchPoint(Sketch::Point point) {
 }
 void CadViewport::useSketchNumeric(bool usePolar) {
     if(!commandSession_ || !commandSession_->drawing || !sketchDrawingPanel_) return;
-    auto& d=*commandSession_->drawing;if(d.complete && !Sketch::orthogonalLineTool(d.tool)) return;
+    auto& d=*commandSession_->drawing;if(d.complete && d.tool!=Sketch::DrawTool::Spline && !Sketch::orthogonalLineTool(d.tool)) return;
     sketchDrawingPanel_->finishEditing();d.snap.reset();
     if(Sketch::orthogonalLineTool(d.tool)) {
         d.points.clear();d.complete=false;
@@ -234,6 +243,7 @@ void CadViewport::backSketchPoint() {
 }
 void CadViewport::refreshSketchDrawing() {
     if(!commandSession_ || !commandSession_->drawing || !sketchDrawingPanel_) return;
+    if(commandSession_->drawing->tool==Sketch::DrawTool::Spline) {refreshSketchSplineDrawing();return;}
     if(Sketch::ellipseTool(commandSession_->drawing->tool)) {refreshSketchEllipseDrawing();return;}
     auto& session=*commandSession_;auto& d=*session.drawing;auto points=d.points;
     if(d.cursor && !d.complete) points.push_back(*d.cursor);
@@ -288,6 +298,38 @@ void CadViewport::refreshSketchDrawing() {
     }
     if(d.complete && d.tool==Sketch::DrawTool::Arc) if(const auto* arc=std::get_if<Sketch::Arc>(&d.candidate.geometry)) sketchDrawingPanel_->setArcSweep(arc->sweepAngle*180/pi);
     sketchDrawingPanel_->setStep(int(d.points.size()),d.complete,session.valid,feedback);updateSketchFeedback();updateConstructionLabels();view_->Redraw();
+}
+void CadViewport::refreshSketchSplineDrawing() {
+    auto& session=*commandSession_;auto& d=*session.drawing;
+    const auto* owner=constructionObject(activeSketchWorkplaneId_);
+    for(const auto& [id,p]:sketchPreviews_) context_->Remove(p,Standard_False);
+    sketchPreviews_.clear();session.sketchDisplayCandidates.clear();session.sketch->after=session.sketch->before;
+    session.valid=false;d.complete=false;QString error;
+    d.candidate.geometry=Sketch::Spline{d.points};
+    if(d.points.size()>=3 && Sketch::valid(d.candidate,error)) {
+        session.sketch->after.push_back(d.candidate);session.valid=true;d.complete=true;
+    }
+    auto points=d.points;
+    if(d.cursor) points.push_back(*d.cursor);
+    auto display=d.candidate;
+    const auto preview=[&](const std::vector<Sketch::Point>& through) {
+        if(through.size()<2) return false;
+        // Two-point feedback is temporary and is never the committed spline.
+        display.geometry=through.size()==2?Sketch::Geometry{Sketch::Segment{through[0],through[1]}}
+                                          :Sketch::Geometry{Sketch::Spline{through}};
+        QString diagnostic;
+        if(!Sketch::valid(display,diagnostic)) return false;
+        try {
+            auto presentation=sketchPresentation(display,*owner,true);
+            sketchPreviews_[display.id]=presentation;displaySketchPresentation(display,*owner,presentation,true);
+            session.sketchDisplayCandidates={display};return true;
+        } catch(const Standard_Failure& failure) {error=QString::fromUtf8(failure.GetMessageString());return false;}
+    };
+    if(!preview(points) && d.cursor) preview(d.points);
+    session.state=session.valid?CommandSession::State::Preview:CommandSession::State::Parameters;
+    if(d.cursor) sketchDrawingPanel_->setCursor(*d.cursor,0,0);
+    sketchDrawingPanel_->setStep(int(d.points.size()),d.complete,session.valid,error);
+    updateSketchFeedback();updateConstructionLabels();view_->Redraw();
 }
 void CadViewport::updateSketchFeedback() {
     if(!commandSession_ || !commandSession_->drawing) return;

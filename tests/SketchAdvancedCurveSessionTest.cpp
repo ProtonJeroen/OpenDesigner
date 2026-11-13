@@ -9,6 +9,10 @@
 #include <QPushButton>
 #include <QTableWidget>
 #include <QTimer>
+#include <QMouseEvent>
+#include <QKeyEvent>
+#include <QDoubleSpinBox>
+#include <Geom2dAPI_ProjectPointOnCurve.hxx>
 #include <QTemporaryDir>
 #include <stdexcept>
 namespace {
@@ -25,6 +29,62 @@ void editDialog(bool accept,bool change=false) {
 }
 }
 struct SketchAdvancedCurveSessionTest {
+    static void interactive(MainWindow& w) {
+        auto& v=*w.viewport_;QString error;
+        NativeDocumentSnapshot snapshot;Construction::Object wp;wp.id="spline-wp";wp.kind=Construction::Kind::Workplane;wp.name="Spline WP";wp.extent=100;
+        wp.frame=gp_Ax3(gp_Pnt(10,20,30),gp_Dir(1,2,3),gp_Dir(2,-1,0));snapshot.constructions={wp};
+        Sketch::Entity reference;reference.workplaneId=wp.id;reference.role=Sketch::Role::Construction;reference.geometry=Sketch::Segment{{-30,0},{-30,-20}};snapshot.sketchEntities={reference};
+        check(v.importDocumentSnapshot(snapshot,error),qPrintable(error));check(v.activateSketchWorkplane(wp.id) && v.lookAtWorkplane(wp.id),"spline Workplane activation failed");QApplication::processEvents();w.documentDirty_=false;
+        const auto initial=v.sketchEntities_;const auto history=v.undoStack_.size();
+        const auto move=[&](Sketch::Point p,bool click) {
+            auto world=Sketch::worldPoint(p,wp.frame);int x,y;v.view_->Convert(world.X(),world.Y(),world.Z(),x,y);QPoint at(x,y);
+            const auto event=[&](QEvent::Type type) {QMouseEvent e(type,QPointF(at),QPointF(v.mapToGlobal(at)),type==QEvent::MouseMove?Qt::NoButton:Qt::LeftButton,type==QEvent::MouseButtonPress?Qt::LeftButton:Qt::NoButton,Qt::NoModifier);QApplication::sendEvent(&v,&e);};
+            event(QEvent::MouseMove);if(click) {event(QEvent::MouseButtonPress);event(QEvent::MouseButtonRelease);}
+        };
+        const auto enter=[&](QWidget* target,int code) {QKeyEvent e(QEvent::KeyPress,code,Qt::NoModifier);QApplication::sendEvent(target,&e);};
+        const auto start=[&] {auto* action=w.findChild<QAction*>("sketch.spline");check(action && action->isEnabled(),"spline action unavailable");action->trigger();QApplication::processEvents();check(v.commandSession_ && v.commandSession_->drawing && v.sketchDrawingPanel_,"spline action did not start nonmodal drawing");};
+        start();auto* panel=v.sketchDrawingPanel_;auto* ok=panel->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok);
+        check(!ok->isEnabled(),"empty spline can confirm");move({-30,0},true);
+        check(v.commandSession_->drawing->points==std::vector<Sketch::Point>{{-30,0}},"spline did not snap to reference endpoint");
+        move({-10,25},true);check(v.commandSession_->drawing->points.size()==2 && !ok->isEnabled(),"two points enabled confirmation");
+        check(v.commandSession_->sketchDisplayCandidates.size()==1 && std::holds_alternative<Sketch::Segment>(v.commandSession_->sketchDisplayCandidates[0].geometry),"two-point feedback is not provisional segment");
+        panel->x->setValue(999);enter(panel->x,Qt::Key_Return);check(v.commandSession_ && v.commandSession_->drawing->points.size()==2 && v.sketchEntities_==initial,"Enter appended numeric point or confirmed two points");
+        move({15,5},true);check(ok->isEnabled(),"third spline point did not enable OK");move({35,30},true);
+        panel->x->setValue(45);panel->y->setValue(0);panel->xyButton->click();check(v.commandSession_->drawing->points.size()==5,"numeric spline point did not append");
+        panel->backButton->click();check(v.commandSession_->drawing->points.size()==4 && ok->isEnabled(),"Back did not remove spline point");
+        const auto accepted=v.commandSession_->drawing->points;
+        panel->x->setValue(accepted.back().x);panel->y->setValue(accepted.back().y);panel->xyButton->click();
+        check(v.commandSession_->drawing->points==accepted,"duplicate interpolation point was accepted");
+        const auto candidate=v.commandSession_->sketch->after;
+        move({50,-20},false);check(v.commandSession_->drawing->points==accepted && v.commandSession_->sketch->after==candidate,"cursor changed accepted spline");
+        check(std::get<Sketch::Spline>(v.commandSession_->sketchDisplayCandidates[0].geometry).points.size()==5,"cursor did not update live spline preview");
+        check(v.sketchEntities_==initial && v.undoStack_.size()==history && !w.documentDirty_,"spline preview changed document/history");
+        panel->x->setValue(888);enter(panel->x,Qt::Key_Return);
+        check(!v.commandSession_ && v.sketchEntities_.size()==initial.size()+1 && v.undoStack_.size()==history+1,"spline confirmation not one transaction");
+        const auto confirmed=v.sketchEntities_;const auto& spline=std::get<Sketch::Spline>(confirmed.back().geometry);check(spline.points==accepted,"confirmation included temporary or numeric point");
+        const auto curve=Sketch::splineCurve(spline);
+        for(auto point:accepted) {Geom2dAPI_ProjectPointOnCurve projection(gp_Pnt2d(point.x,point.y),curve);check(projection.NbPoints()>0 && projection.LowerDistance()<1.e-7,"exact spline missed accepted interpolation point");}
+        BRepAdaptor_Curve rendered(TopoDS::Edge(v.sketchPresentations_.at(confirmed.back().id)->Shape()));
+        for(double fraction:{0.,.25,.5,.75,1.}) {
+            const double parameter=curve->FirstParameter()+fraction*(curve->LastParameter()-curve->FirstParameter());const auto local=curve->Value(parameter);
+            check(rendered.Value(parameter).Distance(Sketch::worldPoint({local.X(),local.Y()},wp.frame))<1.e-7,"spline preview/commit lost Workplane transform");
+        }
+        v.selectSketchEntities({confirmed.back().id});editDialog(true);v.editSketchCurve();
+        check(v.commandSession_->sketch->after==confirmed,"detailed spline editor lost interpolation points");v.finishSketchEdit(false);
+        NativeDocumentSnapshot saved,loaded;QTemporaryDir temp;check(v.exportDocumentSnapshot(saved),"spline export failed");
+        check(NativeDocumentStorage::save(temp.filePath("interactive.odc"),saved,error) && NativeDocumentStorage::load(temp.filePath("interactive.odc"),loaded,error) && loaded.sketchEntities==confirmed,"interactive spline persistence changed points/ID");
+        v.undoPull();check(v.sketchEntities_==initial,"spline Undo lost initial geometry");v.redoPull();check(v.sketchEntities_==confirmed,"spline Redo changed values or ID");
+        start();move({0,-20},true);move({10,-30},true);enter(v.sketchDrawingPanel_,Qt::Key_Escape);check(!v.commandSession_ && v.sketchEntities_==confirmed && v.sketchPreviews_.empty(),"Escape retained pending spline");
+        start();move({0,-20},true);v.sketchDrawingPanel_->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Cancel)->click();check(!v.commandSession_ && v.sketchEntities_==confirmed,"Cancel changed spline document");
+        start();move({0,-20},true);v.startSketchDrawing(Sketch::DrawTool::Segment);check(v.commandSession_->drawing->points.empty() && v.sketchEntities_==confirmed,"tool switch retained pending spline");v.cancelCommandSession();
+        start();move({0,-20},true);v.endSketchEditing();check(!v.commandSession_ && v.sketchEntities_==confirmed,"leaving Sketch retained pending spline");
+        for(bool hidden:{false,true}) {
+            auto unavailable=*v.constructionObject(wp.id);unavailable.visible=!hidden;unavailable.selectable=hidden;
+            check(v.updateConstruction(unavailable),"Workplane eligibility fixture failed");
+            v.startSketchDrawing(Sketch::DrawTool::Spline);check(!v.commandSession_ && v.sketchEntities_==confirmed,"spline started on hidden/locked Workplane");
+            unavailable.visible=true;unavailable.selectable=true;check(v.updateConstruction(unavailable),"Workplane restoration failed");
+        }
+    }
     static void run() {
         MainWindow w;w.show();QApplication::processEvents();auto& v=*w.viewport_;QString error;
         v.startConstruction(Construction::Method::PlaneXY);v.confirmCommandSession();
@@ -61,7 +121,7 @@ struct SketchAdvancedCurveSessionTest {
         NativeDocumentSnapshot saved;check(v.exportDocumentSnapshot(saved),qPrintable(error));QTemporaryDir temp;
         check(NativeDocumentStorage::save(temp.filePath("curves.odc"),saved,error),qPrintable(error));
         NativeDocumentSnapshot loaded;check(NativeDocumentStorage::load(temp.filePath("curves.odc"),loaded,error) && loaded.sketchEntities==confirmed,"session Save/Open lost spline values");
-        w.documentDirty_=false;
+        interactive(w);w.documentDirty_=false;
     }
 };
 void runSketchAdvancedCurveSessions() {SketchAdvancedCurveSessionTest::run();}

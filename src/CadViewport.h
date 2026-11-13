@@ -535,6 +535,7 @@ private:
     void useSketchNumeric(bool polar);
     void backSketchPoint();
     void refreshSketchDrawing();
+    void refreshSketchSplineDrawing();
     void acceptSketchEllipsePoint(Sketch::Point point);
     void useSketchEllipseNumeric();
     void refreshSketchEllipseDrawing();
