@@ -96,7 +96,17 @@ public:
     bool wireframe() const { return wireframe_; }
     void setShow3DGeometry(bool show);
     bool show3DGeometry() const { return show3DGeometry_; }
-    enum class MoveDirectionSource { FaceNormal, Reference, PointToPoint };
+    // v0.5.4 view-level Show/Hide Workplanes: Workplane frames, active rings,
+    // labels and every Sketch on a Workplane are neither drawn, pickable nor
+    // snap/reference sources while hidden. Construction::Object::visible and
+    // Sketch::Entity::visible are untouched; not saved, not undoable. Axes and
+    // Points are not Workplane geometry and stay available. Activating a
+    // Workplane, Edit Sketch and creating/editing a Workplane show them again.
+    void setShowWorkplanes(bool show);
+    bool showWorkplanes() const { return showWorkplanes_; }
+    // FaceNormal/Reference/PointToPoint give a direction (typed distance);
+    // ByPoints (v0.5.4) gives the full displacement B - A without input.
+    enum class MoveDirectionSource { FaceNormal, Reference, PointToPoint, ByPoints };
     // Move Face direction input; a FaceNormal source ignores references.
     bool setMoveFaceDirection(MoveDirectionSource source, const std::vector<References::Target>& references, bool reverse);
     void startSketchDrawing(Sketch::DrawTool tool, Sketch::Role role = Sketch::Role::Profile);
@@ -617,13 +627,18 @@ private:
     QCheckBox* moveDirectionReverse_ = nullptr;
     QLabel* moveDirectionLabel_ = nullptr;
     bool moveDirectionPicking_ = false;
-    bool wireframe_ = false, show3DGeometry_ = true;
+    bool wireframe_ = false, show3DGeometry_ = true, showWorkplanes_ = true;
+    // Visible flag combined with the view-level Show/Hide Workplanes setting.
+    bool constructionShown(const Construction::Object& object) const;
     int partDisplayMode() const;
     void applyViewModes();
     void initializeMoveDirectionControls();
     void updateMoveDirectionControls();
     bool pickMoveDirection(const QPoint& point);
-    bool moveFaceDirection(const CommandSession& session, gp_Dir& direction, double& normalFactor, QString& error) const;
+    // length: |B - A| for ByPoints (the displacement length), else unused.
+    bool moveFaceDirection(const CommandSession& session, gp_Dir& direction, double& normalFactor, QString& error, double* length = nullptr) const;
+    bool moveFaceByPoints() const;
+    QPushButton* moveDirectionRestart_ = nullptr;
     QComboBox* faceAlignSelector_ = nullptr;
     QLabel* faceAlignTargetLabel_ = nullptr;
     QLabel* faceAlignReferenceLabel_ = nullptr;

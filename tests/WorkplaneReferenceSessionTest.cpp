@@ -1,6 +1,8 @@
 // v0.5.3 Workplane and reference sessions: camera decoupling, Look at
 // Workplane, frame presentation during Move/Rotate previews, reference picking
 // and snapping, Move Face direction sources, Undo/Redo, Save/Open, view modes.
+// v0.5.4: view-level Show/Hide Workplanes (--workplane-visibility) and Move
+// Face by Points (--move-by-points).
 #include "CadViewport.h"
 #include "MainWindow.h"
 #include "ConstructionPanel.h"
@@ -33,6 +35,7 @@
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <cmath>
+#include <map>
 #include <iostream>
 #include <stdexcept>
 
@@ -377,6 +380,361 @@ struct WorkplaneReferenceSessionTest {
         check(v.undoStack_.size()==history,"view modes created history"); // Add Box is not an Undo step either
         std::cout<<"view modes passed\n";
     }
+
+    // ======================= v0.5.4 Show/Hide Workplanes =======================
+    static NativeDocumentSnapshot visibilityFixture() {
+        auto doc=referenceFixture();
+        // Individually hidden Workplane (with a Sketch) and an individually hidden Sketch entity.
+        auto hidden=workplane("wp2","WP2",gp_Ax3(gp_Pnt(0,0,-80),gp_Dir(0,0,1),gp_Dir(1,0,0)));hidden.visible=false;
+        doc.constructions.push_back(hidden);
+        Sketch::Entity onHidden;onHidden.id="onHidden";onHidden.name="onHidden";onHidden.workplaneId="wp2";onHidden.geometry=Sketch::Segment{{0,0},{50,0}};
+        Sketch::Entity hiddenSeg;hiddenSeg.id="hiddenSeg";hiddenSeg.name="hiddenSeg";hiddenSeg.workplaneId="wp";hiddenSeg.visible=false;hiddenSeg.geometry=Sketch::Segment{{-40,5},{-10,5}};
+        doc.sketchEntities.push_back(onHidden);doc.sketchEntities.push_back(hiddenSeg);
+        return doc;
+    }
+    struct VisibilityFlags {
+        std::vector<std::pair<QString,bool>> constructions,sketches;
+        bool operator==(const VisibilityFlags&) const = default;
+    };
+    static VisibilityFlags visibilityFlags(const CadViewport& v) {
+        VisibilityFlags f;
+        for(const auto& o:v.constructions_) f.constructions.push_back({o.id,o.visible});
+        for(const auto& e:v.sketchEntities_) f.sketches.push_back({e.id,e.visible});
+        return f;
+    }
+    // Displayed state of every Workplane/Sketch presentation, keyed by id.
+    static std::map<QString,bool> displayed(const CadViewport& v) {
+        std::map<QString,bool> d;
+        for(const auto& [id,p]:v.constructionPresentations_) d[id]=v.context_->IsDisplayed(p);
+        for(const auto& [id,l]:v.constructionLabels_) d["label:"+id]=v.context_->IsDisplayed(l);
+        for(const auto& [id,p]:v.sketchPresentations_) d["sketch:"+id]=v.context_->IsDisplayed(p);
+        return d;
+    }
+    static Quantity_Color pixelColor(CadViewport& v,const gp_Pnt& p) {
+        Image_AlienPixMap image;v.context_->ClearDetected(Standard_False);v.view_->Redraw();
+        check(v.view_->ToPixMap(image,v.width(),v.height()),"capture failed");
+        const auto q=pixel(v,p);check(q.x()>=0 && q.y()>=0 && q.x()<int(image.SizeX()) && q.y()<int(image.SizeY()),"sample outside capture");
+        return image.PixelColor(q.x(),q.y()).GetRGB();
+    }
+    static Quantity_Color background(CadViewport& v) {
+        Image_AlienPixMap image;v.view_->Redraw();check(v.view_->ToPixMap(image,v.width(),v.height()),"capture failed");return image.PixelColor(3,3).GetRGB();
+    }
+    static bool detects(CadViewport& v,const gp_Pnt& p,const Handle(AIS_InteractiveObject)& object) {
+        const auto q=pixel(v,p);v.context_->MoveTo(q.x(),q.y(),v.view_,Standard_False);
+        const bool hit=v.context_->HasDetected() && v.context_->DetectedInteractive()==object;
+        v.context_->ClearDetected(Standard_False);return hit;
+    }
+    // 1-6: Show/Hide Workplanes.
+    static void workplaneVisibility() {
+        MainWindow w;w.resize(1200,900);w.show();QApplication::processEvents();auto& v=*w.viewport_;QString error;
+        check(v.importDocumentSnapshot(visibilityFixture(),error),qPrintable(error));w.documentDirty_=false;
+        v.view_->SetProj(V3d_XposYnegZpos);v.fitAll();QApplication::processEvents();
+        auto* toggle=action(w,"view.show_workplanes");auto* show3D=action(w,"view.show_3d");
+        check(toggle->isCheckable() && toggle->isChecked() && v.showWorkplanes(),"Show Workplanes not on by default");
+        const auto flags=visibilityFlags(v);const auto history=v.undoStack_.size();
+        const auto shownState=displayed(v);
+        check(shownState.at("wp") && shownState.at("label:wp") && shownState.at("sketch:seg") && shownState.at("sketch:circ"),"visible Workplane/Sketch not displayed initially");
+        check(!shownState.at("wp2") && !shownState.at("sketch:onHidden") && !shownState.at("sketch:hiddenSeg"),"individually hidden objects displayed initially");
+        check(shownState.at("ax") && shownState.at("pt"),"Axis/Point not displayed initially");
+        const gp_Pnt segMid=sketchWorld(v,{15,20}),circleCenter=sketchWorld(v,{60,20}),circlePoint=sketchWorld(v,{70,20});
+        const auto outer=v.workplaneDisplayRectangle(*v.constructionObject("wp"));
+        const gp_Pnt ring=sketchWorld(v,{outer.minX+5,(outer.minY+outer.maxY)/2});
+        // Shown: drawn, pickable, reference/snap source.
+        const auto drawnSegment=pixelColor(v,segMid),drawnRing=pixelColor(v,ring);
+        check(detects(v,circlePoint,v.sketchPresentations_.at("circ")),"Sketch not pickable while shown");
+        auto picked=v.pickReference(pixel(v,circleCenter),{References::Kind::SketchPoint},error);
+        check(picked && picked->ownerId=="circ","Sketch center not a reference while shown");
+        // 1. Hide: not drawn, not pickable, not snap or reference targets.
+        v.selectConstructions({"wp","pt"});
+        toggle->trigger();check(!v.showWorkplanes() && !toggle->isChecked(),"Hide Workplanes not applied");
+        const auto hiddenState=displayed(v);
+        check(!hiddenState.at("wp") && !hiddenState.at("label:wp") && !hiddenState.at("sketch:seg") && !hiddenState.at("sketch:circ"),"Workplane/Sketch still displayed while hidden");
+        check(!hiddenState.at("wp2") && !hiddenState.at("sketch:onHidden"),"individually hidden Workplane displayed while hidden");
+        check(v.selectedConstructionIds_==QStringList{"pt"},"hidden Workplane stayed selected / Point selection lost");
+        check(pixelColor(v,segMid).Distance(drawnSegment)>0.05 || pixelColor(v,ring).Distance(drawnRing)>0.05,"hidden Workplane/Sketch still rendered");
+        check(pixelColor(v,ring).Distance(drawnRing)>0.05,"hidden Workplane ring still rendered");
+        check(!detects(v,circlePoint,v.sketchPresentations_.at("circ")) && !detects(v,ring,v.constructionPresentations_.at("wp")),"hidden Workplane/Sketch pickable");
+        for(const auto& p:{segMid,circleCenter,ring}) {
+            const auto q=pixel(v,p);v.context_->MoveTo(q.x(),q.y(),v.view_,Standard_False);
+            if(v.context_->HasDetected()) {
+                const auto o=v.context_->DetectedInteractive();
+                for(const auto& [id,sp]:v.sketchPresentations_) check(sp!=o,"Sketch detected while Workplanes hidden");
+                check(o!=v.constructionPresentations_.at("wp"),"Workplane detected while hidden");
+            }
+            v.context_->ClearDetected(Standard_False);
+        }
+        check(!v.pickReference(pixel(v,circleCenter),{References::Kind::SketchPoint},error),"hidden Sketch point supplied a picked reference");
+        check(!v.pickReference(pixel(v,segMid),{References::Kind::SketchLine},error),"hidden Sketch line supplied a picked reference");
+        check(!v.pickReference(pixel(v,ring),{References::Kind::Workplane},error),"hidden Workplane supplied a picked reference");
+        References::Resolved r;References::Target center{References::Kind::SketchPoint,"circ"};center.point={"circ",{},Sketch::PointFeature::Center,0};
+        check(!v.resolveReference(center,r,error) && error.contains("hidden"),"hidden Sketch point resolved / wrong diagnostic");
+        check(!v.resolveReference({References::Kind::Workplane,"wp"},r,error) && error.contains("Hidden"),"hidden Workplane resolved / wrong diagnostic");
+        // Construction role picking (Point from Sketch center) uses the same snap targets: refused.
+        v.startConstruction(Construction::Method::PointVertex);check(!v.showWorkplanes(),"Point construction showed Workplanes");
+        v.chooseConstructionRole(0);v.captureConstructionReference(pixel(v,circleCenter));
+        check(!v.commandSession_ || !v.commandSession_->valid,"hidden Sketch center accepted as construction operand");
+        v.cancelCommandSession();
+        // A construction preview (Point XYZ) redisplays constructions: hidden Workplanes stay hidden.
+        v.startConstruction(Construction::Method::PointXYZ);check(v.commandSession_ && v.commandSession_->construction,"Point XYZ session missing");
+        v.previewConstruction();
+        check(!displayed(v).at("wp") && !displayed(v).at("label:wp") && !displayed(v).at("sketch:seg") && displayed(v).at("ax"),"construction preview redisplayed hidden Workplanes");
+        v.cancelCommandSession();check(!displayed(v).at("wp") && !displayed(v).at("sketch:seg"),"construction Cancel redisplayed hidden Workplanes");
+        // 6. Axes and Points stay visible and available.
+        check(hiddenState.at("ax") && hiddenState.at("pt") && hiddenState.at("label:ax"),"Axis/Point hidden with Workplanes");
+        check(v.pickReference(pixel(v,gp_Pnt(150,0,0)),{References::Kind::Axis},error).has_value(),"Axis not pickable while Workplanes hidden");
+        check(v.pickReference(pixel(v,gp_Pnt(150,50,0)),{References::Kind::Point},error).has_value(),"Point not pickable while Workplanes hidden");
+        check(v.resolveReference({References::Kind::Axis,"ax"},r,error) && v.resolveReference({References::Kind::Point,"pt"},r,error),"Axis/Point refused while Workplanes hidden");
+        check(v.isPartVisible(0) && v.context_->IsDisplayed(v.boxes_[0].presentation),"solids hidden with Workplanes");
+        // 3. Flags unchanged, nothing saved, no Undo step, document not dirty.
+        check(visibilityFlags(v)==flags,"Hide Workplanes changed visibility flags");
+        NativeDocumentSnapshot snapshot;check(v.exportDocumentSnapshot(snapshot),"export failed");
+        for(const auto& o:snapshot.constructions) check(o.visible==(o.id!="wp2"),"view setting leaked into saved Workplane visibility");
+        for(const auto& e:snapshot.sketchEntities) check(e.visible==(e.id!="hiddenSeg"),"view setting leaked into saved Sketch visibility");
+        check(v.undoStack_.size()==history && !w.documentDirty_,"Hide Workplanes created history or dirtied the document");
+        // New constructions/Sketches added while hidden follow the view setting.
+        check(v.importDocumentSnapshot(snapshot,error),qPrintable(error));w.documentDirty_=false;check(!v.showWorkplanes() && !displayed(v).at("wp") && !displayed(v).at("sketch:seg"),"Open did not keep the hidden view setting");
+        // 2. Show restores exactly the previous state, including individually hidden objects.
+        toggle->trigger();check(v.showWorkplanes() && toggle->isChecked(),"Show Workplanes not applied");
+        check(displayed(v)==shownState,"Show Workplanes did not restore the exact previous display state");
+        check(visibilityFlags(v)==flags,"Show Workplanes changed visibility flags");
+        check(pixelColor(v,segMid).Distance(drawnSegment)<0.05 && pixelColor(v,ring).Distance(drawnRing)<0.05,"Show Workplanes did not redraw the same frame/Sketch");
+        check(detects(v,circlePoint,v.sketchPresentations_.at("circ")),"Sketch not pickable after Show Workplanes");
+        check(v.pickReference(pixel(v,circleCenter),{References::Kind::SketchPoint},error).has_value(),"Sketch center not a reference after Show Workplanes");
+        check(v.undoStack_.size()==history && !w.documentDirty_,"Show Workplanes created history or dirtied the document");
+        std::cout<<"show/hide Workplanes passed\n";
+        // 4. Combinations with Show/Hide 3D Geometry and Wireframe/Shaded.
+        const gp_Pnt onTarget(50,40,60);
+        for(int wire=0;wire<2;++wire) for(int solids=0;solids<2;++solids) for(int planes=0;planes<2;++planes) {
+            action(w,wire?"view.wireframe":"view.shaded")->trigger();
+            if(v.show3DGeometry()!=bool(solids)) show3D->trigger();
+            if(v.showWorkplanes()!=bool(planes)) toggle->trigger();
+            check(v.wireframe()==bool(wire) && v.show3DGeometry()==bool(solids) && v.showWorkplanes()==bool(planes),"view mode combination not applied");
+            check(toggle->isChecked()==bool(planes) && show3D->isChecked()==bool(solids),"view actions out of sync");
+            const auto d=displayed(v);
+            check(d.at("wp")==bool(planes) && d.at("sketch:seg")==bool(planes) && d.at("ax") && d.at("pt") && !d.at("wp2") && !d.at("sketch:hiddenSeg"),"combination changed Workplane/Sketch/Axis display");
+            for(const auto& part:v.boxes_) check(part.presentation->DisplayMode()==(wire?AIS_WireFrame:AIS_Shaded),"combination changed Part display mode");
+            check(detects(v,onTarget,v.boxes_[0].presentation)==bool(solids),"combination changed solid picking");
+            check(v.pickReference(pixel(v,circleCenter),{References::Kind::SketchPoint},error).has_value()==bool(planes),"combination changed Sketch reference availability");
+            if(!solids) {
+                // Only Workplane geometry can render here: hidden means background.
+                const auto bg=background(v);
+                check((pixelColor(v,ring).Distance(bg)>0.05)==bool(planes),"Workplane ring rendering wrong with 3D geometry hidden");
+            }
+            check(visibilityFlags(v)==flags,"combination changed visibility flags");
+        }
+        action(w,"view.shaded")->trigger();if(!v.show3DGeometry()) show3D->trigger();if(!v.showWorkplanes()) toggle->trigger();
+        check(v.undoStack_.size()==history && !w.documentDirty_,"view combinations created history");
+        std::cout<<"view mode combinations passed\n";
+        // 5. Activating a Workplane, Edit Sketch and new/edited Workplanes show them again.
+        toggle->trigger();check(!v.showWorkplanes(),"hide");
+        check(v.activateSketchWorkplane("wp") && v.showWorkplanes() && toggle->isChecked(),"activating a Workplane did not show Workplanes");
+        check(displayed(v).at("wp") && displayed(v).at("sketch:seg"),"activated Workplane not displayed");
+        toggle->trigger();check(!v.showWorkplanes() && v.activeSketchWorkplaneId_.isEmpty(),"hiding did not end Sketch editing");
+        v.selectConstructions({"wp"});action(w,"sketch.edit")->trigger();
+        check(v.activeSketchWorkplaneId_=="wp" && v.showWorkplanes() && toggle->isChecked(),"Edit Sketch did not show Workplanes");
+        v.endSketchEditing();toggle->trigger();
+        auto* combo=w.findChild<QComboBox*>("sketchWorkplane");combo->setCurrentIndex(combo->findData("wp"));
+        check(v.activeSketchWorkplaneId_=="wp" && v.showWorkplanes(),"Workplane combo activation did not show Workplanes");
+        v.endSketchEditing();toggle->trigger();
+        chooseFace(v,0,planar(v.boxes_[0].shape,gp_Dir(0,0,1)));v.startConstruction(Construction::Method::PlaneFace);
+        check(v.showWorkplanes() && toggle->isChecked() && v.commandSession_ && v.commandSession_->kind==CadViewport::CommandSession::Kind::Construction,"new Workplane did not show Workplanes");
+        v.cancelCommandSession();toggle->trigger();
+        v.startConstruction(Construction::Method::PlaneMove,"wp");check(v.showWorkplanes(),"Move Workplane did not show Workplanes");
+        v.cancelCommandSession();
+        check(visibilityFlags(v)==flags && v.undoStack_.size()==history && !w.documentDirty_,"auto-show changed flags or history");
+        std::cout<<"auto-show on Workplane activation/creation passed\n";
+    }
+    // ======================= v0.5.4 Move Face by Points =======================
+    static TopoDS_Vertex vertex(const TopoDS_Shape& shape,const gp_Pnt& p) {
+        for(TopExp_Explorer it(shape,TopAbs_VERTEX);it.More();it.Next()) if(BRep_Tool::Pnt(TopoDS::Vertex(it.Current())).Distance(p)<1.e-9) return TopoDS::Vertex(it.Current());
+        throw std::runtime_error("vertex missing");
+    }
+    static TopoDS_Edge circularEdge(const TopoDS_Shape& shape,double z) {
+        for(TopExp_Explorer it(shape,TopAbs_EDGE);it.More();it.Next()) {
+            BRepAdaptor_Curve c(TopoDS::Edge(it.Current()));
+            if(c.GetType()==GeomAbs_Circle && std::abs(c.Circle().Location().Z()-z)<1.e-9) return TopoDS::Edge(it.Current());
+        }
+        throw std::runtime_error("circular edge missing");
+    }
+    static void acceptPopups() {QTimer::singleShot(0,[]{for(auto* w:QApplication::topLevelWidgets()) if(auto* box=qobject_cast<QMessageBox*>(w)) box->accept();});}
+    static void moveByPoints() {
+        using MDS=CadViewport::MoveDirectionSource;using References::Kind;
+        CadViewport v;v.resize(1200,900);v.show();QApplication::processEvents();QString error;
+        auto doc=referenceFixture();
+        // Part with a certified Fillet on a top edge (11).
+        NativePartState filleted;filleted.id="filleted";filleted.name="Filleted";
+        {
+            const auto sharp=BRepPrimAPI_MakeBox(gp_Pnt(0,-300,0),100,80,60).Shape();EdgeBlendFeatures::State state;
+            check(EdgeBlendFeatures::create(sharp,{},edge(sharp,gp_Pnt(0,-300,60),gp_Pnt(100,-300,60)),EdgeBlendFeatures::Kind::Fillet,5,state,filleted.shape,error),qPrintable(error));
+            filleted.edgeBlendRecipe=EdgeBlendFeatures::encode(state);
+        }
+        doc.parts.push_back(filleted);
+        check(v.importDocumentSnapshot(doc,error),qPrintable(error));
+        v.view_->SetProj(V3d_XposYnegZpos);v.fitAll();QApplication::processEvents();
+        const auto original=v.boxes_[0].shape;const auto top=planar(original,gp_Dir(0,0,1));
+        const auto sourceShape=v.boxes_[1].shape,holed=v.boxes_[2].shape;
+        const References::Target topCorner{Kind::Vertex,"target",vertex(original,gp_Pnt(100,80,60))};
+        const References::Target topCorner2{Kind::Vertex,"target",vertex(original,gp_Pnt(0,0,60))};
+        const References::Target sourceCorner{Kind::Vertex,"source",vertex(sourceShape,gp_Pnt(220,20,40))};
+        const References::Target point{Kind::Point,"pt"};
+        const auto sketchPoint=[](const QString& id,Sketch::PointFeature feature,const QString& partner={},int index=0) {
+            References::Target t{Kind::SketchPoint,id};t.point={id,partner,feature,index};return t;
+        };
+        const auto center=sketchPoint("circ",Sketch::PointFeature::Center);
+        const auto segEnd=sketchPoint("seg",Sketch::PointFeature::End);
+        // seg (0,0)-(30,40) crosses cross (0,40)-(40,0) at (120/7,160/7).
+        Sketch::PointReference crossing;
+        for(const auto& t:Sketch::snapTargets(v.sketchEntities_,"wp",{},{},true))
+            if(t.kind==Sketch::SnapKind::Intersection && t.reference) crossing=*t.reference;
+        check(!crossing.entity.isEmpty(),"intersection reference missing");
+        References::Target intersection{Kind::SketchPoint,crossing.entity};intersection.point=crossing;
+        const References::Target holeCenter{Kind::Edge,"hole",circularEdge(holed,30)};
+        const auto world=[&](const References::Target& t){References::Resolved r;QString e;check(v.resolveReference(t,r,e) && r.point,qPrintable(e));return *r.point;};
+        check(world(intersection).Distance(sketchWorld(v,{120./7,160./7}))<1.e-9 && world(holeCenter).Distance(gp_Pnt(30,230,30))<1.e-9,"point source oracle");
+        // Runs By Points on the target top and compares with the certified normal-offset oracle.
+        const auto expectByPoints=[&](const References::Target& a,const References::Target& b,const char* label,bool commit) {
+            const auto history=v.undoStack_.size();chooseFace(v,0,top);v.moveFace();
+            check(v.commandSession_ && v.commandSession_->kind==CadViewport::CommandSession::Kind::MoveFace,"Move Face session missing");
+            check(v.setMoveFaceDirection(MDS::ByPoints,{a,b},false),qPrintable(QString(label)+": "+v.commandSession_->geometryError));
+            const gp_Vec ab(world(a),world(b));const double offset=ab.Dot(gp_Vec(0,0,1));
+            check(std::abs(v.commandSession_->value-ab.Magnitude())<1.e-9,"session value is not |AB|");
+            check(v.dragDimension_->isReadOnly() && !v.moveDirectionReverse_->isVisibleTo(v.commandPanel_) && v.moveDirectionRestart_->isVisibleTo(v.commandPanel_),"By Points panel controls");
+            check(v.moveDirectionLabel_->text().contains(QLocale().toString(ab.Magnitude(),'f',6)) && v.moveDirectionLabel_->text().contains(QLocale().toString(offset,'f',6)),"panel does not show |AB| and the normal offset");
+            QString oracleError;const auto expected=MoveFaceGeometry::move(original,top,offset,oracleError);
+            check(!expected.IsNull() && BRepReconstruction::equivalent(v.commandSession_->candidate,expected),label);
+            check(BRepCheck_Analyzer(v.commandSession_->candidate).IsValid(),"invalid By Points result");
+            check(v.boxes_[0].shape.IsSame(original),"preview mutated the source");
+            if(!commit) {v.cancelCommandSession();check(v.boxes_[0].shape.IsSame(original) && v.undoStack_.size()==history,"Cancel changed geometry/history");return expected;}
+            v.confirmCommandSession();check(v.undoStack_.size()==history+1 && BRepReconstruction::equivalent(v.boxes_[0].shape,expected),"By Points commit is not one Undo step");
+            check(v.partId(0)=="target" && v.boxes_[0].name=="Target","By Points changed Part identity");
+            return expected;
+        };
+        // 7. A on the Face: the Face lands in the plane through B (z = 20).
+        auto moved=expectByPoints(topCorner,center,"A on Face, B Sketch center",true);
+        {Bnd_Box b;BRepBndLib::Add(v.boxes_[0].shape,b,false);double x0,y0,z0,x1,y1,z1;b.Get(x0,y0,z0,x1,y1,z1);
+         check(std::abs(x1-x0-100)<1.e-6 && std::abs(y1-y0-80)<1.e-6 && std::abs(z0)<1.e-6 && std::abs(z1-world(center).Z())<1.e-6,"Face did not land in the plane through B");}
+        // 12. Undo/Redo and Save/Open of the result.
+        v.undoPull();check(v.boxes_[0].shape.IsSame(original),"By Points Undo");
+        v.redoPull();check(BRepReconstruction::equivalent(v.boxes_[0].shape,moved),"By Points Redo");
+        {
+            NativeDocumentSnapshot saved,reopened;QTemporaryDir dir;
+            check(v.exportDocumentSnapshot(saved) && NativeDocumentStorage::save(dir.filePath("bypoints.odc"),saved,error)
+                && NativeDocumentStorage::load(dir.filePath("bypoints.odc"),reopened,error),qPrintable(error));
+            CadViewport other;other.resize(600,400);other.show();QApplication::processEvents();
+            check(other.importDocumentSnapshot(reopened,error),qPrintable(error));
+            check(other.partId(0)=="target" && BRepReconstruction::equivalent(other.boxes_[0].shape,moved),"By Points result changed on Save/Open");
+        }
+        v.undoPull();check(v.boxes_[0].shape.IsSame(original) && v.undoStack_.empty(),"By Points final Undo");
+        // 8. Oblique vector: only (B - A) . n moves the Face.
+        expectByPoints(point,sourceCorner,"oblique Point -> Vertex",false);
+        // 9. Every supported point source as A and as B.
+        const std::vector<std::pair<const char*,References::Target>> sources{
+            {"Vertex",sourceCorner},{"Point",point},{"Sketch end point",segEnd},{"Sketch center",center},{"Sketch intersection",intersection},{"circular Edge center",holeCenter}};
+        const std::vector<References::Target> partners{topCorner,point,center,sourceCorner};
+        for(const auto& [name,s]:sources) for(int role=0;role<2;++role) {
+            bool done=false;
+            for(const auto& partner:partners) {
+                const auto a=role==0?s:partner,b=role==0?partner:s;
+                const double offset=world(b).Z()-world(a).Z();
+                if(std::abs(offset)<1 || offset<-50) continue; // keep the target a valid, non-degenerate solid
+                expectByPoints(a,b,qPrintable(QString("%1 as %2").arg(name,role==0?"A":"B")),false);done=true;break;
+            }
+            check(done,"no partner for a point source");
+        }
+        // UI: Direction combo arms picking; clicks pick A then B; another click replaces B; restart picks A again.
+        chooseFace(v,0,top);v.moveFace();
+        v.moveDirectionSource_->setCurrentIndex(int(MDS::ByPoints));
+        check(v.moveDirectionPicking_ && v.commandSession_->directionSource==MDS::ByPoints && v.dragDimension_->isReadOnly(),"By Points combo did not arm picking");
+        check(!v.commandSession_->valid && v.commandSession_->candidate.IsNull(),"preview before the second pick");
+        click(v,pixel(v,gp_Pnt(150,50,0)));
+        check(v.commandSession_->directionReferences.size()==1 && v.commandSession_->directionReferences[0].kind==Kind::Point && v.commandSession_->candidate.IsNull(),"start point A not picked");
+        click(v,pixel(v,sketchWorld(v,{60,20})));
+        check(v.commandSession_->directionReferences.size()==2 && v.commandSession_->directionReferences[1].kind==Kind::SketchPoint && v.commandSession_->valid,"end point B not picked / no preview");
+        check(v.moveDirectionPicking_,"picking not armed for replacing B");
+        click(v,pixel(v,gp_Pnt(220,20,40)));
+        check(v.commandSession_->directionReferences.size()==2 && v.commandSession_->directionReferences[0].kind==Kind::Point
+            && v.commandSession_->directionReferences[1].kind==Kind::Vertex && v.commandSession_->valid,"another pick did not replace B");
+        QString oracleError;check(BRepReconstruction::equivalent(v.commandSession_->candidate,MoveFaceGeometry::move(original,top,40,oracleError)),"picked By Points result");
+        // Arrow dragging is not a distance input in By Points.
+        check(!v.beginMoveFaceDrag(pixel(v,v.commandSession_->pivot)),"By Points accepted an arrow drag");
+        v.moveDirectionRestart_->click();
+        check(v.commandSession_->directionReferences.empty() && v.moveDirectionPicking_ && !v.commandSession_->valid,"Pick start point again did not reset A");
+        click(v,pixel(v,gp_Pnt(150,0,0))); // an Axis is not a point source
+        check(v.commandSession_->directionReferences.empty(),"Axis accepted as a point");
+        v.cancelCommandSession();check(v.boxes_[0].shape.IsSame(original) && v.undoStack_.empty(),"UI Cancel changed geometry/history");
+        // 10. Refusals are atomic: no candidate, no change, no history.
+        const auto refuse=[&](std::vector<References::Target> refs,const char* expected,const char* label) {
+            const auto history=v.undoStack_.size();chooseFace(v,0,top);v.moveFace();v.setMoveFaceDirection(MDS::ByPoints,refs,false);
+            check(!v.updateCommandParameter(false) && v.commandSession_->candidate.IsNull() && !v.commandSession_->valid,label);
+            check(v.commandSession_->geometryError.contains(expected),qPrintable(QString(label)+": "+v.commandSession_->geometryError));
+            acceptPopups();v.confirmCommandSession();
+            check(v.boxes_[0].shape.IsSame(original) && v.undoStack_.size()==history,"refused By Points mutated geometry/history");
+            v.cancelCommandSession();
+        };
+        refuse({sourceCorner,sourceCorner},"coincide","coincident points accepted");
+        refuse({topCorner,topCorner2},"parallel","parallel vector accepted");
+        refuse({{Kind::Edge,"source",edge(sourceShape,gp_Pnt(200,0,0),gp_Pnt(220,0,0))},point},"circular","straight Edge accepted as a point");
+        refuse({point},"end point B","single point accepted");
+        // Hidden: individually hidden Point and Sketch points while Workplanes are hidden.
+        {auto objects=v.constructions_;for(auto& o:objects) if(o.id=="pt") o.visible=false;v.commitConstructions(objects);}
+        refuse({point,sourceCorner},"Hidden","hidden Point accepted");
+        v.undoPull();check(v.undoStack_.empty(),"visibility Undo");
+        v.setShowWorkplanes(false);
+        refuse({center,sourceCorner},"hidden","Sketch point on hidden Workplanes accepted");
+        v.setShowWorkplanes(true);
+        // Stale: a Vertex rebuilt by a later edit of its Part; deleted: a deleted Point.
+        chooseFace(v,1,planar(sourceShape,gp_Dir(0,0,1)));v.moveFace();v.dragDimension_->setText("5");v.confirmCommandSession();
+        check(v.undoStack_.size()==1 && !v.boxes_[1].shape.IsSame(sourceShape),"Source edit failed");
+        {
+            chooseFace(v,0,top);v.moveFace();v.setMoveFaceDirection(MDS::ByPoints,{point,sourceCorner},false);
+            check(!v.updateCommandParameter(false) && v.commandSession_->geometryError.contains("no longer exists") && v.commandSession_->candidate.IsNull(),"stale Vertex accepted");
+            acceptPopups();v.confirmCommandSession();check(v.boxes_[0].shape.IsSame(original) && v.undoStack_.size()==1,"stale reference mutated geometry/history");
+            v.cancelCommandSession();
+        }
+        v.undoPull();check(v.boxes_[1].shape.IsSame(sourceShape) && v.undoStack_.empty(),"Source edit Undo");
+        v.deleteConstructions({"pt"});
+        {
+            chooseFace(v,0,top);v.moveFace();v.setMoveFaceDirection(MDS::ByPoints,{point,sourceCorner},false);
+            check(!v.updateCommandParameter(false) && v.commandSession_->geometryError.contains("no longer exists"),"deleted Point accepted");
+            v.cancelCommandSession();check(v.boxes_[0].shape.IsSame(original),"deleted reference mutated geometry");
+        }
+        v.undoPull();check(v.constructionObject("pt") && v.undoStack_.empty(),"Point delete Undo");
+        // Unsupported Face type: a cylindrical hole wall keeps its lateral controls.
+        TopoDS_Face wall;for(TopExp_Explorer it(holed,TopAbs_FACE);it.More();it.Next()) if(BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType()==GeomAbs_Cylinder) wall=TopoDS::Face(it.Current());
+        chooseFace(v,2,wall);v.moveFace();
+        check(v.commandSession_ && v.commandSession_->moveFeature!=CadViewport::MoveFaceFeature::Planar,"hole wall session missing");
+        check(!v.setMoveFaceDirection(MDS::ByPoints,{point,sourceCorner},false) && !v.moveDirectionSource_->isVisible() && v.cylinderMoveDirection_->isVisible(),"By Points accepted for a cylindrical wall");
+        v.cancelCommandSession();check(v.boxes_[2].shape.IsSame(holed) && v.undoStack_.empty(),"cylindrical refusal mutated geometry");
+        std::cout<<"Move Face by Points sources, refusals, Undo/Redo and Save/Open passed\n";
+        // 11. Keep ON/OFF on a Face adjacent to a certified Fillet is unchanged.
+        const size_t f=3;const auto filletSource=v.boxes_[f].shape;auto filletRecipe=v.boxes_[f].blends;
+        check(EdgeBlendFeatures::resolve(filletSource,filletRecipe,error) && filletRecipe.features.size()==1,qPrintable(error));
+        TopoDS_Face filletTop;double highest=-1e30;
+        for(TopExp_Explorer it(filletSource,TopAbs_FACE);it.More();it.Next()) {
+            BRepAdaptor_Surface a(TopoDS::Face(it.Current()));
+            if(a.GetType()==GeomAbs_Plane && a.Plane().Axis().Direction().IsParallel(gp_Dir(0,0,1),1.e-9) && a.Plane().Location().Z()>highest) {highest=a.Plane().Location().Z();filletTop=TopoDS::Face(it.Current());}
+        }
+        check(std::abs(highest-60)<1.e-9,"filleted top missing");
+        const References::Target filletCorner{Kind::Vertex,"filleted",vertex(filletSource,gp_Pnt(100,-220,60))};
+        for(const bool keep:{true,false}) {
+            chooseFace(v,f,filletTop);v.moveFace();
+            check(v.commandSession_ && v.commandSession_->blendSupport && v.keepBlends_->isChecked(),"filleted Move Face session / Keep default");
+            v.keepBlends_->setChecked(keep);
+            check(v.setMoveFaceDirection(MDS::ByPoints,{filletCorner,center},false),qPrintable(v.commandSession_->geometryError));
+            const double offset=world(center).Z()-60;
+            TopoDS_Shape expected;EdgeBlendFeatures::State expectedBlends;QString e;
+            check(EdgeBlendFeatures::move(filletSource,filletRecipe,filletTop,offset,keep,expectedBlends,expected,e),qPrintable(e));
+            check(BRepReconstruction::equivalent(v.commandSession_->candidate,expected),"Keep ON/OFF By Points differs from the certified blend move");
+            check(v.commandSession_->changes.front().faceChange->after.blends.features.size()==(keep?1u:0u),"Keep ON/OFF blend metadata");
+            v.confirmCommandSession();check(v.undoStack_.size()==1 && BRepReconstruction::equivalent(v.boxes_[f].shape,expected),"Keep By Points commit");
+            v.undoPull();check(v.boxes_[f].shape.IsSame(filletSource) && v.boxes_[f].blends.features.size()==1,"Keep By Points Undo");
+            v.redoPull();check(BRepReconstruction::equivalent(v.boxes_[f].shape,expected),"Keep By Points Redo");
+            v.undoPull();v.redoStack_.clear();v.updateHistoryActions();
+        }
+        std::cout<<"Move Face by Points Keep ON/OFF passed\n";
+    }
     static void run() {cameraDecoupling();framePresentation();references();viewModes();}
 };
 void runWorkplaneReferenceSessions() {WorkplaneReferenceSessionTest::run();}
+void runWorkplaneVisibilitySessions() {WorkplaneReferenceSessionTest::workplaneVisibility();}
+void runMoveFaceByPointsSessions() {WorkplaneReferenceSessionTest::moveByPoints();}

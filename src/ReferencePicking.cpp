@@ -1,4 +1,5 @@
-// v0.5.3 unified reference picking and Move Face direction sources.
+// v0.5.3 unified reference picking and Move Face direction sources;
+// v0.5.4 Move Face by Points.
 // See docs/WORKPLANE_REFERENCES.md. Geometry is resolved only through
 // References::resolve; this file adapts the viewport (pixels, AIS) to it.
 #include "CadViewport.h"
@@ -10,7 +11,11 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
+#include <BRepAdaptor_Curve.hxx>
+#include <QLineEdit>
+#include <QLocale>
 #include <StdSelect_BRepOwner.hxx>
+#include <TopoDS.hxx>
 #include <TopAbs_ShapeEnum.hxx>
 #include <algorithm>
 #include <cmath>
@@ -32,6 +37,9 @@ References::Model CadViewport::referenceModel() const {
         model.parts.push_back({partId(i),part.name,part.shape,part.orientation,part.visible});
     }
     model.constructions=constructions_;model.sketches=sketchEntities_;
+    // View-level Hide Workplanes: the resolver refuses Workplanes and their
+    // Sketch geometry with the existing hidden-reference diagnostics.
+    if(!showWorkplanes_) for(auto& o:model.constructions) if(o.kind==Construction::Kind::Workplane) o.visible=false;
     return model;
 }
 bool CadViewport::resolveReference(const References::Target& target,References::Resolved& result,QString& error) const {
@@ -45,7 +53,7 @@ std::optional<References::Target> CadViewport::pickReference(const QPoint& pixel
     const auto project=[&](const gp_Pnt& p){int x,y;view_->Convert(p.X(),p.Y(),p.Z(),x,y);return Sketch::Point{double(x),double(y)};};
     const double radius=sketchSnapPixels_;
     const auto visibleWorkplane=[&](const QString& id)->const Construction::Object* {
-        const auto* wp=constructionObject(id);return wp && wp->kind==Construction::Kind::Workplane && wp->visible?wp:nullptr;
+        const auto* wp=constructionObject(id);return wp && wp->kind==Construction::Kind::Workplane && constructionShown(*wp)?wp:nullptr;
     };
     // 1. Sketch points: exactly the cursor-independent Sketch snap targets.
     if(accepts(Kind::SketchPoint)) {
@@ -103,7 +111,7 @@ std::optional<References::Target> CadViewport::pickReference(const QPoint& pixel
     }
     for(const auto& o:constructions_) if(constructionPresentations_.contains(o.id)) {
         const auto& p=constructionPresentations_.at(o.id);context_->Deactivate(p);
-        if(o.kind==Construction::Kind::Workplane && accepts(Kind::Workplane) && o.visible && o.selectable)
+        if(o.kind==Construction::Kind::Workplane && accepts(Kind::Workplane) && constructionShown(o) && o.selectable)
             context_->Activate(p,AIS_Shape::SelectionMode(TopAbs_EDGE),Standard_False);
     }
     context_->MoveTo(pixel.x(),pixel.y(),view_,Standard_False);
@@ -127,7 +135,7 @@ std::optional<References::Target> CadViewport::pickReference(const QPoint& pixel
     }
     for(const auto& o:constructions_) if(constructionPresentations_.contains(o.id)) {
         const auto& p=constructionPresentations_.at(o.id);context_->Deactivate(p);
-        if(activeSketchWorkplaneId_.isEmpty() && o.visible && o.selectable)
+        if(activeSketchWorkplaneId_.isEmpty() && constructionShown(o) && o.selectable)
             context_->Activate(p,o.kind==Construction::Kind::Workplane?AIS_Shape::SelectionMode(TopAbs_EDGE):0,Standard_False);
     }
     if(!result) error=tr("No supported reference at this position.");
@@ -135,24 +143,40 @@ std::optional<References::Target> CadViewport::pickReference(const QPoint& pixel
 }
 
 // ---- Move Face direction ------------------------------------------------
+namespace {
+// v0.5.4 Move Face by Points: points closer than this are coincident, and a
+// displacement whose normal component is smaller does not move a planar Face.
+// Equal to the sharp-reconstruction tolerance.
+constexpr double ByPointsTolerance=1.e-6;
+}
+bool CadViewport::moveFaceByPoints() const {
+    return commandSession_ && commandSession_->kind==CommandSession::Kind::MoveFace
+        && commandSession_->moveFeature==MoveFaceFeature::Planar && commandSession_->directionSource==MoveDirectionSource::ByPoints;
+}
 void CadViewport::initializeMoveDirectionControls() {
     moveDirectionSource_=new QComboBox(commandPanel_);moveDirectionSource_->setObjectName("moveFaceDirectionSource");
-    moveDirectionSource_->addItems({tr("Direction: Face normal"),tr("Direction: Edge / Sketch line / Axis / Face"),tr("Direction: Point to Point")});
-    moveDirectionSource_->setToolTip(tr("Translate the Face along a reference direction. A planar Face moves by the direction's component along its normal."));
+    moveDirectionSource_->addItems({tr("Direction: Face normal"),tr("Direction: Edge / Sketch line / Axis / Face"),tr("Direction: Point to Point"),tr("By Points: start A → end B")});
+    moveDirectionSource_->setToolTip(tr("Translate the Face along a reference direction. A planar Face moves by the direction's component along its normal. By Points uses the full vector from A to B without a distance."));
     moveDirectionPick_=new QPushButton(tr("Pick direction reference"),commandPanel_);moveDirectionPick_->setObjectName("moveFaceDirectionPick");
+    moveDirectionRestart_=new QPushButton(tr("Pick start point again"),commandPanel_);moveDirectionRestart_->setObjectName("moveFacePickStartAgain");
+    moveDirectionRestart_->setToolTip(tr("Discard A and B and pick a new start point. Picking without this replaces the end point B."));
     moveDirectionReverse_=new QCheckBox(tr("Reverse direction"),commandPanel_);moveDirectionReverse_->setObjectName("moveFaceDirectionReverse");
     moveDirectionLabel_=new QLabel(commandPanel_);moveDirectionLabel_->setObjectName("moveFaceDirectionLabel");moveDirectionLabel_->setWordWrap(true);
-    for(QWidget* w:std::array<QWidget*,4>{moveDirectionSource_,moveDirectionPick_,moveDirectionReverse_,moveDirectionLabel_}) {commandLayout_->addWidget(w);w->hide();}
+    for(QWidget* w:std::array<QWidget*,5>{moveDirectionSource_,moveDirectionPick_,moveDirectionRestart_,moveDirectionReverse_,moveDirectionLabel_}) {commandLayout_->addWidget(w);w->hide();}
     connect(moveDirectionSource_,qOverload<int>(&QComboBox::currentIndexChanged),this,[this](int index) {
         if(!commandSession_ || commandSession_->kind!=CommandSession::Kind::MoveFace) return;
-        setMoveFaceDirection(MoveDirectionSource(index),{},moveDirectionReverse_->isChecked());
-        moveDirectionPicking_=index!=0;updateMoveDirectionControls();
+        moveDirectionPicking_=index!=0;
+        setMoveFaceDirection(MoveDirectionSource(index),{},index==int(MoveDirectionSource::ByPoints)?false:moveDirectionReverse_->isChecked());
     });
     connect(moveDirectionPick_,&QPushButton::clicked,this,[this] {
         if(!commandSession_ || commandSession_->kind!=CommandSession::Kind::MoveFace) return;
         if(commandSession_->directionSource==MoveDirectionSource::PointToPoint && commandSession_->directionReferences.size()>=2)
             commandSession_->directionReferences.clear();
         moveDirectionPicking_=commandSession_->directionSource!=MoveDirectionSource::FaceNormal;updateMoveDirectionControls();
+    });
+    connect(moveDirectionRestart_,&QPushButton::clicked,this,[this] {
+        if(!moveFaceByPoints()) return;
+        moveDirectionPicking_=true;setMoveFaceDirection(MoveDirectionSource::ByPoints,{},false);
     });
     connect(moveDirectionReverse_,&QCheckBox::toggled,this,[this](bool reverse) {
         if(!commandSession_ || commandSession_->kind!=CommandSession::Kind::MoveFace) return;
@@ -161,19 +185,36 @@ void CadViewport::initializeMoveDirectionControls() {
 }
 void CadViewport::updateMoveDirectionControls() {
     const bool planar=commandSession_ && commandSession_->kind==CommandSession::Kind::MoveFace && commandSession_->moveFeature==MoveFaceFeature::Planar;
-    for(QWidget* w:std::array<QWidget*,4>{moveDirectionSource_,moveDirectionPick_,moveDirectionReverse_,moveDirectionLabel_}) w->setVisible(planar);
-    if(!planar) {moveDirectionPicking_=false;return;}
+    for(QWidget* w:std::array<QWidget*,5>{moveDirectionSource_,moveDirectionPick_,moveDirectionRestart_,moveDirectionReverse_,moveDirectionLabel_}) w->setVisible(planar);
+    dragDimension_->setReadOnly(false);
+    if(!planar) {moveDirectionPicking_=false;moveDirectionRestart_->hide();return;}
     const auto& s=*commandSession_;
+    const bool byPoints=s.directionSource==MoveDirectionSource::ByPoints;
     {const QSignalBlocker a(moveDirectionSource_),b(moveDirectionReverse_);
      moveDirectionSource_->setCurrentIndex(int(s.directionSource));moveDirectionReverse_->setChecked(s.directionReverse);}
     moveDirectionPick_->setEnabled(s.directionSource!=MoveDirectionSource::FaceNormal);
+    // By Points: pick order is the direction, so there is no Reverse, and the
+    // distance is the read-only vector length |AB| (no numeric input).
+    moveDirectionPick_->setVisible(!byPoints);moveDirectionReverse_->setVisible(!byPoints);moveDirectionRestart_->setVisible(byPoints);
+    dragDimension_->setReadOnly(byPoints);
     QStringList names;
     for(const auto& t:s.directionReferences) {References::Resolved r;QString e;names<<(resolveReference(t,r,e)?r.label:tr("stale %1").arg(References::kindName(t.kind)));}
     QString text;
     if(s.directionSource==MoveDirectionSource::FaceNormal) text=tr("Face normal");
     else if(s.directionSource==MoveDirectionSource::Reference) text=names.isEmpty()?tr("Pick a straight Edge, Sketch line, Axis, planar Face or Workplane."):names.front();
-    else text=names.isEmpty()?tr("Pick the first point (Point, Vertex or Sketch point)."):names.size()==1?tr("%1 → pick the second point.").arg(names.front()):names.join(QStringLiteral(" → "));
-    if(moveDirectionPicking_) text+=tr(" (picking)");
+    else if(!byPoints) text=names.isEmpty()?tr("Pick the first point (Point, Vertex or Sketch point)."):names.size()==1?tr("%1 → pick the second point.").arg(names.front()):names.join(QStringLiteral(" → "));
+    else if(names.isEmpty()) text=tr("Pick start point A (Vertex, Point, Sketch point, center or intersection).");
+    else if(names.size()==1) text=tr("A: %1 → pick end point B.").arg(names.front());
+    else {
+        gp_Dir d;double factor=0,length=0;QString error;
+        const bool ok=moveFaceDirection(s,d,factor,error,&length);
+        text=tr("A: %1 → B: %2").arg(names[0],names[1]);
+        if(ok) text+=tr("\n|AB| = %1 mm\nOffset along Face normal = %2 mm").arg(QLocale().toString(length,'f',6),QLocale().toString(length*factor,'f',6));
+        else text+=QStringLiteral("\n")+error;
+        if(ok) dragDimension_->setText(QLocale().toString(length,'f',6));
+    }
+    if(byPoints && s.directionReferences.size()<2) dragDimension_->clear();
+    if(moveDirectionPicking_) text+=byPoints && s.directionReferences.size()==2?tr(" (picking replaces B)"):tr(" (picking)");
     moveDirectionLabel_->setText(text);
 }
 bool CadViewport::setMoveFaceDirection(MoveDirectionSource source,const std::vector<References::Target>& references,bool reverse) {
@@ -182,44 +223,85 @@ bool CadViewport::setMoveFaceDirection(MoveDirectionSource source,const std::vec
     if(s.moveFeature!=MoveFaceFeature::Planar && source!=MoveDirectionSource::FaceNormal) {
         emit statusMessage(tr("Direction references are certified for planar Faces only; cylindrical walls use their lateral reference."));return false;
     }
-    s.directionSource=source;s.directionReverse=reverse;
+    const bool byPoints=source==MoveDirectionSource::ByPoints;
+    s.directionSource=source;s.directionReverse=byPoints?false:reverse;
     s.directionReferences=source==MoveDirectionSource::FaceNormal?std::vector<References::Target>{}:references;
-    const size_t needed=source==MoveDirectionSource::PointToPoint?2:source==MoveDirectionSource::Reference?1:0;
+    const size_t needed=(source==MoveDirectionSource::PointToPoint || byPoints)?2:source==MoveDirectionSource::Reference?1:0;
     if(s.directionReferences.size()>needed) s.directionReferences.resize(needed);
-    if(s.directionReferences.size()==needed) moveDirectionPicking_=false;
+    // By Points keeps picking armed: a further pick replaces B.
+    if(byPoints) moveDirectionPicking_=true;
+    else if(s.directionReferences.size()==needed) moveDirectionPicking_=false;
     updateMoveDirectionControls();
     return updateCommandParameter(false);
+}
+namespace {
+// A By Points operand must resolve to one point: Vertex, Point, Sketch point
+// (end/mid/center/intersection) or the center of a circular Edge. Straight
+// Edges have no unique point and are refused rather than guessed.
+bool byPointsOperand(const References::Target& target,const References::Resolved& resolved,QString& error) {
+    if(!resolved.point) {error=QStringLiteral("This reference does not define a point.");return false;}
+    if(target.kind==References::Kind::Edge && (target.subshape.IsNull() || target.subshape.ShapeType()!=TopAbs_EDGE
+        || BRepAdaptor_Curve(TopoDS::Edge(target.subshape)).GetType()!=GeomAbs_Circle)) {
+        error=QStringLiteral("Only circular Edges supply a point (their center); pick a Vertex, Point or Sketch point.");return false;
+    }
+    if(target.kind!=References::Kind::Edge && target.kind!=References::Kind::Vertex && target.kind!=References::Kind::Point && target.kind!=References::Kind::SketchPoint) {
+        error=QStringLiteral("By Points accepts Vertices, Points, Sketch points, centers and intersections.");return false;
+    }
+    error.clear();return true;
+}
 }
 bool CadViewport::pickMoveDirection(const QPoint& point) {
     if(!commandSession_ || commandSession_->kind!=CommandSession::Kind::MoveFace || !moveDirectionPicking_) return false;
     using References::Kind;
     auto& s=*commandSession_;
-    const auto accepted=s.directionSource==MoveDirectionSource::PointToPoint
+    const bool byPoints=s.directionSource==MoveDirectionSource::ByPoints;
+    const auto accepted=byPoints?std::vector<Kind>{Kind::SketchPoint,Kind::Point,Kind::Vertex,Kind::Edge}
+        :s.directionSource==MoveDirectionSource::PointToPoint
         ?std::vector<Kind>{Kind::SketchPoint,Kind::Point,Kind::Vertex}
         :std::vector<Kind>{Kind::SketchLine,Kind::Axis,Kind::Edge,Kind::Face,Kind::Workplane};
+    const QString prefix=byPoints?tr("Move Face by Points: %1"):tr("Move Face direction: %1");
     QString error;const auto target=pickReference(point,accepted,error);
-    if(!target) {emit statusMessage(tr("Move Face direction: %1").arg(error));updateMoveDirectionControls();return true;}
+    if(!target) {emit statusMessage(prefix.arg(error));updateMoveDirectionControls();return true;}
     References::Resolved resolved;
-    if(!resolveReference(*target,resolved,error)) {emit statusMessage(tr("Move Face direction: %1").arg(error));return true;}
+    if(!resolveReference(*target,resolved,error)) {emit statusMessage(prefix.arg(error));return true;}
     if(s.directionSource==MoveDirectionSource::Reference) {
-        gp_Dir d;if(!References::direction(resolved,d,error)) {emit statusMessage(tr("Move Face direction: %1").arg(error));return true;}
+        gp_Dir d;if(!References::direction(resolved,d,error)) {emit statusMessage(prefix.arg(error));return true;}
     }
+    if(byPoints && !byPointsOperand(*target,resolved,error)) {emit statusMessage(prefix.arg(error));return true;}
     auto references=s.directionReferences;
-    if(s.directionSource==MoveDirectionSource::Reference || references.size()>=2) references.clear();
+    if(byPoints) {if(references.size()>=2) references.pop_back();}   // a further pick replaces B
+    else if(s.directionSource==MoveDirectionSource::Reference || references.size()>=2) references.clear();
     references.push_back(*target);
     setMoveFaceDirection(s.directionSource,references,s.directionReverse);
     view_->Redraw();return true;
 }
-bool CadViewport::moveFaceDirection(const CommandSession& s,gp_Dir& direction,double& normalFactor,QString& error) const {
+bool CadViewport::moveFaceDirection(const CommandSession& s,gp_Dir& direction,double& normalFactor,QString& error,double* length) const {
     direction=s.faceNormal;
+    if(length) *length=0;
     if(s.directionSource==MoveDirectionSource::Reference) {
         if(s.directionReferences.size()!=1) {error=tr("Pick a direction reference (Edge, Sketch line, Axis, planar Face or Workplane).");return false;}
         References::Resolved r;if(!resolveReference(s.directionReferences[0],r,error) || !References::direction(r,direction,error)) return false;
     } else if(s.directionSource==MoveDirectionSource::PointToPoint) {
         if(s.directionReferences.size()!=2) {error=tr("Pick two points for the Point to Point direction.");return false;}
-        References::Resolved a,b;double length=0;
+        References::Resolved a,b;double distance=0;
         if(!resolveReference(s.directionReferences[0],a,error) || !resolveReference(s.directionReferences[1],b,error)
-           || !References::pointToPoint(a,b,direction,length,error)) return false;
+           || !References::pointToPoint(a,b,direction,distance,error)) return false;
+    } else if(s.directionSource==MoveDirectionSource::ByPoints) {
+        // Displacement = B - A, re-resolved from the current document on
+        // every preview and on OK. Stale, deleted or hidden points are refused.
+        if(s.directionReferences.size()!=2) {
+            error=s.directionReferences.empty()?tr("Pick start point A, then end point B."):tr("Pick end point B.");return false;
+        }
+        References::Resolved a,b;
+        if(!resolveReference(s.directionReferences[0],a,error) || !byPointsOperand(s.directionReferences[0],a,error)) {error=tr("Start point A: %1").arg(error);return false;}
+        if(!resolveReference(s.directionReferences[1],b,error) || !byPointsOperand(s.directionReferences[1],b,error)) {error=tr("End point B: %1").arg(error);return false;}
+        const gp_Vec displacement(*a.point,*b.point);
+        if(displacement.Magnitude()<ByPointsTolerance) {error=tr("Start point A and end point B coincide; there is no displacement.");return false;}
+        direction=gp_Dir(displacement);
+        if(std::abs(displacement.Dot(gp_Vec(s.faceNormal)))<ByPointsTolerance) {
+            error=tr("The vector from A to B is parallel to the Face; its offset along the Face normal is zero.");return false;
+        }
+        if(length) *length=displacement.Magnitude();
     }
     if(s.directionReverse) direction.Reverse();
     normalFactor=direction.Dot(s.faceNormal);

@@ -808,8 +808,11 @@ Sketch and projected-geometry references during design and acceptance.
 - v0.5.2 conical Fillet/Chamfer: manual Fedora KDE/Wayland acceptance (FILLET_CHAMFER.md)
 - v0.5.3: Workplane, reference and Sketch geometry foundations above (implemented;
   manual Fedora KDE/Wayland acceptance pending, see WORKPLANE_REFERENCES.md)
-- v0.5.4: exact ellipse/elliptical arc Sketch modeling, exact projection and 2D
-  interpolating splines on the v0.5.3 reference model
+- v0.5.4: view-level Show/Hide Workplanes and Move Face by Points (implemented;
+  manual Fedora KDE/Wayland acceptance pending, see WORKPLANE_REFERENCES.md and
+  MOVE_FACE.md)
+- v0.5.5: exact ellipse/elliptical arc Sketch modeling, exact projection and 2D
+  interpolating splines on the v0.5.3 reference model (moved from v0.5.4)
 - Sweep (including 3D spline paths), then Loft, after the foundation gates
 - Broader cylindrical-face movement (holes and bosses) beyond the certified v0.4.9 scope
 - Assemblies and 3D copilot
@@ -838,6 +841,12 @@ Sketch and projected-geometry references during design and acceptance.
 - [x] Preserve existing OK/Cancel, Undo/Redo, Part identity and native Save/Open;
   test transformed geometry, all reference types, reverse/signed input,
   reference independence and safe refusal. (v0.5.3, planar Faces.)
+- [x] **Move Face by Points**: displacement = full vector from a picked start
+  point A to an end point B (Vertex, Point, Sketch point, center,
+  intersection), no numeric input, no Reverse; a planar Face moves by
+  `(B − A)·n`, so with A on the Face it lands in the plane through B. Coincident,
+  parallel, stale/deleted/hidden and unsupported cases refused atomically.
+  (v0.5.4, `move-face-by-points-sessions`.)
 - [ ] Direction references for cylindrical hole/notch/boss walls (currently
   refused; they keep the v0.4.9 lateral reference controls).
 
@@ -863,6 +872,11 @@ Sketch and projected-geometry references during design and acceptance.
 - [x] Add focused viewport, Sketch session and UI regressions, including
   switching Wireframe/Shaded, toggling 3D solids and Edit Sketch without
   camera rotation (`workplane-reference-sessions`, `sketch-drawing`).
+- [x] Add a **Show/Hide Workplanes** view toggle next to Show/Hide 3D Geometry:
+  Workplane frames, rings and their Sketches are not drawn, pickable or snap
+  targets; Axes/Points/solids unaffected; flags, `.odc` and Undo untouched;
+  activation, Edit Sketch and new Workplanes show them again. (v0.5.4,
+  `workplane-visibility-sessions`.)
 
 ## Planned — Workplane frame visibility and minimum extent
 
@@ -1104,3 +1118,23 @@ See [Workplane references](WORKPLANE_REFERENCES.md) for the design.
 - [ ] Open: reference picking for Rotate/Align Face and Revolve axes through the
   shared picker; direction references for cylindrical walls; solid-edge
   intersection points; persistent (associative) references remain out of scope.
+
+### v0.5.4 — Show/Hide Workplanes and Move Face by Points
+
+- [x] **View → Show Workplanes** toggle (menu and 3D toolbar): hides Workplane
+  frames, active rings, labels and all Sketches on Workplanes for drawing,
+  picking, snapping and reference resolution; Axes, Points and solids stay.
+  View state only (no flags, `.odc`, Undo or dirty change); exact restore,
+  individually hidden objects stay hidden; independent of Show/Hide 3D Geometry
+  and Wireframe/Shaded. Activating a Workplane, Edit Sketch and creating or
+  editing a Workplane switch it back on
+  ([details](WORKPLANE_REFERENCES.md#56-showhide-workplanes-v054)).
+- [x] **Move Face by Points**: A → B displacement through the shared reference
+  picker/resolver and the certified planar Move Face path with offset
+  `(B − A)·n`; read-only `|AB|` and normal offset; picking again replaces B,
+  *Pick start point again* restarts A; one Undo step on OK
+  ([details](MOVE_FACE.md#move-face-by-points-v054)).
+- [ ] Manual DellJV Fedora KDE/Wayland acceptance at 100 % and 200 %
+  (WORKPLANE_REFERENCES.md §10 items 8–12, MOVE_FACE.md By Points checklist).
+- Moved to **v0.5.5**: exact ellipse/elliptical arc Sketch modeling, exact
+  projection and 2D interpolating splines.

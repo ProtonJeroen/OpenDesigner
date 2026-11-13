@@ -136,7 +136,7 @@ void CadViewport::rebuildConstructionPresentations() {
     for(const auto& object:constructions_) {
         auto presentation=constructionPresentation(object);constructionPresentations_[object.id]=presentation;
         auto label=constructionLabel(object);constructionLabels_[object.id]=label;
-        if(object.visible) {
+        if(constructionShown(object)) {
             context_->Display(label,0,-1,Standard_False);context_->Deactivate(label);
             context_->Display(presentation,Standard_False);context_->Deactivate(presentation);
             if(object.selectable) context_->Activate(presentation,object.kind==Kind::Workplane?AIS_Shape::SelectionMode(TopAbs_EDGE):0,Standard_False);
@@ -181,7 +181,7 @@ void CadViewport::selectConstructions(const QStringList& ids) {
     for(const auto& id:ids) if(const auto* object=constructionObject(id)) {
         if(selectedConstructionIds_.contains(id)) continue;
         selectedConstructionIds_.push_back(id);
-        if(object->visible && object->selectable) context_->AddOrRemoveSelected(constructionPresentations_.at(id),Standard_False);
+        if(constructionShown(*object) && object->selectable) context_->AddOrRemoveSelected(constructionPresentations_.at(id),Standard_False);
     }
     emit partSelectionChanged({});emit constructionSelectionChanged(selectedConstructionIds_);refreshSketchPicking();view_->Redraw();
 }
@@ -238,6 +238,8 @@ void CadViewport::populateConstructionMenu(QMenu& menu) {
 void CadViewport::startConstruction(Method method,const QString& targetId) {
     endSketchEditing();
     cancelCommandSession();initializeViewer();
+    // Creating or editing a Workplane never works on invisible geometry.
+    if(definition(method).kind==Kind::Workplane) setShowWorkplanes(true);
     auto session=std::make_shared<ConstructionSessionState>();session->request.method=method;session->selection=selectedConstructionIds_;
     const auto& d=definition(method);
     const auto* target=constructionObject(d.edit && targetId.isEmpty() && !selectedConstructionIds_.isEmpty()?selectedConstructionIds_.front():targetId);
@@ -260,7 +262,7 @@ void CadViewport::startConstruction(Method method,const QString& targetId) {
     session->choices.resize(d.roles.size());
     for(size_t role=0;role<d.roles.size();++role) {
         auto* combo=constructionPanel_->roles[role];auto& choices=session->choices[role];
-        for(const auto& object:constructions_) if(object.visible && object.selectable && matches(object.kind,d.roles[role].kind)) {
+        for(const auto& object:constructions_) if(constructionShown(object) && object.selectable && matches(object.kind,d.roles[role].kind)) {
             choices.push_back({object.id,object.name,object.id,reference(object)});combo->addItem(object.name,object.id);
         }
         if(!d.edit) for(const auto& part:boxes_) if(part.active && part.visible) {
@@ -401,7 +403,7 @@ bool CadViewport::previewConstruction() {
     if(!constructionPreviewLabel_.IsNull()) {context_->Remove(constructionPreviewLabel_,Standard_False);constructionPreviewLabel_.Nullify();}
     for(const auto& [id,presentation]:constructionPresentations_) {
         const auto* object=constructionObject(id);
-        if(object && object->visible) {
+        if(object && constructionShown(*object)) {
             context_->Display(constructionLabels_.at(id),0,-1,Standard_False);context_->Deactivate(constructionLabels_.at(id));
             context_->Display(presentation,Standard_False);context_->Deactivate(presentation);
             if(object->selectable) context_->Activate(presentation,object->kind==Kind::Workplane?AIS_Shape::SelectionMode(TopAbs_EDGE):0,Standard_False);
@@ -455,7 +457,7 @@ void CadViewport::closeConstructionSession(bool confirm) {
     } else {
         rebuildConstructionPresentations();rebuildSketchPresentations();selectedConstructionIds_=session.construction->selection;
         context_->ClearSelected(Standard_False);
-        for(const auto& id:selectedConstructionIds_) if(const auto* object=constructionObject(id);object && object->visible && object->selectable)
+        for(const auto& id:selectedConstructionIds_) if(const auto* object=constructionObject(id);object && constructionShown(*object) && object->selectable)
             context_->AddOrRemoveSelected(constructionPresentations_.at(id),Standard_False);
         if(selectedConstructionIds_.isEmpty()) {
             if(!selectedSketchIds_.empty()) {
