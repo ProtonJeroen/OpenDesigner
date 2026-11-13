@@ -44,20 +44,20 @@ and never participate in reference resolution.
 
 ## 3. Reference model
 
-A new pure module, `src/ReferenceGeometry.h/.cpp` (namespace `Reference`, part
+A new pure module, `src/ReferenceGeometry.h/.cpp` (namespace `References`, part
 of the `OpenDesignerConstruction` library, no widgets or AIS), defines:
 
-- `Reference::Target` — *what* was picked: a kind, an owner identity and, for
+- `References::Target` — *what* was picked: a kind, an owner identity and, for
   subshapes, the picked `TopoDS_Shape` of the Part's canonical B-Rep; for Sketch
   points a `Sketch::PointReference` (entity, feature, partner, index).
-- `Reference::Model` — *the current document values* to resolve against:
+- `References::Model` — *the current document values* to resolve against:
   Parts (persistent id, canonical shape, placement, visibility),
   construction objects and Sketch entities.
-- `Reference::Resolved` — the geometric result in world coordinates: an
+- `References::Resolved` — the geometric result in world coordinates: an
   optional point, an optional line (`gp_Ax1`) and an optional plane (`gp_Ax3`).
-- `Reference::resolve(model, target, resolved, error)` — the single resolution
+- `References::resolve(model, target, resolved, error)` — the single resolution
   path used by picking, snapping and every command that consumes references.
-- `Reference::direction(...)` and `Reference::pointToPoint(...)` — derived
+- `References::direction(...)` and `References::pointToPoint(...)` — derived
   direction rules shared by commands.
 
 | Kind | Identified by | Resolves to | Direction (if requested) |
@@ -84,7 +84,7 @@ orientation and placement handling are identical everywhere.
 ### Picking and snapping
 
 `CadViewport::pickReference(pixel, accepted kinds)` is the one viewport adapter
-that converts a click into a `Reference::Target`:
+that converts a click into a `References::Target`:
 
 1. Sketch points on visible Workplanes, through `Sketch::snapTargets` +
    `Sketch::closestSnap` — exactly the targets and pixel radius the Sketch
@@ -96,7 +96,7 @@ that converts a click into a `Reference::Target`:
    selection (owner shape + Part presentation), including Part placement.
 
 Snap targets now carry the `PointReference` that produced them, and
-`Reference::resolve` re-evaluates that reference from the current entities.
+`References::resolve` re-evaluates that reference from the current entities.
 Snapping and picking therefore resolve to the same reference and the same
 point. Existing automatic Edge/Face selection, delayed Part promotion and the
 Alt/Ctrl selection semantics are not changed: reference picking is only active
@@ -224,7 +224,7 @@ No `.odc` schema change: schema v5 remains current.
   features: each through-point (index), start, end. Direction features: end
   tangents. Profile Builder converts it to an exact `Geom2d_BSplineCurve` on
   the Workplane.
-- All of these use `Reference::resolve` and `Sketch::PointReference`; no new
+- All of these use `References::resolve` and `Sketch::PointReference`; no new
   resolver or picking path is introduced.
 
 ## 9. Tests

@@ -147,6 +147,7 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     faceAxisSelector_->addItems({tr("Choose a straight edge…"),tr("World X axis"),tr("World Y axis"),tr("World Z axis")});
     faceAxisSelector_->hide(); commandLayout->addWidget(faceAxisSelector_);
     initializeCylindricalMoveControls();
+    initializeMoveDirectionControls();
     keepBlends_=new QCheckBox(tr("Keep Fillet / Chamfer"),commandPanel_);
     keepBlends_->setObjectName("keepFilletChamfer");keepBlends_->hide();commandLayout_->addWidget(keepBlends_);
     connect(keepBlends_,&QCheckBox::toggled,this,[this]{if(commandSession_) updateCommandParameter(false);});
@@ -230,6 +231,7 @@ void CadViewport::beginCommandSession(CommandSession::Kind kind,
     faceAxisSelector_->setVisible(kind==CommandSession::Kind::RotateFace);
     cylinderMoveLabel_->hide(); cylinderMoveDirection_->hide();
     cylinderMoveAngle_->hide(); cylinderBossBoundary_->hide();
+    moveDirectionPicking_=false;moveDirectionSource_->hide();moveDirectionPick_->hide();moveDirectionReverse_->hide();moveDirectionLabel_->hide();
     faceAlignSelector_->setVisible(kind==CommandSession::Kind::AlignFace);
     faceAlignTargetLabel_->setVisible(kind==CommandSession::Kind::AlignFace);
     faceAlignReferenceLabel_->setVisible(kind==CommandSession::Kind::AlignFace);
@@ -2424,6 +2426,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             if(!error.isEmpty()){emit statusMessage(error);return;}
             const auto id=partId(*index);auto accepted=targetAccepted_;cancelTargetPicking();accepted(id);return;
         }
+        if(pickMoveDirection(e->pos())) return;
         if(commandSession_ && commandSession_->sweep) {
             if(commandSession_->kind==CommandSession::Kind::Revolve && commandSession_->sweep->axisPicking) {
                 context_->MoveTo(e->pos().x(),e->pos().y(),view_,Standard_True);

@@ -20,6 +20,7 @@ class QMenu;
 class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
+class QPushButton;
 class QContextMenuEvent;
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
@@ -48,6 +49,7 @@ class ConstructionPanel;
 #include "SketchProjection.h"
 #include "SketchProfileExtrusion.h"
 #include "ModelingOperation.h"
+#include "ReferenceGeometry.h"
 
 class CadViewport final : public QWidget {
     Q_OBJECT
@@ -78,6 +80,18 @@ public:
     // given Workplane, else the active one, else the single selected one.
     bool lookAtWorkplane(const QString& id = {});
     QString lookAtWorkplaneCandidate() const;
+    // v0.5.3 unified references (docs/WORKPLANE_REFERENCES.md). The model is a
+    // value snapshot of current Parts, constructions and Sketch entities.
+    References::Model referenceModel() const;
+    bool resolveReference(const References::Target& target, References::Resolved& result, QString& error) const;
+    // One picking path for every command that asks for a reference: Sketch
+    // points use the Sketch snap targets and radius; then construction Points,
+    // Sketch lines and Axes by screen distance; then OCCT-detected Part
+    // Vertices, Edges, Faces and Workplanes.
+    std::optional<References::Target> pickReference(const QPoint& pixel, const std::vector<References::Kind>& accepted, QString& error);
+    enum class MoveDirectionSource { FaceNormal, Reference, PointToPoint };
+    // Move Face direction input; a FaceNormal source ignores references.
+    bool setMoveFaceDirection(MoveDirectionSource source, const std::vector<References::Target>& references, bool reverse);
     void startSketchDrawing(Sketch::DrawTool tool, Sketch::Role role = Sketch::Role::Profile);
     void startSketchOverdraw();
     void startSketchConstruction(Sketch::ConstructionTool tool);
@@ -437,6 +451,11 @@ private:
         std::vector<size_t> tools, initialParts;
         bool keepTools = false, chooseTarget = false;
         std::shared_ptr<BooleanChange> booleanChange;
+        // v0.5.3 Move Face direction: resolved again on every preview and OK.
+        MoveDirectionSource directionSource = MoveDirectionSource::FaceNormal;
+        std::vector<References::Target> directionReferences;
+        bool directionReverse = false;
+        gp_Dir faceNormal = gp_Dir(0,0,1); // outward world normal at session start
     };
     QString activeSketchWorkplaneId_;
     int sketchSnapPixels_ = 10;
@@ -585,6 +604,15 @@ private:
     QComboBox* cylinderMoveDirection_ = nullptr;
     QDoubleSpinBox* cylinderMoveAngle_ = nullptr;
     QComboBox* cylinderBossBoundary_ = nullptr;
+    QComboBox* moveDirectionSource_ = nullptr;
+    QPushButton* moveDirectionPick_ = nullptr;
+    QCheckBox* moveDirectionReverse_ = nullptr;
+    QLabel* moveDirectionLabel_ = nullptr;
+    bool moveDirectionPicking_ = false;
+    void initializeMoveDirectionControls();
+    void updateMoveDirectionControls();
+    bool pickMoveDirection(const QPoint& point);
+    bool moveFaceDirection(const CommandSession& session, gp_Dir& direction, double& normalFactor, QString& error) const;
     QComboBox* faceAlignSelector_ = nullptr;
     QLabel* faceAlignTargetLabel_ = nullptr;
     QLabel* faceAlignReferenceLabel_ = nullptr;

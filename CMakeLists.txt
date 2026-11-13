@@ -55,7 +55,7 @@ set(OPENDESIGNER_LIBRARIES
     TKMath
     TKernel
 )
-add_library(OpenDesignerConstruction STATIC src/SketchDisplayBounds.cpp src/SketchDisplayBounds.h src/ConstructionGeometry.cpp src/ConstructionGeometry.h src/SketchGeometry.cpp src/SketchGeometry.h src/SketchSnapping.cpp src/SketchSnapping.h src/SketchOverdraw.cpp src/SketchOverdraw.h src/SketchConstruction.cpp src/SketchConstruction.h src/SketchProjection.cpp src/SketchProjection.h)
+add_library(OpenDesignerConstruction STATIC src/ReferenceGeometry.cpp src/ReferenceGeometry.h src/SketchDisplayBounds.cpp src/SketchDisplayBounds.h src/ConstructionGeometry.cpp src/ConstructionGeometry.h src/SketchGeometry.cpp src/SketchGeometry.h src/SketchSnapping.cpp src/SketchSnapping.h src/SketchOverdraw.cpp src/SketchOverdraw.h src/SketchConstruction.cpp src/SketchConstruction.h src/SketchProjection.cpp src/SketchProjection.h)
 target_sources(OpenDesignerConstruction PRIVATE src/SketchProfileValidation.cpp src/SketchProfileValidation.h
     src/SketchProfileBuilder.cpp src/SketchProfileBuilder.h
     src/SketchProfileExtrusion.cpp src/SketchProfileExtrusion.h src/BooleanGeometry.h
@@ -179,6 +179,9 @@ if(OPENDESIGNER_BUILD_TESTS)
     target_link_libraries(OpenDesignerSketchTests PRIVATE OpenDesignerConstruction)
     add_test(NAME sketch-geometry-storage COMMAND OpenDesignerSketchTests)
     set_tests_properties(sketch-geometry-storage PROPERTIES TIMEOUT 60)
+    add_executable(OpenDesignerReferenceGeometryTests tests/ReferenceGeometryTest.cpp)
+    target_link_libraries(OpenDesignerReferenceGeometryTests PRIVATE OpenDesignerConstruction)
+    add_test(NAME reference-geometry COMMAND OpenDesignerReferenceGeometryTests)
     add_executable(OpenDesignerConstructionTests tests/ConstructionGeometryTest.cpp)
     target_link_libraries(OpenDesignerConstructionTests PRIVATE OpenDesignerConstruction)
     add_test(NAME construction-geometry COMMAND OpenDesignerConstructionTests)
@@ -363,7 +366,7 @@ endif()
 # Keep document snapshot capture linked wherever the viewport is exercised.
 foreach(viewport_target OpenDesigner OpenDesignerPullTests OpenDesignerBooleanTests OpenDesignerMoveFaceTests OpenDesignerSelectionContextTests OpenDesignerDebugModelTests OpenDesignerDeleteFaceTests)
     if(TARGET ${viewport_target})
-        target_sources(${viewport_target} PRIVATE src/EdgeBlendOperations.cpp src/DebugExport.cpp src/DeleteFace.cpp src/ModelingErrors.cpp src/NativeDocument.cpp src/ConstructionTools.cpp src/ConstructionPanel.cpp src/SketchTools.cpp src/SketchDrawing.cpp src/SketchEllipseDrawing.cpp src/SketchDrawingPanel.cpp src/SketchOverdrawTools.cpp src/SketchOverdrawPanel.cpp src/SketchConstructionTools.cpp src/SketchConstructionPanel.cpp src/SketchProjectionTools.cpp src/SketchProjectionPanel.cpp src/SketchProfileExtrusionTools.cpp src/SketchProfileRevolutionTools.cpp)
+        target_sources(${viewport_target} PRIVATE src/EdgeBlendOperations.cpp src/DebugExport.cpp src/DeleteFace.cpp src/ModelingErrors.cpp src/NativeDocument.cpp src/ConstructionTools.cpp src/ReferencePicking.cpp src/ConstructionPanel.cpp src/SketchTools.cpp src/SketchDrawing.cpp src/SketchEllipseDrawing.cpp src/SketchDrawingPanel.cpp src/SketchOverdrawTools.cpp src/SketchOverdrawPanel.cpp src/SketchConstructionTools.cpp src/SketchConstructionPanel.cpp src/SketchProjectionTools.cpp src/SketchProjectionPanel.cpp src/SketchProfileExtrusionTools.cpp src/SketchProfileRevolutionTools.cpp)
         target_link_libraries(${viewport_target} PRIVATE OpenDesignerCylindricalMoveGeometry OpenDesignerDeleteFaceGeometry OpenDesignerDebug OpenDesignerConstruction OpenDesignerCommandPanels)
     endif()
 endforeach()

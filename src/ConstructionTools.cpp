@@ -334,7 +334,29 @@ void CadViewport::restoreConstructionPicker() {
 bool CadViewport::captureConstructionReference(const QPoint& point) {
     auto& state=*commandSession_->construction;
     if(state.pickRole<0) return false;
-    const size_t role=size_t(state.pickRole);context_->MoveTo(point.x(),point.y(),view_,Standard_True);
+    const size_t role=size_t(state.pickRole);
+    // v0.5.3: Sketch points and lines supply Point / Line / Axis operands
+    // through the shared reference picking and resolution.
+    {
+        const auto expected=definition(state.request.method).roles[role].kind;
+        if(expected==ReferenceKind::Point || expected==ReferenceKind::Line || expected==ReferenceKind::Axis) {
+            QString error;
+            const auto kinds=expected==ReferenceKind::Point?std::vector<References::Kind>{References::Kind::SketchPoint}
+                                                           :std::vector<References::Kind>{References::Kind::SketchLine};
+            if(const auto target=pickReference(point,kinds,error)) {
+                References::Resolved resolved;
+                if(!resolveReference(*target,resolved,error)) {constructionPanel_->setValid(false,error);return true;}
+                Reference ref;ref.kind=expected;
+                if(expected==ReferenceKind::Point) {ref.frame.SetLocation(*resolved.point);ref.anchor=*resolved.point;}
+                else {ref.frame=gp_Ax3(resolved.line->Location(),resolved.line->Direction());ref.anchor=resolved.point;}
+                const QString key="picked:"+QString::number(role)+":"+QString::number(state.choices[role].size());
+                const auto label=expected==ReferenceKind::Point?tr("Picked Sketch point"):tr("Picked %1").arg(resolved.label);
+                state.choices[role].push_back({key,label,{},ref});
+                constructionPanel_->roles[role]->addItem(label,key);acceptConstructionChoice(role,key);return true;
+            }
+        }
+    }
+    context_->MoveTo(point.x(),point.y(),view_,Standard_True);
     if(!context_->HasDetected()) return true;
     const auto detected=context_->DetectedInteractive();
     for(const auto& [id,presentation]:constructionPresentations_) if(detected==presentation) {

@@ -412,6 +412,7 @@ void CadViewport::resetModelingTools() {
     faceAxisSelector_->hide(); faceAlignSelector_->hide();
     cylinderMoveLabel_->hide(); cylinderMoveDirection_->hide();
     cylinderMoveAngle_->hide(); cylinderBossBoundary_->hide();
+    moveDirectionPicking_=false;moveDirectionSource_->hide();moveDirectionPick_->hide();moveDirectionReverse_->hide();moveDirectionLabel_->hide();
     faceAlignTargetLabel_->hide(); faceAlignReferenceLabel_->hide();
     emit transformModesChanged(false,false,false);
     emit selectionModeChanged(selectionMode_);
