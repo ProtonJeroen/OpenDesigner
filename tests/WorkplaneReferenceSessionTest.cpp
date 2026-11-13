@@ -25,6 +25,8 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <QMouseEvent>
 #include <BRep_Tool.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
 #include <Image_AlienPixMap.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <TopExp.hxx>
@@ -354,8 +356,21 @@ struct WorkplaneReferenceSessionTest {
         check(!v.pickReference(pixel(v,onTarget),{References::Kind::Face},error),"hidden solid supplied a reference");
         check(v.pickReference(pixel(v,gp_Pnt(150,0,0)),{References::Kind::Axis},error).has_value(),"construction Axis not available while solids are hidden");
         v.addBox();const size_t added=v.boxes_.size()-1;
-        const auto c=v.boxes_[added].presentation;check(!c->ViewAffinity()->IsVisible(v.view_->View()->Identification()),"new Part shown while 3D geometry is hidden");
-        show3D->trigger();check(v.show3DGeometry() && detectsTarget() && rendered(),"Show 3D Geometry did not restore");
+        // Behavioural check (no ViewAffinity() accessor before OCCT 7.7): the new
+        // Part is neither drawn nor pickable while 3D geometry is hidden.
+        {
+            Bnd_Box bounds;BRepBndLib::Add(v.boxes_[added].shape,bounds);double x0,y0,z0,x1,y1,z1;bounds.Get(x0,y0,z0,x1,y1,z1);
+            Bnd_Box world;world.Add(gp_Pnt(x0,y0,z0).Transformed(v.boxes_[added].orientation));world.Add(gp_Pnt(x1,y1,z1).Transformed(v.boxes_[added].orientation));
+            v.view_->FitAll(world,0.5,Standard_False); // frame the (invisible) new Part
+            const auto p=pixel(v,gp_Pnt((x0+x1)/2,(y0+y1)/2,z1).Transformed(v.boxes_[added].orientation));
+            Image_AlienPixMap image;v.view_->Redraw();check(v.view_->ToPixMap(image,v.width(),v.height()),"capture failed");
+            check(p.x()>=0 && p.y()>=0 && p.x()<int(image.SizeX()) && p.y()<int(image.SizeY()),"new Part sample outside capture");
+            check(image.PixelColor(p.x(),p.y()).GetRGB().Distance(image.PixelColor(3,3).GetRGB())<0.05,"new Part drawn while 3D geometry is hidden");
+            v.context_->MoveTo(p.x(),p.y(),v.view_,Standard_False);
+            check(!v.context_->HasDetected(),"new Part pickable while 3D geometry is hidden");v.context_->ClearDetected(Standard_False);
+        }
+        show3D->trigger();v.view_->SetProj(V3d_XposYnegZpos);v.fitAll();QApplication::processEvents();
+        check(v.show3DGeometry() && detectsTarget() && rendered(),"Show 3D Geometry did not restore");
         auto after=flags();after.pop_back();check(after==before && v.isPartVisible(added),"Show 3D Geometry changed Part visibility");
         check(!v.isPartVisible(2) && !v.context_->IsDisplayed(v.boxes_[2].presentation),"individually hidden Part reappeared");
         NativeDocumentSnapshot snapshot;check(v.exportDocumentSnapshot(snapshot) && !snapshot.parts[2].visible && snapshot.parts[0].visible,"view mode leaked into saved visibility");
