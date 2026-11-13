@@ -41,6 +41,10 @@ std::pair<Point,Point> endpoints(const PV::Curve& curve) {
     if(const auto* a=std::get_if<EllipticalArc>(&curve.geometry)) {const auto ends=ellipticalArcEndpoints(*a);return {ends[0],ends[1]};}
     if(const auto* e=std::get_if<Ellipse>(&curve.geometry)) {const auto p=ellipsePoint(*e,0);return {p,p};}
     if(const auto* s=std::get_if<Spline>(&curve.geometry)) return {s->points.front(),s->closed?s->points.front():s->points.back()};
+    if(const auto* s=std::get_if<BSpline>(&curve.geometry)) {
+        const auto c=bsplineCurve(*s);const auto a=c->Value(s->reversed?s->last:s->first),b=c->Value(s->reversed?s->first:s->last);
+        return {Point{a.X(),a.Y()},Point{b.X(),b.Y()}};
+    }
     const auto& c=std::get<Circle>(curve.geometry);const Point p{c.center.x+c.radius,c.center.y};return {p,p};
 }
 double distance(Point a,Point b) {return std::hypot(a.x-b.x,a.y-b.y);}
@@ -155,6 +159,8 @@ Result build(const SketchProfileValidation::Result& profile,const gp_Ax3& frame,
                     last=starts[i].Distance(ends[i]);curve=new Geom_Line(starts[i],gp_Dir(gp_Vec(starts[i],ends[i])));
                 } else if(const auto* s=std::get_if<Spline>(&g)) {
                     const auto c=splineCurve(*s);curve=GeomAPI::To3d(c,gp_Pln(planeFrame));first=c->FirstParameter();last=c->LastParameter();
+                } else if(const auto* s=std::get_if<BSpline>(&g)) {
+                    const auto c=bsplineCurve(*s);curve=GeomAPI::To3d(c,gp_Pln(planeFrame));first=s->first;last=s->last;reverse=s->reversed;
                 } else if(std::holds_alternative<Ellipse>(g) || std::holds_alternative<EllipticalArc>(g)) {
                     Ellipse e;
                     if(const auto* arc=std::get_if<EllipticalArc>(&g)) {

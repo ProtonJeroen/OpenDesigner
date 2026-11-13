@@ -31,7 +31,7 @@ void SketchOverdrawPanel::update(const QString& prompt,const QString& notice,con
     candidates->addItems(labels);candidates->setCurrentIndex(selected+1);candidates->setEnabled(!labels.empty());
     chooseButton->setText(hasStart?tr("Choose green piece"):tr("Use start point"));
     chooseButton->setEnabled(selected>=0);backButton->setEnabled(chosen>0 || hasStart);newStartButton->setEnabled(hasStart);
-    count_->setText(tr("%1 piece(s) chosen. OK creates independent Profile geometry.").arg(chosen));
+    count_->setText(tr("%1 piece(s) chosen. OK adds new portions and reuses existing Profile geometry.").arg(chosen));
     buttons->button(QDialogButtonBox::Ok)->setEnabled(valid);
     adjustSize();
 }

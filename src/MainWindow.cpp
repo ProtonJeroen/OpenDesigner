@@ -143,6 +143,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->populateSketchAxesMenu(*axes2D);
     auto* overdraw=sketchMenu->addAction(tr("Overdraw"));overdraw->setObjectName("sketch.overdraw");overdraw->setEnabled(false);
     connect(overdraw,&QAction::triggered,viewport_,&CadViewport::startSketchOverdraw);
+    auto* trim2D=sketchMenu->addAction(tr("Trim"));trim2D->setObjectName("sketch.trim");trim2D->setEnabled(false);
+    connect(trim2D,&QAction::triggered,viewport_,&CadViewport::startSketchTrim);
+    auto* extend2D=sketchMenu->addAction(tr("Extend"));extend2D->setObjectName("sketch.extend");extend2D->setEnabled(false);
+    connect(extend2D,&QAction::triggered,viewport_,&CadViewport::startSketchExtend);
     auto* offset2D=sketchMenu->addAction(tr("Offset Construction Line"));offset2D->setObjectName("sketch.offset_line");offset2D->setEnabled(false);
     connect(offset2D,&QAction::triggered,viewport_,[this]{viewport_->startSketchConstruction(Sketch::ConstructionTool::OffsetLine);});
     auto* tangent2D=sketchMenu->addAction(tr("Common Tangent Construction Line"));tangent2D->setObjectName("sketch.common_tangent");tangent2D->setEnabled(false);
@@ -151,7 +155,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(projection2D,&QAction::triggered,viewport_,&CadViewport::startSketchProjection);
     auto* snap2D=sketchMenu->addAction(tr("Snapping"));snap2D->setObjectName("sketch.snapping");snap2D->setCheckable(true);snap2D->setChecked(true);
     connect(snap2D,&QAction::toggled,viewport_,&CadViewport::setSketchSnapping);
-    connect(viewport_,&CadViewport::activeSketchWorkplaneChanged,this,[this,finishSketch,normalSketch,overdraw,offset2D,tangent2D,axes2D,projection2D](const QString& id) {
+    connect(viewport_,&CadViewport::activeSketchWorkplaneChanged,this,[this,finishSketch,normalSketch,overdraw,trim2D,extend2D,offset2D,tangent2D,axes2D,projection2D](const QString& id) {
+        trim2D->setEnabled(!id.isEmpty());extend2D->setEnabled(!id.isEmpty());
         projection2D->setEnabled(!id.isEmpty());
         axes2D->setEnabled(!id.isEmpty());
         finishSketch->setEnabled(!id.isEmpty());normalSketch->setEnabled(!id.isEmpty());overdraw->setEnabled(!id.isEmpty());
@@ -315,6 +320,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     sketchToolbar->addAction(horizontal2D);sketchToolbar->addAction(vertical2D);
     sketchToolbar->addAction(circle2D);sketchToolbar->addAction(arc2D);sketchToolbar->addAction(overdraw);
     sketchToolbar->insertAction(overdraw,ellipse2D);sketchToolbar->insertAction(overdraw,ellipticalArc2D);
+    sketchToolbar->addAction(trim2D);sketchToolbar->addAction(extend2D);
     sketchToolbar->addAction(axes2D->menuAction());
     sketchToolbar->addAction(offset2D);sketchToolbar->addAction(tangent2D);sketchToolbar->addAction(projection2D);sketchToolbar->addSeparator();sketchToolbar->addAction(snap2D);
     auto* pixels=new QSpinBox(sketchToolbar);pixels->setObjectName("sketchSnapPixels");pixels->setRange(1,100);pixels->setValue(viewport_->sketchSnapPixels());pixels->setSuffix(tr(" px"));

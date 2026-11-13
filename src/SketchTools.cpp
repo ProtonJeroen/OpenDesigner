@@ -4,6 +4,8 @@
 #include <QMenu>
 #include <QWidget>
 #include <QDialogButtonBox>
+#include <QLabel>
+#include <QPushButton>
 #include <Prs3d_LineAspect.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_PointAspect.hxx>
@@ -12,6 +14,7 @@
 #include <SelectMgr_Selection.hxx>
 #include <SelectMgr_SensitiveEntity.hxx>
 #include <Select3D_SensitiveEntity.hxx>
+#include <StdSelect_ViewerSelector3d.hxx>
 #include <algorithm>
 #include <Graphic3d_ZLayerId.hxx>
 
@@ -181,6 +184,15 @@ bool CadViewport::previewSketchEntities(const std::vector<Sketch::Entity>& entit
 }
 void CadViewport::finishSketchEdit(bool confirm) {
     if(!commandSession_ || commandSession_->kind!=CommandSession::Kind::Sketch) return;
+    if(confirm && commandSession_->overdraw && commandSession_->sketch->before!=sketchEntities_) {
+        emit statusMessage(tr("Overdraw sources changed. Cancel and start Overdraw again before OK."));return;
+    }
+    if(confirm && commandSession_->extend && (!commandSession_->valid || commandSession_->sketch->before!=sketchEntities_)) {
+        emit statusMessage(tr("Extend needs a valid endpoint/boundary preview on the unchanged Sketch before OK."));return;
+    }
+    if(confirm && commandSession_->trim && (!commandSession_->valid || commandSession_->sketch->before!=sketchEntities_)) {
+        emit statusMessage(tr("Trim needs a valid segment preview on the unchanged Sketch before OK."));return;
+    }
     if(confirm && commandSession_->drawing && (Sketch::ellipseTool(commandSession_->drawing->tool) || Sketch::orthogonalLineTool(commandSession_->drawing->tool)) && sketchDrawingPanel_)
         sketchDrawingPanel_->finishEditing();
     if(confirm && commandSession_->projection && !confirmSketchProjection()) return;
@@ -196,8 +208,12 @@ void CadViewport::finishSketchEdit(bool confirm) {
     }
     const auto change=commandSession_->sketch;
     const auto projection=commandSession_->projection;
+    const bool curveCommand=commandSession_->trim || commandSession_->extend || commandSession_->overdraw;
     closeSketchProjectionPanel();
     closeSketchDrawingPanel();closeOverdrawPanel();closeSketchConstructionPanel();clearSketchFeedback();
+    if(sketchTrimPrompt_) sketchTrimPrompt_->hide();
+    if(sketchExtendPrompt_) sketchExtendPrompt_->hide();
+    commandButtons_->button(QDialogButtonBox::Ok)->setEnabled(true);
     commandSession_.reset();
     for(const auto& [id,p]:sketchPreviews_) context_->Remove(p,Standard_False);
     sketchPreviews_.clear();commandPanel_->hide();commandButtons_->hide();
@@ -212,7 +228,9 @@ void CadViewport::finishSketchEdit(bool confirm) {
         }
         rebuildSketchPresentations();
     }
-    refreshSketchPicking(activeSketchWorkplaneId_.isEmpty());view_->Redraw();
+    refreshSketchPicking(activeSketchWorkplaneId_.isEmpty());
+    if(curveCommand) {context_->ClearDetected(Standard_False);context_->MainSelector()->ClearPicked();}
+    view_->Redraw();
 }
 void CadViewport::selectSketchEntities(const QStringList& ids) {
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Revolve) {

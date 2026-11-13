@@ -183,6 +183,9 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     connect(cancelDimension_, &QShortcut::activated, this, &CadViewport::cancelCommandSession);
     commandPanelPositioner_->manage(commandPanel_,true);
     const auto invalidateProjection=[this] {
+        if(commandSession_ && commandSession_->overdraw) {cancelCommandSession();emit statusMessage(tr("Overdraw cancelled because the model changed."));return;}
+        if(commandSession_ && commandSession_->extend) {cancelCommandSession();emit statusMessage(tr("Extend cancelled because the model changed."));return;}
+        if(commandSession_ && commandSession_->trim) {cancelCommandSession();emit statusMessage(tr("Trim cancelled because the model changed."));return;}
         if(commandSession_ && commandSession_->sweep) {cancelCommandSession();emit statusMessage(tr("Profile sweep cancelled because the model changed."));return;}
         if(commandSession_ && commandSession_->projection) {
             cancelCommandSession();emit statusMessage(tr("Project 3D Geometry cancelled because the model changed."));
@@ -2542,6 +2545,8 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
             return;
         }
         if(sketchProjectionClick(e->pos(),e->modifiers())) return;
+        if(sketchTrimClick(e->pos())) return;
+        if(sketchExtendClick(e->pos())) return;
         if(sketchConstructionClick(e->pos())) return;
         if(overdrawClick(e->pos())) return;
         if(sketchDrawingClick(e->pos(),e->modifiers())) return;
@@ -2928,7 +2933,7 @@ void CadViewport::setSnapStep(double stepMm) {
         : tr("Face snapping disabled."));
 }
 void CadViewport::mouseMoveEvent(QMouseEvent* e) {
-    if(!rotating_ && !panning_ && (sketchConstructionMove(e->pos()) || overdrawMove(e->pos()) || sketchDrawingMove(e->pos(),e->modifiers()))) return;
+    if(!rotating_ && !panning_ && (sketchTrimMove(e->pos()) || sketchExtendMove(e->pos()) || sketchConstructionMove(e->pos()) || overdrawMove(e->pos()) || sketchDrawingMove(e->pos(),e->modifiers()))) return;
     if (view_.IsNull()) return;
     QPoint p = e->pos();
     if(constructionMouseMove(p,e->modifiers())) return;

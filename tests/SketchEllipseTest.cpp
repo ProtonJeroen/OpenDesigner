@@ -136,9 +136,11 @@ void safeTools() {
         Geometry offset=Segment{};const auto old=offset;std::vector<CommonTangent> tangents;
         check(!offsetConstructionLine(e.geometry,2,LineOutput::Finite,{},offset,error) && offset==old,"ellipse became an offset line");
         check(!commonTangents(e.geometry,Circle{{},3},tangents,error),"ellipse became circular tangent source");
-        OverdrawGraph graph;check(!overdrawCandidates({e},e.workplaneId,graph,error) && error.contains("elliptic Overdraw"),"unsupported conic not diagnosed by Overdraw");
+        OverdrawGraph graph;
+        if(std::holds_alternative<Ellipse>(e.geometry)) check(!overdrawCandidates({e},e.workplaneId,graph,error) && error.contains("two distinct"),"uncut ellipse needs certified boundaries");
+        else check(overdrawCandidates({e},e.workplaneId,graph,error) && graph.pieces.size()==1 && graph.pieces[0].geometry==e.geometry,"bounded elliptic Overdraw changed exact values");
         auto line=entity(Segment{{-20,-10},{20,-10}});
-        check(overdrawCandidates({e,line},e.workplaneId,graph,error) && graph.pieces.size()==1 && graph.notice.contains("elliptic Overdraw"),"ellipse broke existing Overdraw line workflow");
+        check(overdrawCandidates({e,line},e.workplaneId,graph,error) && graph.pieces.size()==(std::holds_alternative<Ellipse>(e.geometry)?1:2),"ellipse broke existing Overdraw line workflow");
         const SketchProjection::Source vertex{BRepBuilderAPI_MakeVertex(gp_Pnt(1,2,3)).Shape(),{},"vertex"};
         const auto result=SketchProjection::project({vertex},plane(),{e});
         check(result.success && result.additions.size()==1,"existing ellipse incorrectly blocked independent point projection");

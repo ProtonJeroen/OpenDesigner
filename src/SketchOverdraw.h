@@ -2,11 +2,13 @@
 #include "SketchSnapping.h"
 
 namespace Sketch {
-// Evaluated command data only. Source IDs never enter the resulting profiles.
+// Evaluated command data only. New Profiles remain independent of sources;
+// existing Profile IDs are retained when their covered geometry is reused.
 struct OverdrawPiece {
     Geometry geometry;
     size_t start=0,end=0;
     QString sourceId;
+    QString existingProfileId; // Covered portion: reuse this unchanged canonical entity.
 };
 struct OverdrawGraph {
     std::vector<Point> nodes;

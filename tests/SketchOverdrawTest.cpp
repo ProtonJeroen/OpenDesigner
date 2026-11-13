@@ -77,10 +77,10 @@ int main(int argc,char** argv) {
         refused({infinite,left},"No finite");refused({c},"two distinct");
         refused({source(Segment{{},{}} ,"zero")},"degenerate");
         refused({source(Segment{{0,0},{1.e-8,0}},"tiny")},"No finite");
-        auto duplicate=h;duplicate.id="duplicate";refused({h,duplicate},"coincident");
-        duplicate.geometry=Segment{{-1,0},{3,0}};refused({h,duplicate},"overlapping");
-        duplicate=c;duplicate.id="duplicate";refused({c,duplicate},"coincident");
-        duplicate=arc;duplicate.id="duplicate";refused({arc,duplicate},"coincident");
+        auto duplicate=h;duplicate.id="duplicate";graph({h,duplicate},1);
+        duplicate.geometry=Segment{{-1,0},{3,0}};graph({h,duplicate},3);
+        duplicate=c;duplicate.id="duplicate";refused({c,duplicate},"two distinct");
+        duplicate=arc;duplicate.id="duplicate";graph({arc,duplicate},1);
         duplicate=h;duplicate.geometry=Segment{{0,0},{0,1}};refused({h,duplicate},"identity");
         auto a=source(Arc{{0,0},2,0,pi/2},"a"),b=a;b.id="b";b.geometry=Arc{{0,0},2,pi/2,pi/2};graph({a,b},2);
         auto hidden=v;hidden.visible=false;auto locked=v;locked.selectable=false;auto profile=v;profile.role=Role::Profile;auto other=v;other.workplaneId="other";

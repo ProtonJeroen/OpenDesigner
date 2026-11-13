@@ -46,7 +46,7 @@ void testSpline() {
         check(!valid(entity("bad",bad),error),"invalid spline accepted");
     auto bad=periodic;bad.startTangent=Point{1,0};check(!valid(entity("bad",bad),error),"periodic tangent ambiguity accepted");
     auto construction=e;construction.role=Role::Construction;OverdrawGraph graph;
-    check(!overdrawCandidates({construction},"wp",graph,error) && graph.pieces.empty() && error.contains("spline Overdraw"),"unsupported spline Overdraw was approximated or misdiagnosed");
+    check(overdrawCandidates({construction},"wp",graph,error) && graph.pieces.size()==1 && graph.pieces[0].geometry==e.geometry,"whole spline Overdraw changed its exact original values");
     const auto targets=snapTargets({e},"wp",{5,5});size_t through=0;
     for(const auto& target:targets) if(target.reference) {
         const auto resolved=resolvePoint({e},*target.reference,error);check(resolved && *resolved==target.point,"spline snap/reference mismatch");
