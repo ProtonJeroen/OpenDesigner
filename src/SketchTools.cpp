@@ -87,7 +87,7 @@ void CadViewport::refreshWorkplaneDisplay() {
     if(changed && !view_.IsNull()) view_->ZFitAll();
 }
 void CadViewport::displaySketchPresentation(const Sketch::Entity& entity,const Construction::Object& owner,const Handle(AIS_Shape)& presentation,bool preview) {
-    if(!entity.visible || !owner.visible) return;
+    if(!entity.visible || !constructionShown(owner)) return;
     context_->Display(presentation,Standard_False);
     context_->SetDisplayMode(presentation,AIS_WireFrame,Standard_False);
     context_->Deactivate(presentation);
@@ -102,7 +102,7 @@ void CadViewport::displaySketchPresentation(const Sketch::Entity& entity,const C
 }
 bool CadViewport::sketchPickable(const Sketch::Entity& entity) const {
     const auto* owner=constructionObject(entity.workplaneId);
-    return owner && owner->visible && owner->selectable && entity.visible && entity.selectable
+    return owner && constructionShown(*owner) && owner->selectable && entity.visible && entity.selectable
         && (activeSketchWorkplaneId_.isEmpty() || entity.workplaneId==activeSketchWorkplaneId_);
 }
 void CadViewport::clearSketchSelection() {

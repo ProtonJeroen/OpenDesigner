@@ -518,6 +518,50 @@ void CadViewport::setShow3DGeometry(bool show) {
     show3DGeometry_=show;applyViewModes();emit viewModesChanged();
     emit statusMessage(show?tr("3D geometry shown."):tr("3D geometry hidden (view only); Part visibility is unchanged."));
 }
+bool CadViewport::constructionShown(const Construction::Object& object) const {
+    return object.visible && (showWorkplanes_ || object.kind!=Construction::Kind::Workplane);
+}
+void CadViewport::setShowWorkplanes(bool show) {
+    if(showWorkplanes_==show) return;
+    initializeViewer();
+    // Never keep editing geometry that is about to become invisible.
+    if(!show) {endSketchEditing();cancelCommandSession();}
+    showWorkplanes_=show;
+    if(!show) {
+        // Hidden Workplanes and their Sketches cannot stay selected.
+        QStringList kept;
+        for(const auto& id:selectedConstructionIds_) if(const auto* o=constructionObject(id);o && o->kind!=Construction::Kind::Workplane) kept.push_back(id);
+        if(kept!=selectedConstructionIds_) {selectedConstructionIds_=kept;emit constructionSelectionChanged(kept);}
+        clearSketchSelection();
+    }
+    // Presentation only: Display/Erase the existing presentations. Objects
+    // whose own visible flag is off are never displayed, so individually
+    // hidden Workplanes and Sketch entities stay hidden after showing again.
+    // Part selection is not touched.
+    if(!context_.IsNull()) {
+        context_->ClearDetected(Standard_False);
+        for(const auto& o:constructions_) if(o.kind==Construction::Kind::Workplane && o.visible) {
+            const auto p=constructionPresentations_.find(o.id);const auto label=constructionLabels_.find(o.id);
+            if(p==constructionPresentations_.end() || label==constructionLabels_.end()) continue;
+            if(show) {
+                context_->Display(label->second,0,-1,Standard_False);context_->Deactivate(label->second);
+                context_->Display(p->second,Standard_False);context_->Deactivate(p->second);
+                if(o.selectable && activeSketchWorkplaneId_.isEmpty()) context_->Activate(p->second,AIS_Shape::SelectionMode(TopAbs_EDGE),Standard_False);
+            } else {
+                if(context_->IsSelected(p->second)) context_->AddOrRemoveSelected(p->second,Standard_False);
+                context_->Erase(label->second,Standard_False);context_->Erase(p->second,Standard_False);
+            }
+        }
+        for(const auto& e:sketchEntities_) if(const auto it=sketchPresentations_.find(e.id);it!=sketchPresentations_.end()) {
+            if(!show) {context_->Erase(it->second,Standard_False);continue;}
+            if(const auto* owner=constructionObject(e.workplaneId)) displaySketchPresentation(e,*owner,it->second);
+        }
+        if(show) {updateConstructionLabels();if(!activeSketchWorkplaneId_.isEmpty()) refreshSketchPicking();}
+        view_->Invalidate();view_->Redraw();
+    }
+    emit viewModesChanged();
+    emit statusMessage(show?tr("Workplanes shown."):tr("Workplanes and their Sketches hidden (view only); Workplane and Sketch visibility is unchanged."));
+}
 void CadViewport::initializeViewer() {
     if (!view_.IsNull()) return;
     display_ = new Aspect_DisplayConnection();
@@ -529,8 +573,14 @@ void CadViewport::initializeViewer() {
     // View-level Hide 3D Geometry: one filter keeps hidden solids out of every
     // detection/selection path without touching per-Part visibility.
     context_->AddFilter(new HiddenSolidFilter([this](const Handle(SelectMgr_SelectableObject)& object) {
-        if(show3DGeometry_) return false;
-        return std::any_of(boxes_.begin(),boxes_.end(),[&](const CadPart& part){return part.presentation==object;});
+        if(!show3DGeometry_ && std::any_of(boxes_.begin(),boxes_.end(),[&](const CadPart& part){return part.presentation==object;})) return true;
+        // View-level Hide Workplanes: frames and Sketch geometry are not
+        // displayed; this filter is the second guard on every pick path.
+        if(showWorkplanes_) return false;
+        for(const auto& [id,p]:sketchPresentations_) if(p==object) return true;
+        for(const auto& o:constructions_) if(o.kind==Construction::Kind::Workplane)
+            if(const auto it=constructionPresentations_.find(o.id);it!=constructionPresentations_.end() && it->second==object) return true;
+        return false;
     }));
     configureSelectionHighlights();
     view_ = viewer_->CreateView();
@@ -1218,13 +1268,13 @@ void CadViewport::fitAll() {
     const bool visiblePart=std::any_of(boxes_.begin(),boxes_.end(),[](const auto& part){return part.active && part.visible;});
     if(!visiblePart && !constructions_.empty()) {
         Bnd_Box bounds;
-        for(const auto& object:constructions_) if(object.visible) for(const auto& point:constructionDisplayCorners(object)) {
+        for(const auto& object:constructions_) if(constructionShown(object)) for(const auto& point:constructionDisplayCorners(object)) {
             const double e=object.kind==Construction::Kind::Point?5.0:0;
             bounds.Add(point.Translated(gp_Vec(-e,-e,-e)));bounds.Add(point.Translated(gp_Vec(e,e,e)));
         }
         for(const auto& entity:sketchEntities_) if(entity.visible) {
             const auto* owner=constructionObject(entity.workplaneId);
-            if(owner && owner->visible && sketchPresentations_.contains(entity.id)) BRepBndLib::Add(sketchPresentations_.at(entity.id)->Shape(),bounds);
+            if(owner && constructionShown(*owner) && sketchPresentations_.contains(entity.id)) BRepBndLib::Add(sketchPresentations_.at(entity.id)->Shape(),bounds);
         }
         if(!bounds.IsVoid()) {view_->FitAll(bounds,0.05,Standard_False);stabilizeViewCamera();view_->ZFitAll();updateConstructionLabels();view_->Redraw();}
         return;
@@ -1517,7 +1567,7 @@ bool CadViewport::importDocumentSnapshot(const NativeDocumentSnapshot& snapshot,
         for(const auto& object:snapshot.constructions) {
             auto presentation=constructionPresentation(object,false,&snapshot.sketchEntities);importedConstructions[object.id]=presentation;
             auto label=constructionLabel(object);importedLabels[object.id]=label;
-            if(object.visible) {
+            if(constructionShown(object)) { // view-level Hide Workplanes survives New/Open
                 context_->Display(label,0,-1,Standard_False);context_->Deactivate(label);
                 context_->Display(presentation,Standard_False);context_->Deactivate(presentation);
                 if(object.selectable) context_->Activate(presentation,object.kind==Construction::Kind::Workplane?AIS_Shape::SelectionMode(TopAbs_EDGE):0,Standard_False);
@@ -2616,7 +2666,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
                 if (rotateMode_) updateRotationRings();
             }
             emit partSelectionChanged(selectedPartIndices_);
-            for(const auto& object:constructions_) if(object.visible && object.selectable)
+            for(const auto& object:constructions_) if(constructionShown(object) && object.selectable)
                 context_->Activate(constructionPresentations_.at(object.id),object.kind==Construction::Kind::Workplane?AIS_Shape::SelectionMode(TopAbs_EDGE):0,Standard_False);
             for(const auto& entity:sketchEntities_) if(sketchPickable(entity)) context_->Activate(sketchPresentations_.at(entity.id),0,Standard_False);
             const int count = static_cast<int>(selectedPartIndices_.size());

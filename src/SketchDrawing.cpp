@@ -35,6 +35,8 @@ bool CadViewport::activateSketchWorkplane(const QString& requested) {
         emit statusMessage(tr("Create or select a visible, unlocked Workplane first (Modeling → Construction Geometry → Workplane)."));return false;
     }
     cancelCommandSession();initializeViewer();clearHistorySelection();
+    // Activation / Edit Sketch never edits invisible geometry (v0.5.4).
+    if(!showWorkplanes_) setShowWorkplanes(true);
     activeSketchWorkplaneId_=id;refreshSketchPicking();updateConstructionLabels();
     emit activeSketchWorkplaneChanged(id);
     emit statusMessage(tr("2D editing: %1. Choose Line, Circle, Arc, Ellipse, Elliptical Arc or Infinite Line. Finish 2D returns to 3D picking.").arg(owner->name));return true;
@@ -68,7 +70,7 @@ void CadViewport::refreshSketchPicking(bool restore3D) {
     }
     for(const auto& o:constructions_) if(constructionPresentations_.contains(o.id)) {
         auto p=constructionPresentations_.at(o.id);context_->Deactivate(p);
-        if(!editing && o.visible && o.selectable) context_->Activate(p,o.kind==Construction::Kind::Workplane?AIS_Shape::SelectionMode(TopAbs_EDGE):0,Standard_False);
+        if(!editing && constructionShown(o) && o.selectable) context_->Activate(p,o.kind==Construction::Kind::Workplane?AIS_Shape::SelectionMode(TopAbs_EDGE):0,Standard_False);
     }
     for(const auto& e:sketchEntities_) if(sketchPresentations_.contains(e.id)) {
         auto p=sketchPresentations_.at(e.id);context_->Deactivate(p);

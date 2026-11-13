@@ -32,6 +32,9 @@ References::Model CadViewport::referenceModel() const {
         model.parts.push_back({partId(i),part.name,part.shape,part.orientation,part.visible});
     }
     model.constructions=constructions_;model.sketches=sketchEntities_;
+    // View-level Hide Workplanes: the resolver refuses Workplanes and their
+    // Sketch geometry with the existing hidden-reference diagnostics.
+    if(!showWorkplanes_) for(auto& o:model.constructions) if(o.kind==Construction::Kind::Workplane) o.visible=false;
     return model;
 }
 bool CadViewport::resolveReference(const References::Target& target,References::Resolved& result,QString& error) const {
@@ -45,7 +48,7 @@ std::optional<References::Target> CadViewport::pickReference(const QPoint& pixel
     const auto project=[&](const gp_Pnt& p){int x,y;view_->Convert(p.X(),p.Y(),p.Z(),x,y);return Sketch::Point{double(x),double(y)};};
     const double radius=sketchSnapPixels_;
     const auto visibleWorkplane=[&](const QString& id)->const Construction::Object* {
-        const auto* wp=constructionObject(id);return wp && wp->kind==Construction::Kind::Workplane && wp->visible?wp:nullptr;
+        const auto* wp=constructionObject(id);return wp && wp->kind==Construction::Kind::Workplane && constructionShown(*wp)?wp:nullptr;
     };
     // 1. Sketch points: exactly the cursor-independent Sketch snap targets.
     if(accepts(Kind::SketchPoint)) {
@@ -103,7 +106,7 @@ std::optional<References::Target> CadViewport::pickReference(const QPoint& pixel
     }
     for(const auto& o:constructions_) if(constructionPresentations_.contains(o.id)) {
         const auto& p=constructionPresentations_.at(o.id);context_->Deactivate(p);
-        if(o.kind==Construction::Kind::Workplane && accepts(Kind::Workplane) && o.visible && o.selectable)
+        if(o.kind==Construction::Kind::Workplane && accepts(Kind::Workplane) && constructionShown(o) && o.selectable)
             context_->Activate(p,AIS_Shape::SelectionMode(TopAbs_EDGE),Standard_False);
     }
     context_->MoveTo(pixel.x(),pixel.y(),view_,Standard_False);
@@ -127,7 +130,7 @@ std::optional<References::Target> CadViewport::pickReference(const QPoint& pixel
     }
     for(const auto& o:constructions_) if(constructionPresentations_.contains(o.id)) {
         const auto& p=constructionPresentations_.at(o.id);context_->Deactivate(p);
-        if(activeSketchWorkplaneId_.isEmpty() && o.visible && o.selectable)
+        if(activeSketchWorkplaneId_.isEmpty() && constructionShown(o) && o.selectable)
             context_->Activate(p,o.kind==Construction::Kind::Workplane?AIS_Shape::SelectionMode(TopAbs_EDGE):0,Standard_False);
     }
     if(!result) error=tr("No supported reference at this position.");

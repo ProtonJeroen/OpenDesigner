@@ -243,9 +243,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* show3D=viewMenu->addAction(tr("Show &3D Geometry"));show3D->setObjectName("view.show_3d");show3D->setCheckable(true);show3D->setChecked(true);
     show3D->setToolTip(tr("Temporarily show or hide all solids without changing Part visibility"));
     connect(show3D,&QAction::toggled,viewport_,[this](bool on){viewport_->setShow3DGeometry(on);});
-    connect(viewport_,&CadViewport::viewModesChanged,this,[this,shaded,wireframe,show3D] {
-        const QSignalBlocker a(shaded),b(wireframe),c(show3D);
+    // v0.5.4: same pattern for Workplane frames and their Sketches.
+    auto* showWorkplanes=viewMenu->addAction(tr("Show W&orkplanes"));showWorkplanes->setObjectName("view.show_workplanes");
+    showWorkplanes->setCheckable(true);showWorkplanes->setChecked(true);
+    showWorkplanes->setToolTip(tr("Temporarily show or hide all Workplanes and their Sketches without changing their visibility; Axes and Points stay visible"));
+    connect(showWorkplanes,&QAction::toggled,viewport_,[this](bool on){viewport_->setShowWorkplanes(on);});
+    connect(viewport_,&CadViewport::viewModesChanged,this,[this,shaded,wireframe,show3D,showWorkplanes] {
+        const QSignalBlocker a(shaded),b(wireframe),c(show3D),d(showWorkplanes);
         wireframe->setChecked(viewport_->wireframe());shaded->setChecked(!viewport_->wireframe());show3D->setChecked(viewport_->show3DGeometry());
+        showWorkplanes->setChecked(viewport_->showWorkplanes());
     });
     viewMenu->addSeparator();
     // Explicit camera alignment; activating a Workplane never moves the camera.
@@ -279,7 +285,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     toolbar->addAction(interactiveRotate);
     toolbar->addAction(directMove);
     toolbar->addAction(fitAction);
-    toolbar->addAction(shaded);toolbar->addAction(wireframe);toolbar->addAction(show3D);
+    toolbar->addAction(shaded);toolbar->addAction(wireframe);toolbar->addAction(show3D);toolbar->addAction(showWorkplanes);
     toolbar->addSeparator();
     toolbar->addAction(undoAction);
     toolbar->addAction(redoAction);
