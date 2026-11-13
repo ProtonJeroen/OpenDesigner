@@ -8,6 +8,8 @@
 #include <TopoDS.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepGProp.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <Adaptor3d_Curve.hxx>
 #include <BRep_Builder.hxx>
 #include <GProp_GProps.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
@@ -25,10 +27,22 @@ inline bool validSolid(const TopoDS_Shape& shape, double& volume) {
     for(TopExp_Explorer shell(shape,TopAbs_SHELL);shell.More();shell.Next())
         if(!BRep_Tool::IsClosed(shell.Current())) return false;
     GProp_GProps properties;
-    // Gauss-Kronrod integration resolves knot spans of exact spline boundaries;
-    // fixed quadrature can return a plausible but incorrect positive volume.
-    const double integrationError=BRepGProp::VolumePropertiesGK(shape,properties,1.e-12,false,true);
-    if(!std::isfinite(integrationError) || integrationError<0) return false;
+    // Resolve knot spans for spline-based solids. Analytic solids retain the
+    // established integration path: applying GK to their many trimmed faces
+    // is needlessly expensive in repeated direct-modeling validations.
+    bool splineSurface=false;
+    for(TopExp_Explorer faces(shape,TopAbs_FACE);faces.More() && !splineSurface;faces.Next()) {
+        BRepAdaptor_Surface surface(TopoDS::Face(faces.Current()));const auto type=surface.GetType();
+        splineSurface=type==GeomAbs_BSplineSurface || type==GeomAbs_BezierSurface;
+        if(type==GeomAbs_SurfaceOfExtrusion || type==GeomAbs_SurfaceOfRevolution) {
+            const auto basis=surface.BasisCurve();
+            splineSurface=!basis.IsNull() && (basis->GetType()==GeomAbs_BSplineCurve || basis->GetType()==GeomAbs_BezierCurve);
+        }
+    }
+    if(splineSurface) {
+        const double integrationError=BRepGProp::VolumePropertiesGK(shape,properties,1.e-12,false,true);
+        if(!std::isfinite(integrationError) || integrationError<0) return false;
+    } else BRepGProp::VolumeProperties(shape,properties);
     volume = properties.Mass();
     return std::isfinite(volume) && volume > 1.0e-12;
 }

@@ -58,8 +58,10 @@ orientation, source edge count, planar face validity, nesting, area and the
 existing vertex tolerance (default 1e-7 mm). No tolerance is relaxed and no shape
 healing is added. Extrude and Revolve use these same certified faces and their
 existing volume, solid-count and interference checks. Shared volume measurement
-uses Gauss–Kronrod integration with knot spans; source-face area and centroid
-measurement uses adaptive integration. This improves integration accuracy without
+uses Gauss–Kronrod integration with knot spans for spline/Bézier surfaces and
+sweeps based on spline/Bézier curves. Analytic solids retain the established
+integration path so repeated direct-modeling validation remains efficient.
+Source-face area and centroid measurement uses adaptive integration. This improves integration accuracy without
 relaxing the geometric acceptance tolerances. Revolve retains its
 in-plane axis, same-side and no pinched-solid restrictions.
 
@@ -115,7 +117,9 @@ certification, exact rational edge projection and native round trips.
 editor, Preview/Cancel/OK, one-step history, stable IDs and native persistence.
 Existing profile tests add exact rotated ellipse/arc area, holes, arbitrary
 Workplane frames and elliptic Revolve volume. Existing projection, ellipse,
-reference and native-document regressions remain applicable.
+reference and native-document regressions remain applicable. Projection panel
+placement sessions run serially on the shared X display, retaining their full
+assertions and timeouts, as the existing command-panel positioning tests do.
 
 ## Manual Fedora KDE / Wayland acceptance (pending)
 
