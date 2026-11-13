@@ -805,20 +805,206 @@ Sketch and projected-geometry references during design and acceptance.
   (v0.5.3: stale/deleted/hidden references are refused, never rebound.)
 
 ## Next milestones
-- v0.5.2 conical Fillet/Chamfer: manual Fedora KDE/Wayland acceptance (FILLET_CHAMFER.md)
-- v0.5.3: Workplane, reference and Sketch geometry foundations above (implemented;
-  manual Fedora KDE/Wayland acceptance pending, see WORKPLANE_REFERENCES.md)
-- v0.5.4: view-level Show/Hide Workplanes and Move Face by Points (implemented;
-  manual Fedora KDE/Wayland acceptance pending, see WORKPLANE_REFERENCES.md and
-  MOVE_FACE.md)
-- v0.5.5: Advanced Sketch Curves implemented within the [documented supported
-  scope](ADVANCED_SKETCH_CURVES.md); projected B-spline Profile certification,
-  general curve Overdraw and manual Fedora acceptance remain follow-ups.
-- Sweep (including 3D spline paths), then Loft, after the foundation gates
-- Broader cylindrical-face movement (holes and bosses) beyond the certified v0.4.9 scope
-- Assemblies and 3D copilot
-- STEP, IGES, STL
-- GLB/glTF and FBX import/export
+
+- v0.5.5: advanced Sketch curves — **implemented and merged** (PR #76);
+  7/7 user-reported manual acceptance categories passed; 110/110 Linux CI
+  tests passed. Known limits of projected coefficient B-splines, interactive
+  Trim/Extend and elliptical/spline intersection-based Overdraw remain.
+- **v0.5.6 (next priority): SolidDesigner-style interactive Trim, Extend and
+  Overdraw** for Sketch curves and exact projections, especially oblique
+  projected ellipses (detailed scope below).
+- **v0.5.7: shared geometry-first B-Rep reconstruction foundation**
+  for Move Face, Rotate Face, Pull/Resize and Delete Face, including complex
+  extruded ellipse/spline profiles and holes; consolidate proven specialized
+  reconstruction paths without reducing certified coverage.
+- **v0.5.8: advanced Hole Editing** on current B-Reps, regardless of whether
+  the opening originated from Sketch/Remove Material, Boolean or STEP import.
+- Sweep (including 3D spline paths), then Loft, after the interactive curve
+  editing and B-Rep reconstruction foundation is sufficiently validated.
+- Broader cylindrical-face movement (holes and bosses) beyond the certified
+  v0.4.9 scope, coordinated with v0.5.7–v0.5.8.
+- Assemblies, exact geometry-based alignment and 3D copilot.
+- STEP, IGES, STL; subsequently GLB/glTF and FBX import/export.
+- Cross-platform desktop packaging; initial iPadOS/Android mouse-and-keyboard
+  technical builds, then opt-in touch/stylus mode.
+
+Version numbers 0.5.6–0.5.8 are **proposed development milestones**, not
+claims of delivered functionality. The three milestones below are now explicit
+priority requirements; each must follow the existing geometry-first, current-
+B-Rep and conservative-certification principles.
+
+## Planned — v0.5.6 Interactive Trim, Extend and Overdraw
+
+**Goal:** reproduce the practical CoCreate SolidDesigner 15.50 workflow:
+select Trim/Extend, pick the unwanted curve portion or target, and perform
+a predictable geometry edit without manually entering angular parameter
+intervals. Existing v0.5.5 *Edit Curve / Trim Parameters* remains available,
+but it is not considered a complete interactive Trim implementation.
+
+- [ ] **Trim** Sketch lines, arcs, circles, ellipses/elliptic arcs and certified
+  2D interpolating/B-spline segments at geometric intersection points. A click
+  on a curve span identifies the portion to remove; support clear choice
+  between multiple intersections, complete-circle/ellipse split behavior,
+  tangent contacts and closed/open result policy.
+- [ ] **Extend** supported open curves to an explicitly selected boundary or
+  nearest unambiguous intersection, extending the underlying exact support
+  rather than adding an unrelated polyline. Refuse non-unique, unbounded or
+  geometrically invalid extensions with an actionable diagnostic.
+- [ ] **Overdraw** (SolidDesigner-style) existing or projected geometry using
+  exact analytic/parametric supports; add intersection-aware snapping and
+  segment reuse/splitting without creating coincident duplicate edges.
+  Keep Sketch versus Construction roles explicit and predictable.
+- [ ] **Oblique projection of circles/ellipses**: project solid edges, trimmed
+  curves and supported face boundaries into a rotated/translated Workplane.
+  Preserve exact elliptical curves (including correct axes, placement,
+  parameter direction, trims and reversal) where the orthogonal projection
+  is nondegenerate; do not silently approximate them as polylines.
+- [ ] Extend curve–curve intersection and Overdraw certification to supported
+  ellipse/ellipse, line/ellipse, circle/ellipse and B-spline combinations.
+  State which tangencies, overlaps and near-coincident cases are supported;
+  reject uncertifiable solutions atomically.
+- [ ] Reuse the v0.5.3 shared reference resolver/picker, Workplane-local
+  coordinates, v0.5.5 curve storage and certified Profile Builder. Preserve
+  Preview, OK/Cancel, Undo/Redo, stable entity IDs where applicable,
+  duplication, transformed Workplanes, visibility/locks and native Save/Open.
+- [ ] Validate resulting mixed open/closed contours, holes, self-intersections
+  and downstream Extrude/Revolve. Never sacrifice exactness or weaken OCCT
+  validity/tolerance requirements to get apparent sketch closure.
+- [ ] Add focused exact-geometry and Qt session regressions, including the
+  user case of a circular hole projected obliquely onto a second Workplane;
+  manual Fedora KDE/Wayland 100% and 200% acceptance.
+
+## Planned — v0.5.7 Shared B-Rep Reconstruction Architecture & Advanced Face Editing
+
+**Architectural priority:** new Sketch curves or solid types must not require
+five independent direct-modeling implementations. Introduce a shared, geometry-
+first reconstruction infrastructure reused by Move Face, Rotate Face,
+Pull/Resize and Delete Face. It must operate on the current B-Rep, independent
+of original primitives, Sketch/Extrude history and imported provenance. This
+is a staged, conservative capability target: no claim that every arbitrary
+freeform or multi-shell B-Rep can be modified.
+
+### Reusable reconstruction pipeline
+
+- [ ] **Recognition:** identify the actual selected Faces/Edges, underlying
+  planes/cylinders/cones/ruled/extruded/elliptic and supported B-spline surfaces,
+  orientations, trims, inner wires, material side and adjacency. Separate the
+  user operation's intent from reconstruction mechanics and feature provenance.
+- [ ] **Affected neighborhood:** derive the minimal support and topology region
+  affected by a change, including adjacent curved walls, holes, blends, and
+  nearby boundaries. Preserve unselected material and other features.
+- [ ] **Surface transformation and intersection:** move/rotate/offset/resize or
+  remove the selected support; construct intersections with surviving or
+  suitably extended neighboring supports using exact OCCT curves/surfaces
+  where certifiable, including oblique trims; never silently polygonize.
+- [ ] **Topology reconstruction:** rebuild valid wires, bounded Faces, shells
+  and solids; permit certified face splits, merges and disappearance; map
+  surviving topology to source geometry for selection, identifiers, appearance
+  and later edits. Refuse ambiguous alternatives rather than guessing.
+- [ ] **Independent material/shape certification:** check B-Rep validity,
+  orientation, manifold closure, tolerance, volume/material occupancy,
+  unchanged regions and operation-specific geometric intent. No broad,
+  uncontrolled shape healing or relaxation of established tolerances.
+- [ ] **Shared transaction adapter:** all four command families reuse the
+  existing blue candidate preview, exact numeric/geometry-reference input,
+  Cancel/OK, history and native persistence. Failed or unsupported operations
+  leave model, identities, references and Undo history unchanged.
+
+### Consolidation and required regression geometry
+
+- [ ] Audit existing `BRepReconstruction`, `MoveFaceGeometry`, cylindrical
+  hole/boss adapters, conical/blend recipes, Rotate/Delete paths and
+  `ModelingOperation`. Identify transferable algorithms and duplicated
+  recognition, adjacency, certification and topology-mapping logic; migrate
+  incrementally with compatibility tests instead of wholesale rewrites.
+- [ ] Independently test each supported operation on equivalent current B-Reps
+  from different creation routes (Sketch Extrude/Remove Material, Booleans,
+  imported B-Reps when available), without reliance on feature-history tags.
+- [ ] Include five synthetic scenario families: (1) six-face box;
+  (2) cylinder with/without a hole; (3) elliptical extrusion;
+  (4) rounded extrusion with an inner cylindrical hole on oblique Workplanes
+  matching the user-reported case; (5) spline-profile extrusion with multiple
+  inner wires. Exercise Move Face, Rotate Face, Pull/Resize and Delete Face,
+  and distinguish independently certified results from precise safe refusals.
+- [ ] Guard transforms, duplication, reversed edges, different Workplanes,
+  HiDPI selection, Save/Open, Undo/Redo, stale references and failure atomicity.
+  Track coverage *by operation and geometry family*, not a single feature-wide
+  PASS label; avoid promising unsupported general spline-surface reconstruction.
+- [ ] Retain all previously certified special-case behavior while extracting
+  reusable infrastructure. Any dropped case is a regression and must be fixed
+  before declaring the migration done.
+- [ ] Manual Fedora KDE/Wayland acceptance at 100% and 200%, especially on the
+  user's rounded extrusion/hole and rotated Workplane reproduction.
+
+### Functional expansion of Move / Rotate / Delete Face
+
+
+**Goal:** edit the *current B-Rep* of solids produced from mixed
+elliptical/spline profiles, especially flat caps adjacent to noncircular
+extruded side surfaces and inner hole walls. No primitive or Sketch-history
+dependence; the same eligible topology should work after Boolean or STEP
+import. Expand existing certified operations, not parallel command engines.
+
+- [ ] **Move Face**: offset supported planar end faces of arbitrary certified
+  extrusions with ellipse/spline outer boundaries and holes, reconstructing
+  adjacent ruled/extruded supports and preserving valid material occupancy.
+  Reuse reference-direction and By Points workflows with existing Keep
+  Fillet/Chamfer rules where certified.
+- [ ] **Rotate Face**: rotate planar targets about a picked valid reference
+  (Edge/Axis/Sketch/Workplane direction as supported) while reconstructing
+  affected curved neighboring surfaces and trims; refuse impossible
+  intersections or invalid/ambiguous topological transitions.
+- [ ] **Delete Face**: remove supported end/side Faces and close or extend
+  neighboring supports only when the resulting material and manifold boundary
+  are independently certifiable. Never fill an unrelated inner hole or
+  silently alter unaffected material.
+- [ ] Handle trimmed elliptic/spline boundaries, compound wires and multiple
+  holes conservatively, including transitions where faces split, merge or
+  disappear. Preserve unaffected Faces/features, Part identity, placements,
+  Preview, Cancel, Undo/Redo, native documents and numeric/reference input.
+- [ ] Distinguish feature-wall picking from cap picking. Explicitly report
+  limitations of curved Face reconstruction, blends, self-intersections,
+  junctions and unsupported OCCT surface types rather than silently refusing.
+- [ ] Focused geometry and session tests against independently computed
+  material/volume oracles, analytic boundaries, unchanged-source and atomic
+  failure. Use a **synthetic source-independent replica** of the user's
+  rounded extruded profile with an inner circular hole on oblique Workplanes;
+  do not add private .odc files to the repository.
+- [ ] User acceptance for Move/Rotate/Delete Face on that shape at 100%/200%
+  scaling, across transforms, duplication and Save/Open.
+
+## Planned — v0.5.8 Advanced Hole Editing
+
+**Goal:** recognize and independently edit holes from current solid
+geometry regardless of creation method. Begin with true circular cylindrical
+holes and broaden to certified noncircular openings only in explicitly
+separate increments; a visible elliptical rim may be a projection of a
+circular hole, not necessarily an elliptic hole.
+
+- [ ] Identify complete or trimmed cylindrical inner walls, entrance/exit
+  loops, axis, radius, depth and attachment topology directly from current
+  B-Rep and adjacency; distinguish through-holes, blind holes, bores,
+  notches and bosses and refuse ambiguous classifications.
+- [ ] **Resize hole** with exact diameter/radius, preserving valid neighboring
+  material and unrelated openings. Support both original and transformed
+  solids; no dependency on primitive metadata or stored Sketch history.
+- [ ] **Move hole** laterally by a world/reference/Sketch Point-to-Point
+  displacement or explicit dimensions where the certified reconstruction
+  remains valid. Integrate shared v0.5.3/0.5.4 picking and reference handling.
+- [ ] **Delete hole** by reconstructing certified surrounding supports,
+  restoring material accurately without changing unrelated Faces or holes;
+  address filleted/chamfered entrances through existing Keep ON/OFF policy
+  only where geometry supports it.
+- [ ] Use the same behaviors on equivalent holes introduced by
+  Sketch/Extrude Remove Material, Boolean Subtract and imported exact
+  B-Reps (STEP capability subject to importer delivery).
+- [ ] Distinguish straight cylindrical holes from noncircular spline/ellipse
+  openings; plan noncircular opening Move/Resize/Delete as separately
+  certified future work, never label it complete after cylindrical tests.
+- [ ] Add geometry-first tests for mixed-profile solids with one/multiple
+  holes, rotated Workplanes, near-boundary and interacting cases, persistence,
+  Undo/Redo, invalid geometry and source-independent atomic refusal. Manual
+  Fedora KDE/Wayland acceptance at 100% and 200%.
 
 ## Planned — Move Face direction from geometric references
 
