@@ -260,8 +260,11 @@ bool CadViewport::previewMoveFace(double value) {
     // offset by value*(d.n); the certified planar path is reused unchanged.
     double normalFactor=1;bool directionReady=true;
     if(session.moveFeature==MoveFaceFeature::Planar) {
-        gp_Dir direction;directionReady=moveFaceDirection(session,direction,normalFactor,error);
+        gp_Dir direction;double length=0;directionReady=moveFaceDirection(session,direction,normalFactor,error,&length);
         if(directionReady) session.direction=direction;
+        // v0.5.4 By Points: the displacement is B - A; its length replaces the
+        // typed distance, so the normal offset is exactly (B - A) . n.
+        if(session.directionSource==MoveDirectionSource::ByPoints) {value=directionReady?length:0;session.value=value;}
     }
     const double localDistance=value*normalFactor/std::abs(before.orientation.ScaleFactor());
     TopoDS_Shape candidate;
@@ -321,6 +324,7 @@ bool CadViewport::beginMoveFaceDrag(const QPoint& point) {
     if(commandSession_->kind!=CommandSession::Kind::MoveFace&&!blend) return false;
     const auto& session=*commandSession_;
     if(session.moveFeature!=MoveFaceFeature::Planar&&!session.lateralDirectionReady) return false;
+    if(session.kind==CommandSession::Kind::MoveFace&&session.directionSource==MoveDirectionSource::ByPoints) return false; // no distance input
     const gp_Pnt origin=session.pivot.Translated(gp_Vec(session.direction)*(blend?std::max(0.,session.value):(session.valid?session.value:0)));
     const auto base=session.kind==CommandSession::Kind::Fillet
         ?origin.Translated(gp_Vec(session.direction)*(-31)):origin;

@@ -239,6 +239,7 @@ void CadViewport::beginCommandSession(CommandSession::Kind kind,
     cylinderMoveLabel_->hide(); cylinderMoveDirection_->hide();
     cylinderMoveAngle_->hide(); cylinderBossBoundary_->hide();
     moveDirectionPicking_=false;moveDirectionSource_->hide();moveDirectionPick_->hide();moveDirectionReverse_->hide();moveDirectionLabel_->hide();
+    moveDirectionRestart_->hide();dragDimension_->setReadOnly(false);
     faceAlignSelector_->setVisible(kind==CommandSession::Kind::AlignFace);
     faceAlignTargetLabel_->setVisible(kind==CommandSession::Kind::AlignFace);
     faceAlignReferenceLabel_->setVisible(kind==CommandSession::Kind::AlignFace);
@@ -284,6 +285,8 @@ bool CadViewport::previewCommand(double value) {
 }
 bool CadViewport::updateCommandParameter(bool reportError) {
     if(commandSession_) commandSession_->geometryError.clear();
+    // Move Face by Points has no numeric input: the points define the value.
+    if(moveFaceByPoints()) return previewCommand(0.0);
     bool ok = false;
     double value = QLocale().toDouble(dimensionNumber(dragDimension_->text()), &ok);
     if (!ok || !std::isfinite(value) || !dragDimension_->hasAcceptableInput()) {
@@ -413,6 +416,7 @@ void CadViewport::closeCommandSession(bool confirm) {
     faceAxisSelector_->hide(); faceAlignSelector_->hide();
     cylinderMoveLabel_->hide(); cylinderMoveDirection_->hide();
     cylinderMoveAngle_->hide(); cylinderBossBoundary_->hide();
+    moveDirectionRestart_->hide();dragDimension_->setReadOnly(false);
     commandLayout_->removeWidget(dragDimension_);
     dragDimension_->setParent(this);
     resetModelingTools();

@@ -104,7 +104,9 @@ public:
     // Workplane, Edit Sketch and creating/editing a Workplane show them again.
     void setShowWorkplanes(bool show);
     bool showWorkplanes() const { return showWorkplanes_; }
-    enum class MoveDirectionSource { FaceNormal, Reference, PointToPoint };
+    // FaceNormal/Reference/PointToPoint give a direction (typed distance);
+    // ByPoints (v0.5.4) gives the full displacement B - A without input.
+    enum class MoveDirectionSource { FaceNormal, Reference, PointToPoint, ByPoints };
     // Move Face direction input; a FaceNormal source ignores references.
     bool setMoveFaceDirection(MoveDirectionSource source, const std::vector<References::Target>& references, bool reverse);
     void startSketchDrawing(Sketch::DrawTool tool, Sketch::Role role = Sketch::Role::Profile);
@@ -633,7 +635,10 @@ private:
     void initializeMoveDirectionControls();
     void updateMoveDirectionControls();
     bool pickMoveDirection(const QPoint& point);
-    bool moveFaceDirection(const CommandSession& session, gp_Dir& direction, double& normalFactor, QString& error) const;
+    // length: |B - A| for ByPoints (the displacement length), else unused.
+    bool moveFaceDirection(const CommandSession& session, gp_Dir& direction, double& normalFactor, QString& error, double* length = nullptr) const;
+    bool moveFaceByPoints() const;
+    QPushButton* moveDirectionRestart_ = nullptr;
     QComboBox* faceAlignSelector_ = nullptr;
     QLabel* faceAlignTargetLabel_ = nullptr;
     QLabel* faceAlignReferenceLabel_ = nullptr;
