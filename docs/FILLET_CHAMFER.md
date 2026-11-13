@@ -434,12 +434,25 @@ specific diagnostics. Conical Face menus allow invoking Pull/Move to obtain the
 reason rather than silently hiding both commands.
 
 Run the portable fixture with `ctest --test-dir build -R
-'^direct-modeling-recovery$' --output-on-failure -j1`. To run the private fixture,
-configure `cmake -S . -B build
--DOPENDESIGNER_REGRESSION_DOCUMENT=/absolute/path/to/fillet.odc`, then run
-`ctest --test-dir build -R '^direct-modeling-recovery-document$'
---output-on-failure -j1`. The optional document test requires the two reported
-Part names and equivalent geometry; it does not commit or modify the document.
+'^direct-modeling-recovery$' --output-on-failure -j1`.
+
+Since the synthetic-fixture conversion (after v0.5.2),
+`direct-modeling-recovery-document` no longer depends on the private
+`fillet.odc` and is always registered. It builds the v0.5.1 fixture in code
+(Cylinder 2: radius 40, height 80, certified 20 mm top Fillet recipe; Cone 3:
+R40 at z=0 to R20 at z=80, 8 mm top Chamfer, 11 mm bottom Fillet, no recipe),
+saves it through `NativeDocumentStorage` to a temporary `.odc`, reopens it and
+runs every recovery assertion on the reopened document. Run it with
+`LC_ALL=C ctest --test-dir build -R '^direct-modeling-recovery-document$'
+--output-on-failure -j1`.
+
+An optional local probe runs when `OPENDESIGNER_PRIVATE_FIXTURE` points to a
+`.odc` file at test run time. The file is copied to a temporary directory and
+only the copy is opened; the original's SHA-256 is verified unchanged. When both
+Parts match the v0.5.1 fixture the full recovery assertions also run on the
+copy; otherwise the probe reports which Part diverged and skips them. CI never
+sets the variable. The former `OPENDESIGNER_REGRESSION_DOCUMENT` CMake option is
+removed.
 
 Coverage includes both caps × Pull/Move × Keep ON/OFF, independent material
 oracles, B-Rep validity/tolerances, source immutability, preserved separated rims,
