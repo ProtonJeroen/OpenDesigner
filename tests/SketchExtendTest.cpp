@@ -58,6 +58,34 @@ void conics() {
     const auto rotated=certifiedExtend(EllipticalArc{Ellipse{shift,5,3,angle},0,pi/4},C::Endpoint::End,Segment{transform({3,0}),transform({3,5})});
     const auto er=std::get<EllipticalArc>(*rotated.geometry);near(er.sweepParameter,e.sweepParameter);check(er.ellipse.center==shift,"rotated Extend lost local center");
 }
+void sequential() {
+    const auto sequence=[](Geometry source,C::Endpoint endpoint,const Geometry& boundary,
+                           double first,double second) {
+        auto one=certifiedExtend(source,endpoint,boundary);near(one.targetParameter,first);
+        auto two=certifiedExtend(*one.geometry,endpoint,boundary);near(two.targetParameter,second);
+        const auto exhausted=C::extend(*two.geometry,endpoint,boundary);
+        check(exhausted.status==C::Status::Unsupported && !exhausted.geometry,"Extend invented further continuation");
+        return *two.geometry;
+    };
+    sequence(Segment{{0,0},{4,0}},C::Endpoint::End,Circle{{10,0},2},8,12);
+    sequence(Segment{{4,0},{0,0}},C::Endpoint::Start,Circle{{10,0},2},-4,-4); // line parameters restart after each extension
+    const Geometry horizontal=Segment{{-10,3},{10,3}};
+    const double t=std::asin(.6);
+    const Arc arc{{0,0},5,0,pi/8};
+    const auto a=std::get<Arc>(sequence(arc,C::Endpoint::End,horizontal,t,pi-t));
+    check(a.center==arc.center && a.radius==arc.radius,"sequential Extend changed circular support");
+    sequence(reversedArc(arc),C::Endpoint::Start,horizontal,t,pi-t);
+    sequence(Arc{{0,0},5,pi,pi/8},C::Endpoint::End,Segment{{-10,-3},{10,-3}},pi+t,2*pi-t);
+    sequence(Arc{{0,0},5,3*pi/2,pi/4},C::Endpoint::End,horizontal,2*pi+t,3*pi-t);
+    sequence(Arc{{0,0},5,pi/8,-pi/8},C::Endpoint::End,Segment{{-10,-3},{10,-3}},-t,-pi+t);
+    const Ellipse ellipse{{0,0},10,3,0};
+    const double e=std::acos(.6);
+    const auto result=std::get<EllipticalArc>(sequence(EllipticalArc{ellipse,pi,pi/8},C::Endpoint::End,vertical(6),2*pi-e,2*pi+e));
+    check(result.ellipse==ellipse,"sequential Extend changed elliptical support");
+    sequence(reversedEllipticalArc(EllipticalArc{ellipse,pi,pi/8}),C::Endpoint::Start,vertical(6),2*pi-e,2*pi+e);
+    // Along this eccentric ellipse the first crossing is farther in Euclidean distance.
+    sequence(EllipticalArc{Ellipse{{0,0},10,1,0},pi/2,.1},C::Endpoint::End,vertical(6),2*pi-e,2*pi+e);
+}
 void splines() {
     BSpline s;s.degree=2;s.poles={{0,0},{5,10},{10,0}};s.weights={1,1,1};s.knots={0,1};s.multiplicities={3,3};s.first=.25;s.last=.5;
     const auto original=s;const auto result=certifiedExtend(s,C::Endpoint::End,vertical(7.5));const auto e=std::get<BSpline>(*result.geometry);
@@ -108,22 +136,26 @@ void refusals() {
     refuse(s,C::Endpoint::End,vertical(2),C::Status::Unsupported);
     refuse(s,C::Endpoint::End,vertical(-3),C::Status::Unsupported);
     refuse(s,C::Endpoint::End,Segment{{10,1},{10,5}},C::Status::Unsupported); // boundary support crossing is outside its finite domain
-    refuse(s,C::Endpoint::End,Circle{{10,0},2},C::Status::Ambiguous);
     refuse(s,C::Endpoint::End,Circle{{10,2},2},C::Status::Ambiguous);
     refuse(s,C::Endpoint::End,Segment{{8,0},{12,0}},C::Status::Overlap);
     refuse(Arc{{0,0},5,0,pi/4},C::Endpoint::End,Arc{{0,0},5,pi,pi/4},C::Status::Overlap);
-    refuse(Arc{{0,0},5,0,pi/8},C::Endpoint::End,Segment{{-10,3},{10,3}},C::Status::Ambiguous);
     refuse(Arc{{0,0},5,3*pi/2,pi/4},C::Endpoint::End,vertical(5,-1,1),C::Status::Ambiguous);
     refuse(Circle{{0,0},5},C::Endpoint::End,vertical(7),C::Status::Unsupported);
     refuse(Spline{{{0,0},{5,4},{10,0}}},C::Endpoint::End,vertical(12),C::Status::Unsupported);
     BSpline b;b.degree=2;b.poles={{0,0},{5,10},{10,0}};b.weights={1,1,1};b.knots={0,1};b.multiplicities={3,3};b.first=.25;b.last=1;
     refuse(b,C::Endpoint::End,vertical(12),C::Status::Unsupported);
     b.last=.5;refuse(b,C::Endpoint::End,vertical(12),C::Status::Unsupported);
+    BSpline bow;bow.degree=1;bow.poles={{0,0},{2,2},{0,2},{2,0}};bow.weights={1,1,1,1};
+    bow.knots={0,1,2,3};bow.multiplicities={2,1,1,2};bow.first=0;bow.last=3;
+    refuse(Segment{{-2,1},{-1,1}},C::Endpoint::End,bow,C::Status::Ambiguous); // coincident roots with distinct boundary parameters
+    BSpline close;close.degree=1;close.poles={{10-2.e-8,-1},{10,1},{10+2.e-8,-1}};close.weights={1,1,1};
+    close.knots={0,1,2};close.multiplicities={2,1,2};close.first=0;close.last=2;
+    refuse(s,C::Endpoint::End,close,C::Status::Ambiguous); // two forward roots separated by less than tolerance
     const auto invalid=C::extend(s,C::Endpoint::End,vertical(10),0);check(invalid.status==C::Status::Invalid && !invalid.geometry,"invalid tolerance accepted");
 }
 }
 int main(int argc,char** argv) {
     QCoreApplication app(argc,argv);
-    try {std::cout<<"lines\n";lines();std::cout<<"conics\n";conics();std::cout<<"splines\n";splines();std::cout<<"profiles\n";profiles();std::cout<<"refusals\n";refusals();std::cout<<"Extend geometry passed\n";return 0;}
+    try {std::cout<<"lines\n";lines();std::cout<<"conics\n";conics();std::cout<<"sequential\n";sequential();std::cout<<"splines\n";splines();std::cout<<"profiles\n";profiles();std::cout<<"refusals\n";refusals();std::cout<<"Extend geometry passed\n";return 0;}
     catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

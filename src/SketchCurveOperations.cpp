@@ -469,8 +469,16 @@ ExtendResult extend(const Sketch::Geometry& source,Endpoint endpoint,const Sketc
             candidates.emplace_back(u,hit.point);
         }
         if(candidates.empty()) return fail(Status::Unsupported,"No crossing lies beyond the selected endpoint on the available support and finite boundary. Intersections inside the existing curve are ignored.");
-        if(candidates.size()!=1) return fail(Status::Ambiguous,
-            "Several crossings lie beyond the selected endpoint. Select a boundary portion with one crossing; Extend will not choose a distant solution.");
+        const double origin=endpoint==Endpoint::Start?0:c.length();
+        const double direction=endpoint==Endpoint::Start?-1:1;
+        const auto forward=[&](double u) {return direction*(c.progress(u)-origin);};
+        std::sort(candidates.begin(),candidates.end(),[&](const auto& a,const auto& b) {
+            return forward(a.first)<forward(b.first);
+        });
+        for(std::size_t i=1;i<candidates.size();++i)
+            if(std::abs(candidates[i].first-candidates[i-1].first)<=c.roundoff()
+               || distance(candidates[i].second,candidates[i-1].second)<=tolerance)
+                return fail(Status::Ambiguous,"Forward extension crossings cannot be distinguished within tolerance.");
         const auto [u,target]=candidates.front();Geometry candidate=source;
         const double start=endpoint==Endpoint::Start?u:c.start,end=endpoint==Endpoint::End?u:c.end;
         if(auto* s=std::get_if<Segment>(&candidate)) {if(endpoint==Endpoint::Start)s->start=target;else s->end=target;}

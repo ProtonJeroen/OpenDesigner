@@ -86,8 +86,27 @@ struct SketchExtendSessionTest {
         Sketch::BSpline bs;bs.degree=2;bs.poles={{-60,0},{0,60},{60,0}};bs.weights={1,1,1};bs.knots={0,1};bs.multiplicities={3,3};bs.first=.25;bs.last=.5;
         import(w,fixture(bs));start(w);click(v,{0,30});click(v,{40,30});check(v.commandSession_->valid,"coefficient-domain Extend session failed");
         const auto exact=std::get<Sketch::BSpline>(v.commandSession_->sketch->after[0].geometry);check(exact.poles==bs.poles && exact.weights==bs.weights && std::abs(exact.last-5./6)<1.e-9,"coefficient Extend invented support");v.cancelCommandSession();
-        auto ambiguous=fixture();ambiguous.sketchEntities.resize(2);ambiguous.sketchEntities[1].geometry=Sketch::Circle{{80,0},10};import(w,ambiguous);start(w);click(v,{0,0});click(v,{80,10});
-        check(!v.commandSession_->valid && v.sketchPreviews_.empty() && v.sketchEntities_==ambiguous.sketchEntities && v.sketchExtendPrompt_->text().contains("Several crossings"),"ambiguous boundary silently chose a target");v.cancelCommandSession();
+        auto sequential=fixture();sequential.sketchEntities.resize(2);sequential.sketchEntities[1].geometry=Sketch::Circle{{80,0},10};
+        import(w,sequential);const auto sequentialHistory=v.undoStack_.size();
+        for(double target:{70.,90.}) {
+            const auto before=v.sketchEntities_;start(w);
+            auto endpoint=std::get<Sketch::Segment>(before[0].geometry).end;
+            endpoint.x-=v.view_->Convert(8); // Stay within endpoint snapping, clear of the boundary intersection.
+            click(v,endpoint);click(v,{80,10});
+            check(v.commandSession_->valid,"sequential boundary did not preview");blue(v);
+            check(v.sketchEntities_==before,"sequential preview changed canonical geometry");
+            check(std::get<Sketch::Segment>(v.commandSession_->sketch->after[0].geometry).end.x==target,"sequential preview skipped crossing");
+            const auto expected=v.commandSession_->sketch->after;
+            auto metadata=expected;metadata[0].geometry=before[0].geometry;
+            check(metadata==before,"sequential preview changed metadata or boundary");
+            const auto extended=std::get<Sketch::Segment>(expected[0].geometry);
+            check(extended.start==std::get<Sketch::Segment>(before[0].geometry).start && std::abs(extended.end.y)<1.e-9,"sequential preview changed line support");
+            v.commandButtons_->button(QDialogButtonBox::Ok)->click();
+            check(v.sketchEntities_==expected && !v.commandSession_,"sequential confirmation changed identity, support or boundary");
+            v.undoPull();check(v.sketchEntities_==before,"sequential Undo did not restore one operation");v.redoPull();check(v.sketchEntities_==expected,"sequential Redo changed result");
+        }
+        check(v.undoStack_.size()==sequentialHistory+2,"sequential confirmations did not create two Undo steps");
+        start(w);click(v,{90-v.view_->Convert(8),0});click(v,{80,10});check(!v.commandSession_->valid && v.sketchPreviews_.empty(),"exhausted boundary produced preview");v.cancelCommandSession();
         import(w,fixture(Sketch::Spline{{{-60,0},{0,40},{60,0}}}));start(w);click(v,{60,0});check(v.commandSession_->extend->sourceId.isEmpty() && v.sketchExtendPrompt_->text().contains("no certified continuation"),"interpolating spline was extrapolated");v.cancelCommandSession();
         auto locked=fixture();locked.sketchEntities[0].selectable=false;import(w,locked);start(w);click(v,{0,0});check(v.commandSession_->extend->sourceId.isEmpty(),"locked source selected");v.cancelCommandSession();
         for(bool hide:{false,true}) {
