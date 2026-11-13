@@ -39,7 +39,8 @@
 #include <type_traits>
 
 namespace {
-constexpr char kRootMarker[] = "OpenDesigner.RootAssembly.v5";
+constexpr char kRootMarker[] = "OpenDesigner.RootAssembly.v6";
+constexpr char kV5RootMarker[] = "OpenDesigner.RootAssembly.v5";
 constexpr char kV4RootMarker[] = "OpenDesigner.RootAssembly.v4";
 constexpr char kV3RootMarker[] = "OpenDesigner.RootAssembly.v3";
 constexpr char kV2RootMarker[] = "OpenDesigner.RootAssembly.v2";
@@ -62,6 +63,8 @@ int sketchTag(const Sketch::Geometry& geometry) {
         else if constexpr(std::is_same_v<T,Sketch::ConstructionPoint>) return 4;
         else if constexpr(std::is_same_v<T,Sketch::Ellipse>) return 5;
         else if constexpr(std::is_same_v<T,Sketch::EllipticalArc>) return 6;
+        else if constexpr(std::is_same_v<T,Sketch::Spline>) return 7;
+        else if constexpr(std::is_same_v<T,Sketch::BSpline>) return 8;
         else static_assert(unhandledSketchType<T>,"Assign an explicit native Sketch tag.");
     },geometry);
 }
@@ -291,6 +294,16 @@ void putSketches(const TDF_Label& root,const std::vector<Sketch::Entity>& entiti
             else if constexpr(std::is_same_v<T,Sketch::Arc>) data={g.center.x,g.center.y,g.radius,g.startAngle,g.sweepAngle};
             else if constexpr(std::is_same_v<T,Sketch::Ellipse>) data={g.center.x,g.center.y,g.majorRadius,g.minorRadius,g.axisAngle};
             else if constexpr(std::is_same_v<T,Sketch::EllipticalArc>) data={g.ellipse.center.x,g.ellipse.center.y,g.ellipse.majorRadius,g.ellipse.minorRadius,g.ellipse.axisAngle,g.startParameter,g.sweepParameter};
+            else if constexpr(std::is_same_v<T,Sketch::Spline>) {
+                const auto a=g.startTangent.value_or(Sketch::Point{}),b=g.endTangent.value_or(Sketch::Point{});
+                data={double(g.closed),double(g.points.size()),double(g.startTangent.has_value()),double(g.endTangent.has_value()),a.x,a.y,b.x,b.y};
+                for(auto p:g.points) {data.push_back(p.x);data.push_back(p.y);}
+            }
+            else if constexpr(std::is_same_v<T,Sketch::BSpline>) {
+                data={double(g.degree),double(g.periodic),double(g.reversed),g.first,g.last,double(g.poles.size()),double(g.knots.size())};
+                for(size_t i=0;i<g.poles.size();++i) {data.push_back(g.poles[i].x);data.push_back(g.poles[i].y);data.push_back(g.weights[i]);}
+                for(size_t i=0;i<g.knots.size();++i) {data.push_back(g.knots[i]);data.push_back(g.multiplicities[i]);}
+            }
             else static_assert(unhandledSketchType<T>,"Serialize the new Sketch type explicitly.");
         },entity.geometry);
         auto values=TDataStd_RealArray::Set(label,0,int(data.size())-1);
@@ -324,9 +337,11 @@ void readSketches(const TDF_Label& root,std::vector<Sketch::Entity>& entities,co
                    || !label.FindAttribute(TDataStd_RealArray::GetID(),values) || values->Lower()!=0)
                     throw std::runtime_error("Invalid 2D geometry metadata.");
                 const int kind=flags->Value(0);const int sizes[]={4,4,3,5,2,5,7};
-                if(kind<0 || kind>(schema>=5?6:schema>=4?4:3) || values->Upper()!=sizes[kind]-1) throw std::runtime_error("Unsupported 2D geometry type or data size.");
+                if(kind<0 || kind>(schema>=6?8:schema>=5?6:schema>=4?4:3) || (kind<7 && values->Upper()!=sizes[kind]-1)
+                   || (kind==8 && (values->Upper()<16 || values->Upper()>50010))
+                   || (kind==7 && (values->Upper()<11 || values->Upper()>20007 || (values->Upper()-7)%2))) throw std::runtime_error("Unsupported 2D geometry type or data size.");
                 for(int i=1;i<=3;++i) if(flags->Value(i)<0 || flags->Value(i)>1) throw std::runtime_error("Invalid 2D flags.");
-                for(int i=0;i<sizes[kind];++i) if(!std::isfinite(values->Value(i))) throw std::runtime_error("Non-finite 2D geometry.");
+                for(int i=0;i<=values->Upper();++i) if(!std::isfinite(values->Value(i))) throw std::runtime_error("Non-finite 2D geometry.");
                 Sketch::Entity entity;entity.id=QString::fromUtf8(id->Get().ToCString());entity.workplaneId=ownerId;
                 entity.name=QString::fromUtf16(name->Get().ToExtString());entity.role=static_cast<Sketch::Role>(flags->Value(1));
                 entity.visible=flags->Value(2)!=0;entity.selectable=flags->Value(3)!=0;
@@ -338,6 +353,27 @@ void readSketches(const TDF_Label& root,std::vector<Sketch::Entity>& entities,co
                 if(kind==4) entity.geometry=Sketch::ConstructionPoint{point};
                 if(kind==5) entity.geometry=Sketch::Ellipse{point,values->Value(2),values->Value(3),values->Value(4)};
                 if(kind==6) entity.geometry=Sketch::EllipticalArc{{point,values->Value(2),values->Value(3),values->Value(4)},values->Value(5),values->Value(6)};
+                if(kind==7) {
+                    for(int index:{0,2,3}) if(values->Value(index)!=0 && values->Value(index)!=1) throw std::runtime_error("Invalid spline flag.");
+                    const int count=(values->Upper()-7)/2;
+                    if(values->Value(1)!=count) throw std::runtime_error("Invalid spline point count.");
+                    Sketch::Spline spline;spline.closed=values->Value(0)!=0;
+                    if(values->Value(2)) spline.startTangent=Sketch::Point{values->Value(4),values->Value(5)};
+                    if(values->Value(3)) spline.endTangent=Sketch::Point{values->Value(6),values->Value(7)};
+                    for(int i=0;i<count;++i) spline.points.push_back({values->Value(8+2*i),values->Value(9+2*i)});
+                    entity.geometry=std::move(spline);
+                }
+                if(kind==8) {
+                    const auto integer=[&](int index,int min,int max) {
+                        const double v=values->Value(index);if(v<min || v>max || v!=std::floor(v)) throw std::runtime_error("Invalid B-spline integer field.");return int(v);
+                    };
+                    Sketch::BSpline s;s.degree=integer(0,1,25);s.periodic=integer(1,0,1);s.reversed=integer(2,0,1);s.first=values->Value(3);s.last=values->Value(4);
+                    const int poles=integer(5,2,10000),knots=integer(6,2,10002);
+                    if(values->Upper()!=6+3*poles+2*knots) throw std::runtime_error("Invalid B-spline data length.");
+                    for(int i=0;i<poles;++i) {s.poles.push_back({values->Value(7+3*i),values->Value(8+3*i)});s.weights.push_back(values->Value(9+3*i));}
+                    for(int i=0;i<knots;++i) {s.knots.push_back(values->Value(7+3*poles+2*i));s.multiplicities.push_back(integer(8+3*poles+2*i,1,s.degree+1));}
+                    entity.geometry=std::move(s);
+                }
                 ordered.emplace(order->Get(),std::move(entity));
             }
         }
@@ -373,7 +409,7 @@ void validateSnapshot(const NativeDocumentSnapshot& snapshot) {
     if(snapshot.schemaVersion<3 && !snapshot.sketchEntities.empty())
         throw std::runtime_error("Schema v1/v2 cannot store 2D geometry.");
     if(!snapshot.sketchEntities.empty() && snapshot.schemaVersion<NativeDocumentStorage::sketchSchemaVersion(snapshot.sketchEntities))
-        throw std::runtime_error("The requested schema cannot store these 2D geometry types (points require v4; ellipses require v5).");
+        throw std::runtime_error("The requested schema cannot store these 2D geometry types (points require v4; ellipses require v5; splines require v6).");
     QSet<QString> ids;
     for(int counter:snapshot.constructionNameCounters) if(counter<0) throw std::runtime_error("Invalid construction name counters.");
     for(const auto& object:snapshot.constructions) {
@@ -400,6 +436,7 @@ void validateSnapshot(const NativeDocumentSnapshot& snapshot) {
 }
 
 int NativeDocumentStorage::sketchSchemaVersion(const std::vector<Sketch::Entity>& entities) {
+    if(std::any_of(entities.begin(),entities.end(),[](const auto& e){return std::holds_alternative<Sketch::Spline>(e.geometry) || std::holds_alternative<Sketch::BSpline>(e.geometry);})) return 6;
     return Sketch::hasEllipses(entities)?5:Sketch::hasConstructionPoints(entities)?4:3;
 }
 
@@ -423,7 +460,7 @@ bool NativeDocumentStorage::save(const QString& path, const NativeDocumentSnapsh
             builder.Add(compound, part.shape.Moved(TopLoc_Location(part.transform)));
         const auto root = shapeTool->AddShape(compound, Standard_True, Standard_True);
         TDataStd_Name::Set(root, TCollection_ExtendedString("Assembly 1"));
-        TDataStd_AsciiString::Set(root, TCollection_AsciiString(schema==1?kLegacyRootMarker:schema==2?kV2RootMarker:schema==3?kV3RootMarker:schema==4?kV4RootMarker:kRootMarker));
+        TDataStd_AsciiString::Set(root, TCollection_AsciiString(schema==1?kLegacyRootMarker:schema==2?kV2RootMarker:schema==3?kV3RootMarker:schema==4?kV4RootMarker:schema==5?kV5RootMarker:kRootMarker));
         if(schema>=2) TDataStd_Integer::Set(root,schema);
         TDF_LabelSequence components;
         if (!XCAFDoc_ShapeTool::GetComponents(root, components, Standard_False) || components.Length() != int(snapshot.parts.size()))
@@ -506,13 +543,14 @@ bool NativeDocumentStorage::load(const QString& path, NativeDocumentSnapshot& sn
             const bool v2=marker->Get().IsEqual(TCollection_AsciiString(kV2RootMarker));
             const bool v3=marker->Get().IsEqual(TCollection_AsciiString(kV3RootMarker));
             const bool v4=marker->Get().IsEqual(TCollection_AsciiString(kV4RootMarker));
-            if(!legacy && !v2 && !v3 && !v4 && !marker->Get().IsEqual(TCollection_AsciiString(kRootMarker))) {
+            const bool v5=marker->Get().IsEqual(TCollection_AsciiString(kV5RootMarker));
+            if(!legacy && !v2 && !v3 && !v4 && !v5 && !marker->Get().IsEqual(TCollection_AsciiString(kRootMarker))) {
                 if(marker->Get().Search("OpenDesigner.RootAssembly.")==1)
                     throw std::runtime_error("Unsupported OpenDesigner document schema.");
                 continue;
             }
             if(!root.IsNull()) throw std::runtime_error("Multiple OpenDesigner root assemblies.");
-            root=freeShapes.Value(i);schema=legacy?1:v2?2:v3?3:v4?4:5;
+            root=freeShapes.Value(i);schema=legacy?1:v2?2:v3?3:v4?4:v5?5:6;
             Handle(TDataStd_Integer) version;
             if(!legacy && (!root.FindAttribute(TDataStd_Integer::GetID(),version) || version->Get()!=schema))
                 throw std::runtime_error("Unsupported OpenDesigner document schema.");

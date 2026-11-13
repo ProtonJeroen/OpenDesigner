@@ -147,7 +147,7 @@ struct SketchEllipseDrawingTest {
         // Save confirmed geometry, excluding the candidate, with stable history.
         QTemporaryDir dir;w.documentPath_=dir.filePath("drawn-v5.odc");const auto values=v.sketchEntities_;const auto undo=v.undoStack_.size();
         begin(v,Sketch::DrawTool::Ellipse);center(v);major(v);minor(v);check(w.saveDocument() && v.commandSession_ && v.undoStack_.size()==undo,"Save lost drawing session/history");
-        NativeDocumentSnapshot loaded;check(NativeDocumentStorage::load(w.documentPath_,loaded,error) && loaded.schemaVersion==5 && loaded.sketchEntities==values,"schema-v5 save lost exact values or included preview");
+        NativeDocumentSnapshot loaded;check(NativeDocumentStorage::load(w.documentPath_,loaded,error) && loaded.schemaVersion==NativeDocumentStorage::CurrentSchemaVersion && loaded.sketchEntities==values,"schema-v5 save lost exact values or included preview");
         check(v.importDocumentSnapshot(loaded,error) && !v.commandSession_ && v.undoStack_.empty() && v.sketchEntities_==values,"Open retained temporary drawing/history");
         check((v.activateSketchWorkplane("wp")&&v.lookAtWorkplane("wp")),"cannot reactivate sketch");begin(v,Sketch::DrawTool::Ellipse);center(v);check((v.activateSketchWorkplane("wp2")&&v.lookAtWorkplane("wp2")) && !v.commandSession_,"Workplane switch retained drawing");
         begin(v,Sketch::DrawTool::Ellipse);center(v);v.startSketchDrawing(Sketch::DrawTool::Circle);check(v.commandSession_->drawing->tool==Sketch::DrawTool::Circle && v.commandSession_->drawing->points.empty(),"tool switch retained ellipse points");v.cancelCommandSession();

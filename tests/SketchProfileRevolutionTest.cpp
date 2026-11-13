@@ -86,7 +86,8 @@ int main() {try {
         failed(RV::revolve(profile,axis,angle),RV::Code::InvalidInput);
     failed(RV::revolve({},axis,90),RV::Code::InvalidInput);
     auto open=input;open.pop_back();failed(RV::revolve(faces(open),axis,90),RV::Code::InvalidInput);
-    failed(RV::revolve(faces({entity("ellipse",Ellipse{{3,0},1,.5,0})}),axis,90));
+    const auto elliptic=RV::revolve(faces({entity("ellipse",Ellipse{{3,0},1,.5,0})}),axis,90);
+    check(elliptic.success && std::abs(elliptic.volume-.75*pi*pi)<1.e-7,"elliptic quarter revolution lost exact volume");
     failed(RV::revolve(profile,gp_Ax1(gp_Pnt(),gp_Dir(0,0,1)),90),RV::Code::UnsupportedAxis);
     failed(RV::revolve(profile,gp_Ax1(gp_Pnt(0,0,1),gp_Dir(0,1,0)),90),RV::Code::UnsupportedAxis);
     failed(RV::revolve(faces(rectangle(-1)),axis,90),RV::Code::SelfIntersection);

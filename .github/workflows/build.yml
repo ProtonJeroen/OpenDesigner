@@ -17,18 +17,18 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOPENDESIGNER_BUILD_TESTS=ON
       - name: Build
-        run: cmake --build build
+        run: cmake --build build -j4
       - name: CTests (X11 and software OpenGL)
         env:
           QT_QPA_PLATFORM: xcb
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX" ctest --test-dir build -C Release --output-on-failure
+        run: xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX" ctest --test-dir build -C Release --output-on-failure -j2
       - name: Stage Linux executable
         run: |
           mkdir -p dist/OpenDesigner
           cp build/OpenDesigner dist/OpenDesigner/
           cat > dist/OpenDesigner/README.txt <<'EOF'
-          OpenDesigner v0.4.9 Cylindrical Move Face Linux prototype
+          OpenDesigner v0.5.5 Advanced Sketch Curves Linux prototype
           This is an unbundled executable, NOT a standalone AppImage.
           Requires compatible Qt 6, Open CASCADE and graphics runtime libraries.
           On Ubuntu 24.04 the build dependencies from .github/workflows/build.yml

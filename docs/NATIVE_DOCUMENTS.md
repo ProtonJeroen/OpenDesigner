@@ -1,5 +1,8 @@
 # Native OpenDesigner documents
 
+Current v0.5.5 scope and limits: [Advanced Sketch Curves](ADVANCED_SKETCH_CURVES.md).
+The phase descriptions below retain their historical scope.
+
 ## Active Part metadata (v0.4.6)
 
 An optional root child named `OpenDesignerActivePart.v1` stores the stable Part

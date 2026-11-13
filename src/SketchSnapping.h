@@ -18,7 +18,7 @@ enum class SnapKind { Endpoint, Midpoint, Center, Intersection, Tangent, Nearest
 // Identity of a cursor-independent Sketch point (v0.5.3). It is re-evaluated
 // from the current entities by resolvePoint, the same evaluation snapTargets
 // uses, so a snapped point and a picked reference always coincide.
-enum class PointFeature { Position, Start, End, Midpoint, Center, Intersection };
+enum class PointFeature { Position, Start, End, Midpoint, Center, Intersection, MajorVertex, MinorVertex, ThroughPoint };
 struct PointReference {
     QString entity, other; // other: second curve of an Intersection
     PointFeature feature = PointFeature::Position;

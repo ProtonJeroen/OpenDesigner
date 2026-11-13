@@ -87,6 +87,11 @@ std::optional<DisplayRectangle> finiteBounds(const Geometry& geometry) {
         else if constexpr(std::is_same_v<T,Arc>) return conicBounds({g.center,g.radius,g.radius,0},{{g.startAngle,g.sweepAngle}});
         else if constexpr(std::is_same_v<T,Ellipse>) return conicBounds(g,{});
         else if constexpr(std::is_same_v<T,EllipticalArc>) return conicBounds(g.ellipse,{{g.startParameter,g.sweepParameter}});
+        else if constexpr(std::is_same_v<T,Spline> || std::is_same_v<T,BSpline>) {
+            const auto c=[&]{if constexpr(std::is_same_v<T,Spline>) return splineCurve(g);else return bsplineCurve(g);}();auto r=at({c->Pole(1).X(),c->Pole(1).Y()});
+            for(int i=2;i<=c->NbPoles();++i) include(r,{c->Pole(i).X(),c->Pole(i).Y()});
+            return r; // Convex hull bounds include overshoot between through-points.
+        }
         else {static_assert(!sizeof(T),"Handle every Sketch type explicitly.");}
     },geometry);
 }

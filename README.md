@@ -2,7 +2,10 @@
 
 OpenDesigner is an open-source cross-platform 3D direct-modeling application inspired by classic CoCreate SolidDesigner.
 
-**Status:** v0.4.9 Cylindrical Move Face; not a packaged distribution.
+**Status:** v0.5.5 Advanced Sketch Curves; not a packaged distribution.
+
+Exact elliptic profiles, editable 2D interpolating splines and exact standalone
+B-spline edge projection: [supported scope and acceptance checklist](docs/ADVANCED_SKETCH_CURVES.md).
 
 Move supported cylindrical holes and bosses from their current B-Rep, with explicit
 lateral directions and boss Trim/Extend policies. Supported boundary features also

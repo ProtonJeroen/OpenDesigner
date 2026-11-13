@@ -1,5 +1,7 @@
 #include "SketchProjection.h"
+#include "SketchDisplayBounds.h"
 #include <BRepAdaptor_Curve.hxx>
+#include <Geom_BSplineCurve.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepCheck_Wire.hxx>
 #include <BRepTools.hxx>
@@ -195,9 +197,22 @@ Sketch::Geometry geometry(const Source& source,const gp_Ax3& frame,double tolera
     require(std::isfinite(first) && std::isfinite(last) && !Precision::IsInfinite(first) && !Precision::IsInfinite(last),
             Code::UnboundedEdge,"An unbounded edge cannot supply bounded Construction geometry.");
     require(last>first,Code::DegenerateEdge,"The edge has an empty or reversed parameter interval.");
-    require(curve.Is3DCurve() && (curve.GetType()==GeomAbs_Line || curve.GetType()==GeomAbs_Circle || curve.GetType()==GeomAbs_Ellipse),Code::NonlinearEdge,
-            "Only exact analytic lines, circles and ellipses are supported; other curves are not approximated.");
+    require(curve.Is3DCurve() && (curve.GetType()==GeomAbs_Line || curve.GetType()==GeomAbs_Circle || curve.GetType()==GeomAbs_Ellipse || curve.GetType()==GeomAbs_BSplineCurve),Code::NonlinearEdge,
+            "Only exact lines, conics and B-splines are supported; other curves are not approximated.");
     require(BRepCheck_Analyzer(edge).IsValid(),Code::InvalidBRep,"The source edge is not valid B-Rep geometry.");
+    if(curve.GetType()==GeomAbs_BSplineCurve) {
+        // Adaptor returns coefficients with the edge location already applied.
+        // Orthogonal projection is affine: knots/weights stay exact and only
+        // poles change coordinates. Part placement is applied once by local().
+        const auto c=curve.BSpline();Sketch::BSpline s;s.degree=c->Degree();s.periodic=c->IsPeriodic();
+        s.first=first;s.last=last;s.reversed=source.shape.Orientation()==TopAbs_REVERSED;
+        for(int i=1;i<=c->NbPoles();++i) {s.poles.push_back(local(c->Pole(i),source.partPlacement,frame,tolerance));s.weights.push_back(c->Weight(i));}
+        for(int i=1;i<=c->NbKnots();++i) {s.knots.push_back(c->Knot(i));s.multiplicities.push_back(c->Multiplicity(i));}
+        const auto projected=Sketch::bsplineCurve(s);bool separated=false;
+        for(const auto& p:s.poles) if(std::hypot(p.x-s.poles.front().x,p.y-s.poles.front().y)>tolerance) separated=true;
+        require(separated,Code::CollapsedProjection,"B-spline projection collapses to a tolerance-sized point.");
+        return s;
+    }
     if(curve.GetType()==GeomAbs_Circle) {
         const auto axes=curve.Circle().Position();
         if(std::abs(localDirection(axes.XDirection(),source.partPlacement,frame)[2])<=angularRoundoff
@@ -457,6 +472,8 @@ std::vector<Piece> faceGeometry(const Source& source,const gp_Ax3& frame,double 
                     a=b=collapsedPole(child,face,frame,tolerance);skipped.push_back(context+"Certified collapsed pole edge omitted; no endpoint point was added.");
                 } else {
                     BRepAdaptor_Curve curve(edge);
+                    require(curve.GetType()!=GeomAbs_BSplineCurve,Code::NonlinearEdge,
+                        "B-spline face boundaries are not certified; select standalone B-spline edges. Curves are not approximated.");
                     auto g=geometry(child,frame,tolerance);
                     a=local(curve.Value(edge.Orientation()==TopAbs_REVERSED?curve.LastParameter():curve.FirstParameter()),source.partPlacement,frame,tolerance);
                     b=local(curve.Value(edge.Orientation()==TopAbs_REVERSED?curve.FirstParameter():curve.LastParameter()),source.partPlacement,frame,tolerance);
@@ -553,6 +570,9 @@ bool overlapConics(const Conic& a,const Conic& b,double tolerance) {
     return false;
 }
 bool duplicate(const Sketch::Geometry& a,const Sketch::Geometry& b,double tolerance) {
+    if(const auto* s=std::get_if<Sketch::BSpline>(&a)) if(const auto* t=std::get_if<Sketch::BSpline>(&b)) {
+        auto x=*s,y=*t;x.reversed=false;y.reversed=false;return x==y;
+    }
     if(Sketch::isElliptical(a) || Sketch::isElliptical(b)) {
         const auto ca=conic(a),cb=conic(b);return ca && cb && duplicateConics(*ca,*cb,tolerance);
     }
@@ -577,6 +597,12 @@ struct Line {
     long double distance(Point p) const {return std::abs((static_cast<long double>(p.x)-x)*dy-(static_cast<long double>(p.y)-y)*dx);}
 };
 bool overlap(const Sketch::Geometry& a,const Sketch::Geometry& b,double tolerance) {
+    if(std::holds_alternative<Sketch::BSpline>(a) || std::holds_alternative<Sketch::BSpline>(b)) {
+        if(std::holds_alternative<ConstructionPoint>(a) || std::holds_alternative<ConstructionPoint>(b)) return false;
+        const auto x=Sketch::finiteBounds(a),y=Sketch::finiteBounds(b);
+        if(x && y && (x->maxX+tolerance<y->minX || y->maxX+tolerance<x->minX || x->maxY+tolerance<y->minY || y->maxY+tolerance<x->minY)) return false;
+        throw Failure{Code::UnsupportedConicComparison,"B-spline overlap comparisons require a Construction layer without possibly overlapping curves."};
+    }
     if(Sketch::isElliptical(a) || Sketch::isElliptical(b)) {
         const auto ca=conic(a),cb=conic(b);return ca && cb && overlapConics(*ca,*cb,tolerance);
     }
@@ -650,6 +676,7 @@ Result project(const std::vector<Source>& sources,const Construction::Object& wo
         catch(const Standard_Failure& f) {report(Code::KernelFailure,QString("OCCT could not evaluate this source: %1").arg(QString::fromUtf8(f.GetMessageString())),i);}
         catch(const std::exception& f) {report(Code::KernelFailure,QString("Could not evaluate this source: %1").arg(QString::fromUtf8(f.what())),i);}
     }
+    try {
     // Deduplication precedes overlap checking, so an unchanged duplicate cannot
     // cause a new overlap error against already existing overlapping references.
     std::vector<Candidate> unique;
@@ -686,5 +713,6 @@ Result project(const std::vector<Source>& sources,const Construction::Object& wo
         ids.insert(e.id);result.additions.push_back(std::move(e));
     }
     result.success=true;return result;
+    } catch(const Failure& f) {report(f.code,f.message);result.additions.clear();return result;}
 }
 }

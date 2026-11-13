@@ -811,8 +811,9 @@ Sketch and projected-geometry references during design and acceptance.
 - v0.5.4: view-level Show/Hide Workplanes and Move Face by Points (implemented;
   manual Fedora KDE/Wayland acceptance pending, see WORKPLANE_REFERENCES.md and
   MOVE_FACE.md)
-- v0.5.5: exact ellipse/elliptical arc Sketch modeling, exact projection and 2D
-  interpolating splines on the v0.5.3 reference model (moved from v0.5.4)
+- v0.5.5: Advanced Sketch Curves implemented within the [documented supported
+  scope](ADVANCED_SKETCH_CURVES.md); projected B-spline Profile certification,
+  general curve Overdraw and manual Fedora acceptance remain follow-ups.
 - Sweep (including 3D spline paths), then Loft, after the foundation gates
 - Broader cylindrical-face movement (holes and bosses) beyond the certified v0.4.9 scope
 - Assemblies and 3D copilot

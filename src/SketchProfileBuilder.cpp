@@ -13,6 +13,8 @@
 #include <GProp_GProps.hxx>
 #include <Geom_Line.hxx>
 #include <Geom_Circle.hxx>
+#include <Geom_Ellipse.hxx>
+#include <GeomAPI.hxx>
 #include <Precision.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp.hxx>
@@ -36,6 +38,9 @@ Point arcPoint(const Arc& a,double angle) {return {a.center.x+a.radius*std::cos(
 std::pair<Point,Point> endpoints(const PV::Curve& curve) {
     if(const auto* s=std::get_if<Segment>(&curve.geometry)) return {s->start,s->end};
     if(const auto* a=std::get_if<Arc>(&curve.geometry)) return {arcPoint(*a,a->startAngle),arcPoint(*a,a->startAngle+a->sweepAngle)};
+    if(const auto* a=std::get_if<EllipticalArc>(&curve.geometry)) {const auto ends=ellipticalArcEndpoints(*a);return {ends[0],ends[1]};}
+    if(const auto* e=std::get_if<Ellipse>(&curve.geometry)) {const auto p=ellipsePoint(*e,0);return {p,p};}
+    if(const auto* s=std::get_if<Spline>(&curve.geometry)) return {s->points.front(),s->closed?s->points.front():s->points.back()};
     const auto& c=std::get<Circle>(curve.geometry);const Point p{c.center.x+c.radius,c.center.y};return {p,p};
 }
 double distance(Point a,Point b) {return std::hypot(a.x-b.x,a.y-b.y);}
@@ -96,8 +101,8 @@ void certifyWire(const Wire& wire,double tolerance) {
         require(!a.IsNull() && !b.IsNull() && b.IsSame(nextA),Code::ClosureFailure,"Wire edges do not share oriented endpoint vertices.",{wire.edges[i].entityId});
         require(BRep_Tool::Tolerance(edge)<=tolerance,Code::ToleranceExceeded,"OCCT increased an edge tolerance beyond the construction limit.",{wire.edges[i].entityId});
         BRepAdaptor_Curve curve(edge);
-        require(!BRep_Tool::Degenerated(edge) && (curve.GetType()==GeomAbs_Line || curve.GetType()==GeomAbs_Circle),
-            Code::EdgeFailure,"An edge is degenerate or lost its analytic line/circle support.",{wire.edges[i].entityId});
+        require(!BRep_Tool::Degenerated(edge) && (curve.GetType()==GeomAbs_Line || curve.GetType()==GeomAbs_Circle || curve.GetType()==GeomAbs_Ellipse || curve.GetType()==GeomAbs_BSplineCurve),
+            Code::EdgeFailure,"An edge is degenerate or lost its analytic line/circle/ellipse support.",{wire.edges[i].entityId});
         const bool reverse=edge.Orientation()==TopAbs_REVERSED;
         require(BRep_Tool::Pnt(a).Distance(curve.Value(reverse?curve.LastParameter():curve.FirstParameter()))<=tolerance
             && BRep_Tool::Pnt(b).Distance(curve.Value(reverse?curve.FirstParameter():curve.LastParameter()))<=tolerance,
@@ -148,6 +153,18 @@ Result build(const SketchProfileValidation::Result& profile,const gp_Ax3& frame,
                 const auto& g=contour.curves[i].geometry;Handle(Geom_Curve) curve;double first=0,last=0;bool reverse=false;
                 if(std::holds_alternative<Segment>(g)) {
                     last=starts[i].Distance(ends[i]);curve=new Geom_Line(starts[i],gp_Dir(gp_Vec(starts[i],ends[i])));
+                } else if(const auto* s=std::get_if<Spline>(&g)) {
+                    const auto c=splineCurve(*s);curve=GeomAPI::To3d(c,gp_Pln(planeFrame));first=c->FirstParameter();last=c->LastParameter();
+                } else if(std::holds_alternative<Ellipse>(g) || std::holds_alternative<EllipticalArc>(g)) {
+                    Ellipse e;
+                    if(const auto* arc=std::get_if<EllipticalArc>(&g)) {
+                        e=arc->ellipse;reverse=arc->sweepParameter<0;
+                        first=std::min(arc->startParameter,arc->startParameter+arc->sweepParameter);
+                        last=std::max(arc->startParameter,arc->startParameter+arc->sweepParameter);
+                    } else {e=std::get<Ellipse>(g);last=2*std::numbers::pi;}
+                    require(e.minorRadius>2*tolerance,Code::AmbiguousVertices,"Ellipse minor radius is not separated from the vertex tolerance.",sourceIds);
+                    const gp_Vec axis=gp_Vec(frame.XDirection())*std::cos(e.axisAngle)+gp_Vec(frame.YDirection())*std::sin(e.axisAngle);
+                    curve=new Geom_Ellipse(gp_Elips(gp_Ax2(world(e.center),normal,gp_Dir(axis)),e.majorRadius,e.minorRadius));
                 } else {
                     Point center;double radius;
                     if(const auto* arc=std::get_if<Arc>(&g)) {

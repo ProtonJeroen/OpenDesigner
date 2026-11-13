@@ -27,6 +27,7 @@ std::vector<Entity> rectangle(double x=0,double y=0,QString prefix="r",QString o
 }
 std::pair<Point,Point> endpoints(const PV::Curve& curve) {
     if(const auto* s=std::get_if<Segment>(&curve.geometry)) return {s->start,s->end};
+    if(const auto* a=std::get_if<EllipticalArc>(&curve.geometry)) {const auto ends=ellipticalArcEndpoints(*a);return {ends[0],ends[1]};}
     const auto& a=std::get<Arc>(curve.geometry);
     const auto at=[&](double t) {return Point{a.center.x+a.radius*std::cos(t),a.center.y+a.radius*std::sin(t)};};
     return {at(a.startAngle),at(a.startAngle+a.sweepAngle)};
@@ -46,7 +47,7 @@ PV::Result valid(const std::vector<Entity>& entities,size_t contours=1,QString o
         if(contour.parent) check(result.contours[*contour.parent].depth+1==contour.depth,"inconsistent nesting depth");
         for(size_t i=0;i<contour.curves.size();++i) {
             const auto& edge=contour.curves[i];++count;
-            if(!std::holds_alternative<Circle>(edge.geometry)) {
+            if(!std::holds_alternative<Circle>(edge.geometry) && !std::holds_alternative<Ellipse>(edge.geometry)) {
                 const auto last=endpoints(edge).second,first=endpoints(contour.curves[(i+1)%contour.curves.size()]).first;
                 check(std::hypot(last.x-first.x,last.y-first.y)<=tolerance,"returned contour not ordered/connected");
             }
@@ -60,6 +61,11 @@ PV::Result valid(const std::vector<Entity>& entities,size_t contours=1,QString o
                 const auto& originalArc=std::get<Arc>(source->geometry);
                 check(*a==originalArc || *a==reversedArc(originalArc),"arc source parameters changed");
                 check(edge.reversed?*a==reversedArc(originalArc):*a==originalArc,"arc reversal flag incorrect");
+            } else if(const auto* e=std::get_if<Ellipse>(&edge.geometry)) {
+                check(contour.curves.size()==1 && *e==std::get<Ellipse>(source->geometry),"ellipse support changed");
+            } else if(const auto* a=std::get_if<EllipticalArc>(&edge.geometry)) {
+                const auto& originalArc=std::get<EllipticalArc>(source->geometry);
+                check(edge.reversed?*a==reversedEllipticalArc(originalArc):*a==originalArc,"elliptical arc source or traversal changed");
             } else check(contour.curves.size()==1 && std::get<Circle>(edge.geometry)==std::get<Circle>(source->geometry),"circle changed or mixed into polygon");
         }
     }
@@ -127,10 +133,11 @@ void ownershipAndUnsupported() {
     refused(onlyConstruction,PV::Status::Invalid,PV::Code::EmptyProfile);
     auto box=rectangle();box.push_back(entity("ignored",Arc{},"wp",Role::Construction));
     box.push_back(entity("ignored-invalid",Segment{{0,0},{0,0}},"other-wp"));valid(box);
-    for(const Geometry& g:std::vector<Geometry>{Ellipse{},EllipticalArc{}}) {
-        auto input=rectangle();input.push_back(entity("unsupported",g));
-        refused(input,PV::Status::Unsupported,PV::Code::UnsupportedCurve);
-    }
+    auto ellipticHole=rectangle();ellipticHole.push_back(entity("ellipse",Ellipse{{5,2},1,.5,.3}));
+    valid(ellipticHole,2);
+    refused({entity("open-ellipse",EllipticalArc{})},PV::Status::Invalid,PV::Code::OpenContour);
+    auto unsupported=rectangle();unsupported.push_back(entity("infinite",InfiniteLine{}));
+    refused(unsupported,PV::Status::Invalid,PV::Code::InvalidGeometry);
     auto disjoint=rectangle();const auto second=rectangle(30,0,"second");disjoint.insert(disjoint.end(),second.begin(),second.end());
     disjoint.push_back(entity("separate-circle",Circle{{60,0},2}));valid(disjoint,3);
     auto nested=rectangle();auto inner=polygon({{2,1},{3,1},{3,2},{2,2}},"inner");nested.insert(nested.end(),inner.begin(),inner.end());
@@ -202,7 +209,7 @@ void circularContoursAndRegions() {
     refused(duplicateLoop,PV::Status::Invalid,PV::Code::DuplicateCurve);
     auto branch=d;branch.push_back(entity("branch",Segment{{5,0},{8,0}}));refused(branch,PV::Status::Invalid,PV::Code::Branch);
     auto gap=d;std::get<Segment>(gap[1].geometry).end.x-=2*tolerance;refused(gap,PV::Status::Invalid,PV::Code::OpenContour);
-    auto unsupported=d;unsupported.push_back(entity("ellipse",Ellipse{}));refused(unsupported,PV::Status::Unsupported,PV::Code::UnsupportedCurve);
+    auto crossed=d;crossed.push_back(entity("ellipse",Ellipse{}));refused(crossed,PV::Status::Unsupported,PV::Code::ContourIntersection);
     // Major/minor routes and seam crossings must retain source sweep and area.
     for(double sweep:{1.5*pi,-1.5*pi,.5*pi,-.5*pi}) {
         const Arc arc{{2,3},4,1.8*pi,sweep};
