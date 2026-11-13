@@ -813,8 +813,10 @@ Sketch and projected-geometry references during design and acceptance.
 - **v0.5.6 (next priority): SolidDesigner-style interactive Trim, Extend and
   Overdraw** for Sketch curves and exact projections, especially oblique
   projected ellipses (detailed scope below).
-- **v0.5.7: geometry-first complex Move/Rotate/Delete Face**, focusing on
-  extruded mixed ellipse/spline profiles and faces adjacent to openings.
+- **v0.5.7: shared geometry-first B-Rep reconstruction foundation**
+  for Move Face, Rotate Face, Pull/Resize and Delete Face, including complex
+  extruded ellipse/spline profiles and holes; consolidate proven specialized
+  reconstruction paths without reducing certified coverage.
 - **v0.5.8: advanced Hole Editing** on current B-Reps, regardless of whether
   the opening originated from Sketch/Remove Material, Boolean or STEP import.
 - Sweep (including 3D spline paths), then Loft, after the interactive curve
@@ -872,7 +874,70 @@ but it is not considered a complete interactive Trim implementation.
   user case of a circular hole projected obliquely onto a second Workplane;
   manual Fedora KDE/Wayland 100% and 200% acceptance.
 
-## Planned — v0.5.7 Advanced Move / Rotate / Delete Face
+## Planned — v0.5.7 Shared B-Rep Reconstruction Architecture & Advanced Face Editing
+
+**Architectural priority:** new Sketch curves or solid types must not require
+five independent direct-modeling implementations. Introduce a shared, geometry-
+first reconstruction infrastructure reused by Move Face, Rotate Face,
+Pull/Resize and Delete Face. It must operate on the current B-Rep, independent
+of original primitives, Sketch/Extrude history and imported provenance. This
+is a staged, conservative capability target: no claim that every arbitrary
+freeform or multi-shell B-Rep can be modified.
+
+### Reusable reconstruction pipeline
+
+- [ ] **Recognition:** identify the actual selected Faces/Edges, underlying
+  planes/cylinders/cones/ruled/extruded/elliptic and supported B-spline surfaces,
+  orientations, trims, inner wires, material side and adjacency. Separate the
+  user operation's intent from reconstruction mechanics and feature provenance.
+- [ ] **Affected neighborhood:** derive the minimal support and topology region
+  affected by a change, including adjacent curved walls, holes, blends, and
+  nearby boundaries. Preserve unselected material and other features.
+- [ ] **Surface transformation and intersection:** move/rotate/offset/resize or
+  remove the selected support; construct intersections with surviving or
+  suitably extended neighboring supports using exact OCCT curves/surfaces
+  where certifiable, including oblique trims; never silently polygonize.
+- [ ] **Topology reconstruction:** rebuild valid wires, bounded Faces, shells
+  and solids; permit certified face splits, merges and disappearance; map
+  surviving topology to source geometry for selection, identifiers, appearance
+  and later edits. Refuse ambiguous alternatives rather than guessing.
+- [ ] **Independent material/shape certification:** check B-Rep validity,
+  orientation, manifold closure, tolerance, volume/material occupancy,
+  unchanged regions and operation-specific geometric intent. No broad,
+  uncontrolled shape healing or relaxation of established tolerances.
+- [ ] **Shared transaction adapter:** all four command families reuse the
+  existing blue candidate preview, exact numeric/geometry-reference input,
+  Cancel/OK, history and native persistence. Failed or unsupported operations
+  leave model, identities, references and Undo history unchanged.
+
+### Consolidation and required regression geometry
+
+- [ ] Audit existing `BRepReconstruction`, `MoveFaceGeometry`, cylindrical
+  hole/boss adapters, conical/blend recipes, Rotate/Delete paths and
+  `ModelingOperation`. Identify transferable algorithms and duplicated
+  recognition, adjacency, certification and topology-mapping logic; migrate
+  incrementally with compatibility tests instead of wholesale rewrites.
+- [ ] Independently test each supported operation on equivalent current B-Reps
+  from different creation routes (Sketch Extrude/Remove Material, Booleans,
+  imported B-Reps when available), without reliance on feature-history tags.
+- [ ] Include five synthetic scenario families: (1) six-face box;
+  (2) cylinder with/without a hole; (3) elliptical extrusion;
+  (4) rounded extrusion with an inner cylindrical hole on oblique Workplanes
+  matching the user-reported case; (5) spline-profile extrusion with multiple
+  inner wires. Exercise Move Face, Rotate Face, Pull/Resize and Delete Face,
+  and distinguish independently certified results from precise safe refusals.
+- [ ] Guard transforms, duplication, reversed edges, different Workplanes,
+  HiDPI selection, Save/Open, Undo/Redo, stale references and failure atomicity.
+  Track coverage *by operation and geometry family*, not a single feature-wide
+  PASS label; avoid promising unsupported general spline-surface reconstruction.
+- [ ] Retain all previously certified special-case behavior while extracting
+  reusable infrastructure. Any dropped case is a regression and must be fixed
+  before declaring the migration done.
+- [ ] Manual Fedora KDE/Wayland acceptance at 100% and 200%, especially on the
+  user's rounded extrusion/hole and rotated Workplane reproduction.
+
+### Functional expansion of Move / Rotate / Delete Face
+
 
 **Goal:** edit the *current B-Rep* of solids produced from mixed
 elliptical/spline profiles, especially flat caps adjacent to noncircular
