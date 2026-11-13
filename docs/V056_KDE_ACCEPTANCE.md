@@ -1,32 +1,43 @@
 # v0.5.6 candidate — Fedora KDE/Wayland acceptance
 
-Status: **manual acceptance pending**. This is the consolidated release checklist,
-not a claim that native desktop checks have passed. Use synthetic documents or
-Save As copies. Do not edit the seven private, untracked investigation documents.
+Status: **manual Fedora KDE acceptance PASS (user-reported)**. The user reports
+that all requested v0.5.6 acceptance checks passed, including **200% HiDPI
+picking**. This record describes reported results; it does not claim that the
+agent independently performed desktop acceptance. Preserve all **nine** private,
+untracked `.odc` documents; use synthetic documents or Save As copies.
 
-Record Fedora/KDE version, GPU/driver, display resolution, KDE scale, Qt scale
-variables, branch/build timestamp and results. OpenDesigner currently uses
-Qt/xcb through XWayland on KDE/Wayland because its OCCT viewport embeds an X11
-drawable. Do not force `QT_QPA_PLATFORM=wayland`; native Wayland embedding is not
-implemented by this release.
+## Reported manual results
 
-Run every row once at 100% and once at 200%. Prefer the corresponding KDE display
-scale with `QT_SCALE_FACTOR` unset. A reproducible alternative is KDE 100% plus
-`QT_SCALE_FACTOR=2`; record that choice separately. Do not combine both multipliers
-unintentionally. Restart the application after changing scaling.
+| Scenario | Result / evidence |
+|---|---|
+| Requested v0.5.6 checks: commands, Trim, Extend, exact projection/Overdraw, profiles, lifecycle and protection | PASS — user's final overall acceptance report |
+| 200% HiDPI picking | PASS — explicitly confirmed by the user |
+| Extend to the first circular crossing | PASS — explicitly confirmed by the user |
+| Second sequential Extend crossing on the same boundary | PASS — explicitly confirmed by the user |
+| Elliptical arc Extend crossing | PASS — explicitly confirmed by the user |
+| Interactive spline mouse placement, including five or more interpolation points | PASS — explicitly confirmed by the user |
+| Spline live preview, Back and numeric XY entry | PASS — explicitly confirmed by the user |
+| Spline Enter/OK, Cancel/Escape and Undo/Redo | PASS — explicitly confirmed by the user |
+| Editing retained spline interpolation points | PASS — explicitly confirmed by the user |
+| Spline Save/Open and duplication without modifying the source | PASS — explicitly confirmed by the user |
+| Unconfirmed spline preview excluded from saved documents | PASS — explicitly confirmed by the user |
 
-| Check | 100% | 200% |
-|---|---|---|
-| Commands and Workplane eligibility | pending | pending |
-| Trim: line, circle, ellipse, splines | pending | pending |
-| Extend: both endpoints and reversed arcs | pending | pending |
-| Oblique circle projection and exact Overdraw | pending | pending |
-| Mixed contours, holes and multiple regions | pending | pending |
-| Preview, OK/Enter, Cancel/Escape, Undo/Redo | pending | pending |
-| Save/Open, duplication and source independence | pending | pending |
-| Hidden/locked entities and transformed Workplanes | pending | pending |
-| Ambiguity, Profile reuse and unsupported cases | pending | pending |
-| Command switching, cleanup and 3D picking | pending | pending |
+### Evidence boundaries and untested scenarios
+
+The user did not supply an individual 100%/200% result matrix for every detailed
+procedure below, exact Fedora/KDE versions, GPU/driver, resolution or Qt scaling
+variables. Do not infer those details from the overall PASS or automated tests.
+Native Qt Wayland embedding, physical cross-monitor scaling and a 10,000-point
+interactive spline stress test are **untested in this reported acceptance**.
+Native Wayland embedding remains unsupported: the OCCT viewport uses Qt/xcb
+through XWayland on KDE/Wayland.
+
+The sections below retain the reproducible acceptance procedures, including
+edge-case exercises; they are not additional per-scenario execution records.
+For future reruns, record build, hardware and scale settings. Prefer KDE display
+scaling with `QT_SCALE_FACTOR` unset, or record KDE 100% plus
+`QT_SCALE_FACTOR=2` separately. Avoid combining multipliers and restart after
+changing scaling. Do not force `QT_QPA_PLATFORM=wayland`.
 
 ## Commands and interaction
 
@@ -70,13 +81,40 @@ Use a fresh Sketch, or hide unrelated coincident curves between exercises.
 3. Extend circular/elliptical arcs in both directions and with reversed traversal.
    Include a parameter-seam crossing. The opposite endpoint, support, orientation,
    entity ID and metadata must stay intact. Full turns are not invented.
-4. Select a circle giving two forward crossings, a tangent, a coincident support
-   and a finite boundary that misses the available support. Expect explicit
-   refusal rather than a guessed distant solution. Try an interpolating spline
-   and extending a coefficient fragment beyond its knot-domain limit: refuse.
+4. Select a boundary giving two forward crossings. Extend must select the first
+   strictly forward certified intersection using directed curve-parameter progress,
+   not Euclidean distance. Confirm, then repeat from the new endpoint with the
+   same boundary to reach the next crossing; stop when the supported continuation
+   is exhausted. An existing endpoint contact must not create a zero-length
+   extension. Indistinguishable roots, tangencies, coincident supports and
+   uncertifiable geometry remain safe refusals; multiple distinct certified
+   crossings alone are not a refusal. No additional full revolutions are invented.
+   Also try a finite boundary missing the support, an interpolating spline and a
+   coefficient fragment beyond its knot-domain limit: refuse.
 5. Extend a trimmed coefficient fragment within its existing support domain.
    Check unchanged poles, weights and knots, and distinguish a valid open Sketch
    result from a closed Profile that still needs certification.
+
+## Interactive multipoint spline
+
+1. Activate a visible, unlocked Workplane and choose **2D Modeling → Interpolating
+   Spline**. Click point 1, then point 2: show a provisional straight segment and
+   keep OK disabled. Point 3 enables OK only when exact interpolation is valid.
+2. Continue to five or more points. Each click appends one interpolation point;
+   no fixed click count automatically finishes drawing. Move the mouse to update
+   the live exact candidate without accepting another point. Back removes the
+   last accepted point; **Use XY point** explicitly appends numeric coordinates.
+3. Press Enter/OK with at least three valid accepted points. Confirm only those
+   accepted points, excluding the temporary cursor and unaccepted numeric fields.
+   The result is one exact interpolating spline, not a polyline. Escape/Cancel
+   discards the pending spline; confirmation is one Undo/Redo transaction.
+4. Edit the retained interpolation points using **Edit Curve / Trim Parameters**.
+   Check Save/Open, duplication with an unchanged source, and saving during
+   preview: unconfirmed geometry must be excluded from the saved document.
+
+The existing 10,000-point interpolation validation limit and coefficient B-spline
+limits remain unchanged. The reported manual test covered five or more points,
+not stress testing at the limit.
 
 ## Exact oblique projection and Overdraw
 
@@ -138,8 +176,8 @@ Use a fresh Sketch, or hide unrelated coincident curves between exercises.
 5. Finish 2D after an active preview. Select a Part face, an edge and a whole Part
    with Alt; verify normal picking returns with no stale Sketch owner or tool.
 6. Record failures with the exact workflow, build and scaling settings. Desktop
-   checks remain pending until performed by a person; automated xcb/HiDPI sessions
-   do not certify native compositor behavior or physical cross-monitor scaling.
+   results above are user-reported; automated xcb/HiDPI sessions do not certify
+   native compositor behavior or physical cross-monitor scaling.
 
 Known limits: full closed Overdraw sources need two distinct boundaries;
 uncertifiable geometry and self-crossing spline supports are refused; spline
@@ -148,13 +186,13 @@ Profiles retain their existing construction refusals. No tolerance is loosened.
 
 ## Automated validation record for the candidate
 
-The final version-only incremental application build passed:
+The earlier version-only incremental application build passed:
 
 ```sh
 cmake --build build --target OpenDesigner -j4
 ```
 
-After the shared intersection adapter changes, the final focused check passed
+After the earlier shared intersection adapter changes, the focused check passed
 3/3 tests (Trim 0.19 s, Extend 0.16 s, Profile Validation 0.09 s):
 
 ```sh
@@ -162,8 +200,8 @@ cmake --build build --target OpenDesignerSketchTrimTests OpenDesignerSketchExten
 ctest --test-dir build -R '^(sketch-trim-geometry|sketch-extend-geometry|sketch-closed-profile-validation)$' --output-on-failure -j2
 ```
 
-The following previous passing results are retained because the corresponding
-geometry/session code has not changed since validation:
+The following are historical passing results from the earlier implementation
+phases; they do not imply that every shared session file remained unchanged:
 
 ```sh
 # Exact geometry and directly affected existing Overdraw coverage (Phase 4)
@@ -179,4 +217,13 @@ These passed 1/1, 2/2, 2/2 and 2/2 respectively; the workflow sessions took
 in Phase 5. Desktop sessions used the existing xcb/X11 display, with desktop
 sandbox access. No full local CTest suite was run. GitHub Actions supplies the
 broader regression check; its current status is reported on the pull request.
-Manual KDE/XWayland acceptance above remains **pending**.
+Subsequent focused validation (already run before this documentation update):
+
+- Sequential Extend correction: `sketch-extend-geometry`,
+  `sketch-extend-sessions`, `sketch-curve-operations`: **3/3 PASS**, 14.34 s.
+- Interactive spline improvement: `sketch-drawing`,
+  `sketch-advanced-curve-sessions`, `sketch-advanced-curve-sessions-hidpi`:
+  **3/3 PASS**, 55.49 s. Incremental application/session-test builds passed.
+
+Manual Fedora KDE acceptance is **PASS (user-reported)** as scoped above.
+No local builds or tests were run for this documentation-only update.
