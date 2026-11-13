@@ -1,5 +1,8 @@
 # General Move Face (v0.3.6)
 
+v0.5.3 adds [direction references](#direction-from-geometric-references-v053);
+v0.5.4 adds [Move Face by Points](#move-face-by-points-v054).
+
 ## Cylindrical features (v0.4.9, phases 9D–9D.7B)
 
 The existing **3D Modeling → Move Face** command also accepts the cylindrical
@@ -143,6 +146,69 @@ which keep their lateral reference controls.
 Tests: `workplane-reference-sessions` (+`-hidpi`) checks every source, Reverse
 and exact distance against independent `MoveFaceGeometry` oracles, OK/Undo/Redo,
 Part identity, real viewport picks, parallel/stale/cylindrical refusal.
+
+## Move Face by Points (v0.5.4)
+
+The Direction selector of a planar Face has a fourth entry, **By Points:
+start A → end B**. Instead of a direction plus a typed distance, the user picks
+a start point **A** and an end point **B**; the displacement is the full vector
+`B − A`. There is no distance input (the value field is read-only and the
+orange arrow cannot be dragged) and no Reverse: the pick order defines the
+direction.
+
+| Item | Behaviour |
+| --- | --- |
+| Point sources | Part Vertex, construction Point, Sketch point (endpoint, midpoint, center, construction point, intersection) and the center of a circular Part Edge — the point references the shared resolver already supports. Straight Edges, Axes, Faces and Workplanes are not points and are refused. |
+| Picking | Choosing *By Points* arms picking. The first pick sets A, the second B; the preview appears after the second pick. Every further pick **replaces B**. **Pick start point again** discards A and B and restarts with A. Picking uses the shared reference picker (Sketch points use the Sketch snap targets and radius). |
+| Panel (read-only) | A and B, the vector length `|AB|` and the resulting offset along the Face normal `(B − A)·n`, both in mm with six decimals; the value field shows `|AB|`. |
+| Commit | OK/Enter commits exactly one Undo step; Cancel/Escape commits none. A and B are re-resolved from the current document on every preview and once more on OK. |
+
+Geometry: only the normal component moves a planar Face. The command runs the
+existing certified planar path (`MoveFaceGeometry::move`, or
+`EdgeBlendFeatures::move` with Keep ON/OFF when certified blends exist) with
+the normal offset `(B − A)·n`; tangential components of `B − A` do not change a
+plane. Consequently, **if A lies on the moved Face, the Face ends up in the
+plane through B** (parallel to its original plane). If A does not lie on the
+Face, the Face moves by the same normal offset as the A→B vector, wherever A
+and B are. Keep ON/OFF, certification, validation and Part identity rules are
+unchanged.
+
+Refused atomically, with a diagnostic and no geometry, selection or history
+change (the session stays open so another point can be picked):
+
+- A and B coincide (`|B − A| < 1e-6` mm);
+- `|(B − A)·n| < 1e-6` mm: the vector is parallel to the Face;
+- a stale point (Vertex/Edge rebuilt by a later edit: "… no longer exists in
+  the current geometry …"), a deleted Point or Sketch entity, or a hidden or
+  locked source — including Sketch points while **View → Show Workplanes** is
+  off (existing hidden-reference diagnostic);
+- a straight Edge as a point ("Only circular Edges supply a point");
+- Face types outside the existing direction-reference rules: cylindrical
+  hole, notch and boss walls keep their lateral reference controls, and By
+  Points is not offered for them.
+
+Tests: `move-face-by-points-sessions` (+`-hidpi`): A on the Face lands in the
+plane through B (dimensions checked); an oblique vector moves by `(B − A)·n`;
+every point source as A and as B against independent `MoveFaceGeometry`
+oracles; real viewport picks of A and B, replacing B and Pick start point
+again; refusals (coincident, parallel, straight Edge, single point, hidden
+Point, Sketch point on hidden Workplanes, stale Vertex, deleted Point,
+cylindrical wall) without mutation or history; Keep ON/OFF on a Face adjacent
+to a certified Fillet equals `EdgeBlendFeatures::move`; Undo/Redo and Save/Open.
+
+Manual acceptance (Fedora KDE/Wayland, 100 % and `QT_SCALE_FACTOR=2`):
+
+1. Box top Face → Move Face → *By Points*. Pick a top corner Vertex (A), then a
+   Sketch circle center on a vertical Workplane (B): the preview top lies in
+   the plane through B; the panel shows `|AB|` and the normal offset; OK gives
+   one Undo step; Undo/Redo; Save and reopen.
+2. Pick a further point: B is replaced and the preview updates. Click *Pick
+   start point again*: A and B are cleared.
+3. Pick A and B at equal height (vector parallel to the top): refused, no
+   preview. Pick the same point twice: refused.
+4. On a box with a Fillet next to the top Face, By Points with Keep ON and OFF.
+5. 200 %: picking Vertex, Point, Sketch point and circular Edge center hits the
+   intended point; the arrow and blue preview render correctly.
 
 ## Planar faces containing cylindrical openings (Phase 9F.1B)
 

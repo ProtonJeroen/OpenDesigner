@@ -1,9 +1,13 @@
-# Workplanes and geometric references (v0.5.3)
+# Workplanes and geometric references (v0.5.3, v0.5.4)
+
+v0.5.4 adds the view-level **Show/Hide Workplanes** toggle (§5.6) and
+[Move Face by Points](MOVE_FACE.md#move-face-by-points-v054) (§5.7). Exact
+ellipse/spline curves, exact projection and 2D splines (§8) move to v0.5.5.
 
 This document defines the coordinate frames, reference types, reference
 stability rules, persistence and Undo/Redo behaviour that Workplanes, Axes,
 Points, Sketch geometry and solid subshapes share from v0.5.3 onwards. It is the
-contract that later exact curves (v0.5.4), Sweep and Loft build on.
+contract that later exact curves (v0.5.5), Sweep and Loft build on.
 
 The geometry-first, history-independent principle of the
 [roadmap](ROADMAP.md) applies throughout: a reference is evaluated against the
@@ -195,6 +199,46 @@ command and clears solid selection. Wireframe/Shaded changes the Part display
 mode only. Neither is saved in `.odc`, neither is undoable, and New/Open keep
 the current view settings.
 
+### 5.6 Show/Hide Workplanes (v0.5.4)
+
+**View → Show Workplanes** (`view.show_workplanes`, checkable, also on the 3D
+toolbar next to *Show 3D Geometry*) follows the Show/Hide 3D Geometry pattern:
+a view-level flag in `CadViewport` (`setShowWorkplanes`, `showWorkplanes`).
+
+- **Hidden:** all Workplane frames, the active-Workplane ring, Workplane labels
+  and every Sketch entity on a Workplane are erased from the viewer, so they are
+  neither drawn nor detected. A context selection filter rejects them as a
+  second guard. `pickReference` skips them (Sketch snap targets, Sketch lines,
+  Workplane frames) and `referenceModel()` marks every Workplane hidden, so
+  `References::resolve` refuses Workplanes and their Sketch geometry with the
+  existing hidden-reference diagnostics ("Hidden or locked Workplane …",
+  "Sketch geometry on a hidden Workplane …"). Construction role choices omit
+  hidden Workplanes. Selected Workplanes and Sketch entities are deselected;
+  other selections (Parts, Faces, Axes, Points) are kept.
+- **Not affected:** Axes and Points (not Workplane geometry) and 3D solids.
+- **View state only:** `Construction::Object::visible` and
+  `Sketch::Entity::visible` are never changed; nothing is saved in `.odc`; no
+  Undo step; the document is not dirtied. New/Open keep the current setting.
+- **Showing again** displays exactly the objects whose own visible flag is on,
+  so individually hidden Workplanes and Sketch entities stay hidden.
+- **Independent** of Show/Hide 3D Geometry and Wireframe/Shaded; all eight
+  combinations work.
+- **Hiding** ends Sketch editing and cancels an open command, so no command
+  keeps editing geometry that became invisible.
+- **Automatic show:** activating a Workplane (Edit Sketch, Workplane combo,
+  browser, context menu, API) and starting any Workplane construction command
+  (new Workplane or Move/Rotate/Offset of one) switch the toggle back on, so
+  the user never edits invisible geometry.
+
+### 5.7 Move Face by Points (v0.5.4)
+
+A fourth Move Face Direction source, **By Points**, uses the full vector
+`B − A` between two picked point references (Vertex, Point, Sketch point,
+circular Edge center) instead of a direction plus distance. It reuses
+`pickReference`, `References::resolve` and the certified planar Move Face path
+with offset `(B − A)·n`. Details, refusals and acceptance steps:
+[Move Face](MOVE_FACE.md#move-face-by-points-v054).
+
 ## 6. Persistence
 
 No `.odc` schema change: schema v5 remains current.
@@ -215,9 +259,10 @@ No `.odc` schema change: schema v5 remains current.
 | Workplane Move/Rotate (frame preview) | one `ConstructionChange` on OK (unchanged) |
 | Axis/Point creation (any source) | one `ConstructionChange` on OK |
 | Move Face with a direction reference | one `FaceChange` on OK; Cancel/refusal none |
-| Wireframe/Shaded, Show/Hide 3D Geometry | none (view state) |
+| Wireframe/Shaded, Show/Hide 3D Geometry, Show/Hide Workplanes | none (view state) |
+| Move Face by Points | one `FaceChange` on OK; Cancel/refusal none |
 
-## 8. Interfaces for v0.5.4 (not implemented)
+## 8. Interfaces for v0.5.5 (not implemented; planned as v0.5.4 before)
 
 - **Ellipses / elliptical arcs:** already exact `Sketch::Ellipse`/`EllipticalArc`
   values. As references they add Sketch point features *major/minor vertex*
@@ -245,12 +290,16 @@ No `.odc` schema change: schema v5 remains current.
 | `sketch-display-bounds` | 100 mm minimum opening, 10 mm ring (3) |
 | `workplane-reference-sessions` (+`-hidpi`) | Activation keeps the camera on every route (1); Look at Workplane direction/up (2); rendered frame during Move/Rotate preview, Cancel, minimum frame and ring (3); Axis/Point from Sketch references with Undo/Redo and Save/Open (4, 10); real picks equal snaps (7); Move Face per direction source, Reverse, exact distance with independent oracles, OK/Undo/Redo (8, 10); parallel and cylindrical refusal (9); stale Edge refusal (6); schema v2/v3 documents (11); view modes keep visibility flags (12) |
 | `sketch-drawing` | Edit Sketch leaves the camera unchanged; Look at Workplane aligns it |
+| `workplane-visibility-sessions` (+`-hidpi`) | v0.5.4 Show/Hide Workplanes: frames, rings, labels and Sketches not drawn (pixels), not detected, not picked/snapped/resolved; Axes/Points/solids unaffected; exact restore including individually hidden objects; flags, `.odc`, Undo and dirty state unchanged; Open keeps the setting; construction previews keep them hidden; all Wireframe/Shaded × 3D × Workplanes combinations; auto-show on activation, Edit Sketch, Workplane combo, new and moved Workplane |
+| `move-face-by-points-sessions` (+`-hidpi`) | v0.5.4 Move Face by Points, see [Move Face](MOVE_FACE.md#move-face-by-points-v054) |
 
 Commands (Release/Ninja, incremental):
 
 ```sh
 cmake --build build -j4
 LC_ALL=C ctest --test-dir build -R '^(reference-geometry|construction-geometry|sketch-display-bounds|workplane-reference-sessions|workplane-reference-sessions-hidpi)$' --output-on-failure -j2
+# v0.5.4
+LC_ALL=C ctest --test-dir build -R '^(workplane-visibility-sessions|move-face-by-points-sessions)(-hidpi)?$' --output-on-failure -j2
 ```
 
 Existing session tests that draw on the Sketch plane now call Look at
@@ -274,3 +323,22 @@ Workplane explicitly instead of relying on activation.
 6. Create Point from a Sketch circle center and an Axis from a Sketch line.
 7. View → Wireframe/Shaded and Show/Hide 3D Geometry: individual Part
    visibility in the browser is unchanged; toggling back restores exactly.
+8. (v0.5.4) With two Workplanes with Sketches, one of them hidden in the
+   browser, and a Sketch entity hidden individually: View → Show Workplanes
+   off. All frames, the green active ring, labels and Sketches disappear;
+   Axes, Points and solids remain; clicking where a Sketch was selects nothing
+   from it; the browser visibility icons are unchanged; Undo is unchanged and
+   the title shows no unsaved change. Toggle on: exactly the previously visible
+   frames and Sketches return (the browser-hidden Workplane and entity stay
+   hidden).
+9. (v0.5.4) Combine Show Workplanes with Show 3D Geometry and
+   Wireframe/Shaded in all orders; each toggle only affects its own objects.
+10. (v0.5.4) With Workplanes hidden: Edit Sketch on a Workplane, choosing one
+    in the 2D toolbar combo, and creating a new Workplane each switch the
+    toggle (menu and toolbar) back on.
+11. (v0.5.4) With Workplanes hidden, try to use a Sketch point as a Move Face
+    By Points or Point-to-Point reference, or as a construction operand: it is
+    not picked / refused as hidden.
+12. (v0.5.4, 200 %) The toolbar toggle icon/text, and hiding/showing frames
+    and Sketches render without leftovers; picking after showing again hits
+    the intended Sketch entity.

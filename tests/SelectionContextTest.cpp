@@ -495,6 +495,8 @@ void runSketchEllipseSessions();
 void runSketchEllipseDrawing();
 void runSelectionContours();
 void runWorkplaneReferenceSessions();
+void runWorkplaneVisibilitySessions();
+void runMoveFaceByPointsSessions();
 int main(int argc,char** argv) {
 #if defined(Q_OS_LINUX)
     if(qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM") && !qEnvironmentVariableIsEmpty("DISPLAY"))qputenv("QT_QPA_PLATFORM","xcb");
@@ -504,6 +506,8 @@ int main(int argc,char** argv) {
     try {
         if(app.arguments().contains("--contours")) runSelectionContours();
         else if(app.arguments().contains("--workplane-references")) runWorkplaneReferenceSessions();
+        else if(app.arguments().contains("--workplane-visibility")) runWorkplaneVisibilitySessions();
+        else if(app.arguments().contains("--move-by-points")) runMoveFaceByPointsSessions();
         else if(app.arguments().contains("--automatic-selection")) SelectionContextTest::automatic();
         else if(app.arguments().contains("--edge-blend-features")) runEdgeBlendFeatureSessions();
         else if(app.arguments().contains("--direct-modeling-recovery")) runDirectModelingRecovery();

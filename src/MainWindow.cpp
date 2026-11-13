@@ -29,7 +29,7 @@
 #include <algorithm>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("OpenDesigner 0.5.3");
+    setWindowTitle("OpenDesigner 0.5.4");
     resize(1280, 800);
     viewport_ = new CadViewport(this);
     connect(viewport_,&CadViewport::geometryOperationFailed,this,[this](const QString& operation,const QString& reason) {
@@ -264,7 +264,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(viewport_,&CadViewport::constructionsChanged,lookAtWorkplane,updateLookAt);
     auto* help = menuBar()->addMenu(tr("&Help"));
     connect(help->addAction(tr("&About")), &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.5.3 — Workplanes and geometric references."));
+        QMessageBox::about(this, tr("About OpenDesigner"), tr("OpenDesigner 0.5.4 — Show/Hide Workplanes and Move Face by Points."));
     });
     auto* toolbar = addToolBar(tr("3D Modeling"));toolbar->setObjectName("modeling3DToolbar");
     connect(viewport_,&CadViewport::transformModesChanged,this,[interactiveMove,directMove,interactiveRotate](bool faceNormal,bool move,bool rotate) {
@@ -556,7 +556,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 void MainWindow::updateWindowTitle() {
     const QString name = documentPath_.isEmpty()
         ? tr("Untitled") : QFileInfo(documentPath_).fileName();
-    setWindowTitle(tr("OpenDesigner 0.5.3 — %1%2").arg(name, documentDirty_ ? QStringLiteral(" *") : QString()));
+    setWindowTitle(tr("OpenDesigner 0.5.4 — %1%2").arg(name, documentDirty_ ? QStringLiteral(" *") : QString()));
 }
 
 void MainWindow::markDocumentDirty() {
