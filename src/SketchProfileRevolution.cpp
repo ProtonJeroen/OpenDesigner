@@ -74,7 +74,7 @@ Result revolve(const SketchProfileBuilder::Result& faces,const gp_Ax1& axis,doub
                                        && std::abs(curve.Value(curve.LastParameter()).X())>tolerance))
                     return fail(Code::SelfIntersection,"A Profile is tangent to the axis inside a curve; pinched revolutions are refused.",i);
             }
-            GProp_GProps area;BRepGProp::SurfaceProperties(face,area);
+            GProp_GProps area;BRepGProp::SurfaceProperties(face,area,1.e-12);
             const double radius=std::abs(gp_Vec(axis.Location(),area.CentreOfMass()).Dot(gp_Vec(radial)));
             if(!std::isfinite(area.Mass()) || area.Mass()<=0 || !std::isfinite(radius) || radius<=tolerance)
                 return fail(Code::InvalidFace,"Profile area or radial moment is degenerate.",i);

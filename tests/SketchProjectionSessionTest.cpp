@@ -330,8 +330,9 @@ struct SketchProjectionSessionTest {
         check(v.sketchProjectionPanel_->findChild<QPlainTextEdit*>("projectionDiagnostics")->toPlainText().contains("projects to a point"),"kernel diagnostic not shown in panel");
         v.confirmCommandSession();check(v.commandSession_ && v.sketchEntities_==baseline && v.undoStack_.size()==history,"invalid OK committed or destroyed correction workflow");
         TopoDS_Shape unsupported;for(TopExp_Explorer it(v.boxes_[5].shape,TopAbs_EDGE);it.More();it.Next()) if(BRepAdaptor_Curve(TopoDS::Edge(it.Current())).GetType()==GeomAbs_BSplineCurve) {unsupported=it.Current();break;}
-        check(!unsupported.IsNull(),"unsupported-curve fixture is missing its spline");pick(v,{{0,face},{5,unsupported}});
-        check(!v.commandSession_->valid && v.sketchPreviews_.empty() && v.sketchProjectionPanel_->findChild<QPlainTextEdit*>("projectionDiagnostics")->toPlainText().contains("not approximated"),"unsupported curve diagnostic/atomic preview failed");
+        check(!unsupported.IsNull(),"unsupported-curve fixture is missing its spline");pick(v,{{5,unsupported}});
+        check(v.commandSession_->valid && !v.sketchPreviews_.empty() && v.sketchEntities_==baseline,"exact standalone B-spline preview failed or mutated document");
+        check(std::any_of(v.commandSession_->sketch->after.begin(),v.commandSession_->sketch->after.end(),[](const auto& e){return std::holds_alternative<Sketch::BSpline>(e.geometry);}),"B-spline projection lost exact type");
         pick(v,{{0,face}});preview(v,5);v.sketchProjectionPanel_->buttons->button(QDialogButtonBox::Cancel)->click();normalPicking(v);
         for(int route=0;route<3;++route) {
             v.startSketchProjection();pick(v,{{0,face}});preview(v,5);

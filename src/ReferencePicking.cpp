@@ -86,6 +86,23 @@ std::optional<References::Target> CadViewport::pickReference(const QPoint& pixel
             std::optional<Sketch::Segment> shown;
             if(const auto* s=std::get_if<Sketch::Segment>(&e.geometry)) shown=*s;
             else if(const auto* l=std::get_if<Sketch::InfiniteLine>(&e.geometry)) shown=Sketch::clipLine(*l,Sketch::displayRectangle(*wp,sketchEntities_));
+            else if(Sketch::isElliptical(e.geometry)) {
+                const auto ellipse=std::holds_alternative<Sketch::Ellipse>(e.geometry)?std::get<Sketch::Ellipse>(e.geometry):std::get<Sketch::EllipticalArc>(e.geometry).ellipse;
+                shown=Sketch::Segment{Sketch::ellipsePoint(ellipse,0),Sketch::ellipsePoint(ellipse,3.14159265358979323846)};
+            }
+            else if(const auto* spline=std::get_if<Sketch::Spline>(&e.geometry)) {
+                const auto c=Sketch::splineCurve(*spline);
+                for(bool end:{false,true}) {
+                    gp_Pnt2d p;gp_Vec2d tangent;c->D1(end?c->LastParameter():c->FirstParameter(),p,tangent);
+                    if(tangent.Magnitude()<=1.e-9) continue;
+                    tangent.Normalize();const Sketch::Point a{p.X(),p.Y()},b{p.X()+10*tangent.X(),p.Y()+10*tangent.Y()};
+                    const double distance=segmentDistance(cursor,project(Sketch::worldPoint(a,wp->frame)),project(Sketch::worldPoint(b,wp->frame)));
+                    if(distance<=bestDistance) {
+                        References::Target target{Kind::SketchLine,e.id};target.point.feature=end?Sketch::PointFeature::End:Sketch::PointFeature::Start;
+                        best=target;bestDistance=distance;
+                    }
+                }
+            }
             if(!shown) continue;
             const double d=segmentDistance(cursor,project(Sketch::worldPoint(shown->start,wp->frame)),project(Sketch::worldPoint(shown->end,wp->frame)));
             if(d<=bestDistance) {best=References::Target{Kind::SketchLine,e.id};bestDistance=d;}

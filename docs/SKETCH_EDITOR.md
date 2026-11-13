@@ -1,5 +1,8 @@
 # 2D Modeling / Sketch Editor — v0.4.1 and v0.4.2 foundations
 
+Current v0.5.5 scope and limits: [Advanced Sketch Curves](ADVANCED_SKETCH_CURVES.md).
+The phase descriptions below retain their historical scope.
+
 Phase 1 supplies document values, native storage, presentation, browser management
 and shared history. Phase 2 adds explicit Workplane editing, interactive and
 numeric drawing, analytic snapping and live feedback. Phase 3 adds explicit

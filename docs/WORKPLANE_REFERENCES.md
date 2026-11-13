@@ -1,5 +1,8 @@
 # Workplanes and geometric references (v0.5.3, v0.5.4)
 
+Current v0.5.5 scope and limits: [Advanced Sketch Curves](ADVANCED_SKETCH_CURVES.md).
+The phase descriptions below retain their historical scope.
+
 v0.5.4 adds the view-level **Show/Hide Workplanes** toggle (§5.6) and
 [Move Face by Points](MOVE_FACE.md#move-face-by-points-v054) (§5.7). Exact
 ellipse/spline curves, exact projection and 2D splines (§8) move to v0.5.5.

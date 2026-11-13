@@ -24,7 +24,7 @@ Result extrude(const SketchProfileBuilder::Result& faces,const gp_Dir& normal,do
             if(f.shape.IsNull() || !BRepCheck_Analyzer(f.shape).IsValid())return fail(Code::InvalidFace,"A source face is not a valid B-Rep.",i);
             BRepAdaptor_Surface surface(f.shape);
             if(surface.GetType()!=GeomAbs_Plane || !surface.Plane().Axis().Direction().IsParallel(normal,1.e-12))return fail(Code::InvalidFace,"Extrusion direction must be normal to every source Workplane face.",i);
-            GProp_GProps area;BRepGProp::SurfaceProperties(f.shape,area);
+            GProp_GProps area;BRepGProp::SurfaceProperties(f.shape,area,1.e-12);
             if(!std::isfinite(area.Mass()) || area.Mass()<=0)return fail(Code::InvalidFace,"A source face has no positive area.",i);
             BRepPrimAPI_MakePrism prism(f.shape,gp_Vec(normal)*distance,true,true);
             if(!prism.IsDone())return fail(Code::InvalidSolid,"OCCT could not construct the prism.",i);
@@ -38,7 +38,7 @@ Result extrude(const SketchProfileBuilder::Result& faces,const gp_Dir& normal,do
         }
         Result result;result.shape=faces.faces.size()==1?first:TopoDS_Shape(compound);
         if(!BooleanGeometry::certifiedSolid(result.shape,result.volume,result.solidCount) || result.solidCount!=faces.faces.size()
-            || std::abs(result.volume-expected)>std::max(1.e-7L,std::abs(expected)*1.e-9L))return fail(Code::InvalidSolid,"Prism volume or solid count does not match its source regions.");
+            || std::abs(result.volume-expected)>std::max(1.e-7L,std::abs(expected)*1.e-9L))return fail(Code::InvalidSolid,QString("Prism volume or solid count does not match its source regions (volume %1, expected %2; solids %3, expected %4).").arg(result.volume,0,'g',17).arg(double(expected),0,'g',17).arg(result.solidCount).arg(faces.faces.size()));
         result.success=true;return result;
     } catch(const Standard_Failure& e) {return fail(Code::NumericalFailure,QString::fromUtf8(e.GetMessageString()));}
       catch(const std::exception& e) {return fail(Code::NumericalFailure,QString::fromUtf8(e.what()));}

@@ -59,7 +59,14 @@ int main() {
     model.sketches={entity("seg","wp",Sketch::Segment{{0,0},{30,40}}),entity("line","wp",Sketch::InfiniteLine{{0,10},{2,0}}),
                     entity("circle","wp",Sketch::Circle{{50,0},10}),entity("cp","wp",Sketch::ConstructionPoint{{-5,-6}}),
                     entity("cross","wp",Sketch::Segment{{0,40},{40,0}})};
+    const Sketch::Ellipse ellipse{{4,5},8,3,.4};
+    model.sketches.push_back(entity("ellipse","wp",ellipse));
+    const Sketch::Spline spline{{{2,3},{7,8},{12,4}},false,Sketch::Point{2,1},Sketch::Point{3,-1}};
+    model.sketches.push_back(entity("spline","wp",spline));
     Resolved r;QString error;
+    check(resolve(model,{Kind::SketchLine,"ellipse"},r,error) && r.line && r.line->Direction().IsEqual(gp_Dir(gp_Vec(wp.frame.XDirection())*std::cos(.4)+gp_Vec(wp.frame.YDirection())*std::sin(.4)),1.e-12),"ellipse major direction wrong");
+    Target splineEnd{Kind::SketchLine,"spline"};splineEnd.point.feature=Sketch::PointFeature::End;
+    check(resolve(model,splineEnd,r,error) && r.line && r.line->Direction().IsEqual(gp_Dir(gp_Vec(wp.frame.XDirection())*3-gp_Vec(wp.frame.YDirection())),1.e-12),"spline end tangent reference wrong");
     // Part: placement frame.
     check(resolve(model,{Kind::Part,"box"},r,error) && r.plane && near(*r.point,gp_Pnt(10,20,30)),"Part reference");
     // Face: planar top face, oriented outward normal and centroid, with placement.
@@ -155,7 +162,7 @@ int main() {
             Target t{Kind::SketchPoint,target.reference->entity};t.point=*target.reference;
             check(resolve(model,t,r,error) && near(*r.point,Sketch::worldPoint(target.point,wp.frame),0),"resolved reference differs from snapped point");
         }
-        check(referenced>=11,"expected endpoint/midpoint/center/position/intersection snap references");
+        check(referenced>=18,"expected endpoint/midpoint/center/position/intersection snap references");
     }
     std::cout<<"Reference resolution, transforms, stale refusal and snap identity passed.\n";return 0;
  } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}

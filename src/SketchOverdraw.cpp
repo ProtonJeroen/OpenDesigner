@@ -87,7 +87,7 @@ bool overdrawCandidates(const std::vector<Entity>& entities,const QString& workp
         }
     }
     QStringList notices;
-    if(unsupportedConics) notices<<QString("%1 ellipse/elliptical arc source(s) excluded: elliptic Overdraw is not supported in phase 6A.1.").arg(unsupportedConics);
+    if(unsupportedConics) notices<<QString("%1 ellipse/elliptical arc/spline source(s) excluded: elliptic Overdraw and spline Overdraw are not supported.").arg(unsupportedConics);
     if(unbounded) notices<<QString("%1 unbounded line tails excluded; Workplane borders are not geometric limits.").arg(unbounded);
     if(uncutCircles) notices<<QString("%1 circle(s) need at least two distinct intersection points; full circles are not converted to arcs.").arg(uncutCircles);
     if(small) notices<<QString("%1 tolerance-sized piece(s) excluded.").arg(small);

@@ -111,6 +111,7 @@ public:
     bool setMoveFaceDirection(MoveDirectionSource source, const std::vector<References::Target>& references, bool reverse);
     void startSketchDrawing(Sketch::DrawTool tool, Sketch::Role role = Sketch::Role::Profile);
     void startSketchOverdraw();
+    void editSketchCurve(bool createSpline=false,Sketch::Role role=Sketch::Role::Profile);
     void startSketchConstruction(Sketch::ConstructionTool tool);
     void startSketchProjection();
     void startProfileExtrusion();
@@ -223,6 +224,7 @@ private:
     friend struct SketchReleaseSessionTest;
     friend struct SketchPointSessionTest;
     friend struct SketchEllipseSessionTest;
+    friend struct SketchAdvancedCurveSessionTest;
     friend struct SketchEllipseDrawingTest;
     friend struct CommandPanelSessionTest;
     friend struct SketchProjectionSessionTest;

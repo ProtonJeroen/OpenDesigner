@@ -157,7 +157,7 @@ void storage() {
     auto extra=entity(EllipticalArc{ellipse,-1.2,1.7});extra.workplaneId=other.id;document.sketchEntities.push_back(extra);
     const auto path=temp.filePath("ellipses.odc");NativeDocumentSnapshot loaded;
     check(NativeDocumentStorage::save(path,document,error),qPrintable(error));schema(path,5);
-    check(NativeDocumentStorage::load(path,loaded,error) && loaded.schemaVersion==5 && loaded.sketchEntities==document.sketchEntities,"v5 conic values/IDs/properties/owners changed");
+    check(NativeDocumentStorage::load(path,loaded,error) && loaded.schemaVersion==NativeDocumentStorage::CurrentSchemaVersion && loaded.sketchEntities==document.sketchEntities,"v5 conic values/IDs/properties/owners changed");
     auto mixed=document;NativePartState part;part.id="part-a";part.name="Box with conics";
     part.shape=BRepPrimAPI_MakeBox(10,20,30).Shape();part.color=QColor(40,80,160);part.visible=false;
     part.transform.SetRotation(gp_Ax1(gp_Pnt(),gp_Dir(1,2,3)),0.7);part.transform.SetTranslationPart(gp_Vec(30,-20,80));
@@ -193,7 +193,7 @@ void storage() {
         if(version>=4) legacy.sketchEntities.push_back(entity(ConstructionPoint{{1,2}}));
         const auto file=temp.filePath(QString("legacy-v%1.odc").arg(version));
         check(NativeDocumentStorage::save(file,legacy,error),qPrintable(error));schema(file,version);
-        check(NativeDocumentStorage::load(file,loaded,error) && loaded.schemaVersion==5 && loaded.sketchEntities==legacy.sketchEntities
+        check(NativeDocumentStorage::load(file,loaded,error) && loaded.schemaVersion==NativeDocumentStorage::CurrentSchemaVersion && loaded.sketchEntities==legacy.sketchEntities
             && loaded.constructions.size()==legacy.constructions.size(),"v1-v4 compatibility lost values");
     }
     auto olderContent=document;olderContent.sketchEntities={entity(ConstructionPoint{{1,2}})};
@@ -208,7 +208,7 @@ void storage() {
         inspect(path,[&](const TDF_Label& root) {
             const auto record=firstRecord(root);Handle(TDataStd_RealArray) values;Handle(TDataStd_IntegerArray) flags;
             check(record.FindAttribute(TDataStd_RealArray::GetID(),values) && record.FindAttribute(TDataStd_IntegerArray::GetID(),flags),"invalid fixture record");
-            if(failure==0) {TDataStd_AsciiString::Set(root,TCollection_AsciiString("OpenDesigner.RootAssembly.v6"));TDataStd_Integer::Set(root,6);}
+            if(failure==0) {const int future=NativeDocumentStorage::CurrentSchemaVersion+1;TDataStd_AsciiString::Set(root,TCollection_AsciiString(QString("OpenDesigner.RootAssembly.v%1").arg(future).toUtf8().constData()));TDataStd_Integer::Set(root,future);}
             if(failure==1) TDataStd_Integer::Set(root,4);
             if(failure==2 || failure==3) {const int v=failure==2?3:4;TDataStd_AsciiString::Set(root,TCollection_AsciiString(QString("OpenDesigner.RootAssembly.v%1").arg(v).toUtf8().constData()));TDataStd_Integer::Set(root,v);}
             if(failure==4) flags->SetValue(0,7);

@@ -7,6 +7,9 @@
 #include <gp_Circ.hxx>
 #include <gp_Elips.hxx>
 #include <Geom_Ellipse.hxx>
+#include <GeomAPI.hxx>
+#include <Standard_Failure.hxx>
+#include <gp_Pln.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Edge.hxx>
 #include <stdexcept>
@@ -86,10 +89,13 @@ QString typeName(const Geometry& geometry) {
         else if constexpr(std::is_same_v<T,Arc>) return QStringLiteral("Arc");
         else if constexpr(std::is_same_v<T,Ellipse>) return QStringLiteral("Ellipse");
         else if constexpr(std::is_same_v<T,EllipticalArc>) return QStringLiteral("Elliptical Arc");
+        else if constexpr(std::is_same_v<T,Spline>) return QStringLiteral("Interpolating Spline");
+        else if constexpr(std::is_same_v<T,BSpline>) return QStringLiteral("Projected B-Spline");
         else static_assert(unhandled<T>,"Handle the new Sketch type explicitly.");
     },geometry);
 }
 bool valid(const Entity& entity,QString& error) {
+    error.clear();
     if(entity.id.isEmpty() || entity.workplaneId.isEmpty()
        || (entity.role!=Role::Construction && entity.role!=Role::Profile)) {
         error=QStringLiteral("Invalid 2D identity, Workplane or geometry role.");return false;
@@ -104,6 +110,15 @@ bool valid(const Entity& entity,QString& error) {
                 && std::abs(std::hypot(g.direction.x,g.direction.y)-1)<1.e-12;
         } else if constexpr(std::is_same_v<T,ConstructionPoint>) {
             return entity.role==Role::Construction && finite(g.position);
+        } else if constexpr(std::is_same_v<T,BSpline>) {
+            try {return !bsplineCurve(g).IsNull();}
+            catch(const Standard_Failure& e) {error=QString::fromUtf8(e.GetMessageString());return false;}
+            catch(const std::exception& e) {error=QString::fromUtf8(e.what());return false;}
+        } else if constexpr(std::is_same_v<T,Spline>) {
+            if(!validSpline(g,error)) return false;
+            try {return !splineCurve(g).IsNull();}
+            catch(const Standard_Failure& e) {error=QString::fromUtf8(e.GetMessageString());return false;}
+            catch(const std::exception& e) {error=QString::fromUtf8(e.what());return false;}
         } else if constexpr(std::is_same_v<T,Ellipse>) {
             return validEllipse(g);
         } else if constexpr(std::is_same_v<T,EllipticalArc>) {
@@ -118,7 +133,7 @@ bool valid(const Entity& entity,QString& error) {
             return result;
         } else static_assert(unhandled<T>,"Handle the new Sketch type explicitly.");
     },entity.geometry);
-    if(!ok) {error=QStringLiteral("Invalid or degenerate 2D geometry (infinite lines and points must be Construction).");return false;}
+    if(!ok) {if(error.isEmpty()) error=QStringLiteral("Invalid or degenerate 2D geometry (infinite lines and points must be Construction).");return false;}
     error.clear();return true;
 }
 bool validate(const std::vector<Entity>& entities,const std::vector<Construction::Object>& owners,
@@ -146,6 +161,11 @@ TopoDS_Shape shape(const Entity& entity,const gp_Ax3& frame,double displayExtent
             return BRepBuilderAPI_MakeEdge(worldPoint(a,frame),worldPoint(b,frame)).Shape();
         } else if constexpr(std::is_same_v<T,ConstructionPoint>) {
             return BRepBuilderAPI_MakeVertex(worldPoint(g.position,frame)).Shape();
+        } else if constexpr(std::is_same_v<T,BSpline>) {
+            auto edge=BRepBuilderAPI_MakeEdge(GeomAPI::To3d(bsplineCurve(g),gp_Pln(frame)),g.first,g.last).Shape();
+            return g.reversed?edge.Reversed():edge;
+        } else if constexpr(std::is_same_v<T,Spline>) {
+            return BRepBuilderAPI_MakeEdge(GeomAPI::To3d(splineCurve(g),gp_Pln(frame))).Shape();
         } else if constexpr(std::is_same_v<T,Ellipse> || std::is_same_v<T,EllipticalArc>) {
             const Ellipse& e=[&]() -> const Ellipse& {if constexpr(std::is_same_v<T,Ellipse>) return g;else return g.ellipse;}();
             if(!validEllipse(e)) throw std::invalid_argument("Invalid ellipse support.");

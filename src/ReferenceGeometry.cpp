@@ -132,7 +132,18 @@ bool resolve(const Model& model,const Target& target,Resolved& result,QString& e
             if(const auto* s=std::get_if<Sketch::Segment>(&e->geometry)) {origin=s->start;direction={s->end.x-s->start.x,s->end.y-s->start.y};
                 r.point=Sketch::worldPoint({(s->start.x+s->end.x)/2,(s->start.y+s->end.y)/2},wp->frame);}
             else if(const auto* l=std::get_if<Sketch::InfiniteLine>(&e->geometry)) {origin=l->origin;direction=l->direction;r.point=Sketch::worldPoint(origin,wp->frame);}
-            else return fail(error,QStringLiteral("Only Sketch lines supply a line reference."));
+            else if(const auto* spline=std::get_if<Sketch::Spline>(&e->geometry)) {
+                const auto c=Sketch::splineCurve(*spline);gp_Pnt2d point;gp_Vec2d tangent;
+                const bool end=target.point.feature==Sketch::PointFeature::End;
+                c->D1(end?c->LastParameter():c->FirstParameter(),point,tangent);
+                origin={point.X(),point.Y()};direction={tangent.X(),tangent.Y()};r.point=Sketch::worldPoint(origin,wp->frame);
+            }
+            else if(Sketch::isElliptical(e->geometry)) {
+                const auto ellipse=std::holds_alternative<Sketch::Ellipse>(e->geometry)?std::get<Sketch::Ellipse>(e->geometry):std::get<Sketch::EllipticalArc>(e->geometry).ellipse;
+                origin=ellipse.center;direction={std::cos(ellipse.axisAngle),std::sin(ellipse.axisAngle)};
+                r.point=Sketch::worldPoint(origin,wp->frame);
+            }
+            else return fail(error,QStringLiteral("Only Sketch lines and ellipse major axes supply this line reference."));
             const gp_Vec world=gp_Vec(wp->frame.XDirection())*direction.x+gp_Vec(wp->frame.YDirection())*direction.y;
             if(!(world.Magnitude()>ZeroLength)) return fail(error,QStringLiteral("The Sketch line has zero length."));
             r.line=gp_Ax1(Sketch::worldPoint(origin,wp->frame),gp_Dir(world));

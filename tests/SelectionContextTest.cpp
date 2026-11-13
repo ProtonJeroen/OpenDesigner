@@ -492,6 +492,7 @@ void runRegressionDocumentProbe();
 void runDirectModelingRecovery();
 void runEdgeBlendFeatureSessions();
 void runSketchEllipseSessions();
+void runSketchAdvancedCurveSessions();
 void runSketchEllipseDrawing();
 void runSelectionContours();
 void runWorkplaneReferenceSessions();
@@ -521,6 +522,7 @@ int main(int argc,char** argv) {
         else if(app.arguments().contains("--orthogonal-lines")) runSketchOrthogonalLines();
         else if(app.arguments().contains("--display-bounds")) runSketchDisplayBoundsSessions();
         else if(app.arguments().contains("--ellipse-drawing")) runSketchEllipseDrawing();
+        else if(app.arguments().contains("--advanced-curves")) runSketchAdvancedCurveSessions();
         else if(app.arguments().contains("--ellipses")) runSketchEllipseSessions();
         else if(app.arguments().contains("--projection")) runSketchProjectionSessions();
         else if(app.arguments().contains("--command-panels")) runCommandPanelSessions();

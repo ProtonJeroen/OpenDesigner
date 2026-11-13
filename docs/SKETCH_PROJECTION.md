@@ -1,5 +1,8 @@
 # Exact sketch projection and interactive command — v0.4.2 phases 2–5
 
+Current v0.5.5 scope and limits: [Advanced Sketch Curves](ADVANCED_SKETCH_CURVES.md).
+The phase descriptions below retain their historical scope.
+
 Phases 2–4 supply a widget-independent computation module. It projects
 vertices, bounded analytic straight edges, full circles, bounded circular arcs
 and actual face boundaries onto a chosen Workplane as independent Construction

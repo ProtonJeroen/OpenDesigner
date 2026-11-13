@@ -5,6 +5,14 @@
 #include <limits>
 #include <numeric>
 #include <numbers>
+#include <stdexcept>
+#include <Geom2d_Ellipse.hxx>
+#include <Geom2d_Circle.hxx>
+#include <Geom2d_Line.hxx>
+#include <Geom2d_TrimmedCurve.hxx>
+#include <Geom2dAPI_InterCurveCurve.hxx>
+#include <Geom2dAPI_ProjectPointOnCurve.hxx>
+#include <Standard_Failure.hxx>
 
 namespace SketchProfileValidation {
 namespace {
@@ -38,12 +46,83 @@ constexpr double pi=std::numbers::pi;
 Point arcPoint(const Arc& a,double t) {return {a.center.x+a.radius*std::cos(t),a.center.y+a.radius*std::sin(t)};}
 std::pair<Point,Point> ends(const Geometry& g) {
     if(const auto* s=std::get_if<Segment>(&g)) return {s->start,s->end};
+    if(const auto* a=std::get_if<EllipticalArc>(&g)) {const auto e=ellipticalArcEndpoints(*a);return {e[0],e[1]};}
+    if(const auto* s=std::get_if<Spline>(&g)) return {s->points.front(),s->closed?s->points.front():s->points.back()};
     const auto& a=std::get<Arc>(g);return {arcPoint(a,a.startAngle),arcPoint(a,a.startAngle+a.sweepAngle)};
+}
+// Used only for Profile certification. Snapping retains its explicit conic limits.
+Intersections profileIntersections(const Geometry& a,const Geometry& b,double tolerance) {
+    auto result=Sketch::intersect(a,b,tolerance);
+    if(result.kind!=IntersectionKind::Unsupported) return result;
+    const auto curve=[](const Geometry& g)->Handle(Geom2d_Curve) {
+        Handle(Geom2d_Curve) support;double first=0,last=2*pi;bool trimmed=false;
+        if(const auto* s=std::get_if<Spline>(&g)) return splineCurve(*s);
+        if(const auto* s=std::get_if<Segment>(&g)) {
+            const gp_Pnt2d a(s->start.x,s->start.y),b(s->end.x,s->end.y);
+            return new Geom2d_TrimmedCurve(new Geom2d_Line(a,gp_Dir2d(gp_Vec2d(a,b))),0,a.Distance(b));
+        }
+        if(const auto* l=std::get_if<InfiniteLine>(&g)) return new Geom2d_Line(gp_Pnt2d(l->origin.x,l->origin.y),gp_Dir2d(l->direction.x,l->direction.y));
+        if(isElliptical(g)) {
+            Ellipse e;
+            if(const auto* arc=std::get_if<EllipticalArc>(&g)) {
+                e=arc->ellipse;first=std::min(arc->startParameter,arc->startParameter+arc->sweepParameter);
+                last=first+std::abs(arc->sweepParameter);trimmed=true;
+            } else e=std::get<Ellipse>(g);
+            support=new Geom2d_Ellipse(gp_Ax2d(gp_Pnt2d(e.center.x,e.center.y),gp_Dir2d(std::cos(e.axisAngle),std::sin(e.axisAngle))),e.majorRadius,e.minorRadius);
+        } else {
+            Circle c;
+            if(const auto* arc=std::get_if<Arc>(&g)) {
+                c={arc->center,arc->radius};first=std::min(arc->startAngle,arc->startAngle+arc->sweepAngle);
+                last=first+std::abs(arc->sweepAngle);trimmed=true;
+            } else if(const auto* circle=std::get_if<Circle>(&g)) c=*circle;
+            else return {};
+            support=new Geom2d_Circle(gp_Ax2d(gp_Pnt2d(c.center.x,c.center.y),gp_Dir2d(1,0)),c.radius);
+        }
+        if(trimmed) return new Geom2d_TrimmedCurve(support,first,last);
+        return support;
+    };
+    try {
+        const auto ca=curve(a),cb=curve(b);if(ca.IsNull() || cb.IsNull()) return result;
+        Geom2dAPI_InterCurveCurve intersection(ca,cb,tolerance);
+        if(!intersection.Intersector().IsDone()) return {IntersectionKind::NumericalFailure,{}};
+        result={};
+        if(intersection.NbSegments()) {result.kind=IntersectionKind::Coincident;return result;}
+        for(int i=1;i<=intersection.NbPoints();++i) {
+            const auto p=intersection.Point(i);Point q{p.X(),p.Y()};
+            if(!onCurve(a,q,tolerance) || !onCurve(b,q,tolerance)) return {IntersectionKind::NumericalFailure,{}};
+            result.points.push_back(q);
+        }
+        result.kind=result.points.empty()?IntersectionKind::None:IntersectionKind::Finite;
+        return result;
+    } catch(const Standard_Failure&) {return {IntersectionKind::NumericalFailure,{}};}
+}
+Spline reversedSpline(Spline s) {
+    std::reverse(s.points.begin(),s.points.end());
+    if(s.closed) std::rotate(s.points.begin(),s.points.end()-1,s.points.end());
+    std::swap(s.startTangent,s.endTangent);
+    for(auto* t:{&s.startTangent,&s.endTangent}) if(*t) **t={-(**t).x,-(**t).y};
+    return s;
+}
+long double splineIntegral(const Spline& s,Point origin) {
+    const auto c=splineCurve(s);
+    if(c->IsRational() || c->Degree()>3) throw std::runtime_error("Spline area requires nonrational degree <= 3.");
+    long double integral=0;
+    for(int k=1;k<c->NbKnots();++k) {
+        const double lo=std::max(c->FirstParameter(),c->Knot(k)),hi=std::min(c->LastParameter(),c->Knot(k+1));
+        if(hi<=lo) continue;
+        for(int i=0;i<3;++i) {
+            const double x=i==0?-std::sqrt(3./5):i==1?0:std::sqrt(3./5),w=i==1?8./9:5./9;
+            gp_Pnt2d p;gp_Vec2d v;c->D1((lo+hi)/2+(hi-lo)*x/2,p,v);
+            integral+=((static_cast<long double>(p.X())-origin.x)*v.Y()-(static_cast<long double>(p.Y())-origin.y)*v.X())*((hi-lo)*w/2);
+        }
+    }
+    return integral;
 }
 Geometry geometry(const Curve& c) {return std::visit([](const auto& g)->Geometry{return g;},c.geometry);}
 Point representative(const Contour& contour) {
     const auto g=geometry(contour.curves.front());
     if(const auto* c=std::get_if<Circle>(&g)) return {c->center.x+c->radius,c->center.y};
+    if(const auto* e=std::get_if<Ellipse>(&g)) return ellipsePoint(*e,0);
     return ends(g).first;
 }
 // Exact analytic ray intersections, never curve sampling. Choose a ray which
@@ -54,6 +133,12 @@ std::optional<bool> inside(Point p,const Contour& contour,double tolerance) {
         const auto d=distance(p,c->center);
         if(std::abs(d-c->radius)<=tolerance) return {};
         return d<c->radius;
+    }
+    if(const auto* e=std::get_if<Ellipse>(&contour.curves.front().geometry)) {
+        if(onCurve(*e,p,tolerance)) return {};
+        const long double c=std::cos(e->axisAngle),s=std::sin(e->axisAngle);
+        const long double x=static_cast<long double>(p.x)-e->center.x,y=static_cast<long double>(p.y)-e->center.y;
+        return std::hypot((c*x+s*y)/e->majorRadius,(-s*x+c*y)/e->minorRadius)<1;
     }
     const size_t attempts=8*contour.curves.size()+16;
     for(size_t trial=0;trial<attempts;++trial) {
@@ -69,6 +154,32 @@ std::optional<bool> inside(Point p,const Contour& contour,double tolerance) {
                 const long double x=static_cast<long double>(a.x)-static_cast<long double>(a.y)*(b.x-a.x)/(static_cast<long double>(b.y)-a.y);
                 if(std::abs(x)<=tolerance) {ambiguous=true;break;}
                 if(x>0) result=!result;
+            } else if(const auto* spline=std::get_if<Spline>(&g)) {
+                const auto hits=profileIntersections(g,InfiniteLine{p,{co,si}},tolerance);
+                if(hits.kind==IntersectionKind::Unsupported || hits.kind==IntersectionKind::NumericalFailure || hits.kind==IntersectionKind::Coincident) {ambiguous=true;break;}
+                const auto c=splineCurve(*spline);
+                for(auto hit:hits.points) {
+                    Geom2dAPI_ProjectPointOnCurve projection(gp_Pnt2d(hit.x,hit.y),c);
+                    if(projection.NbPoints()==0) return {};
+                    gp_Pnt2d point;gp_Vec2d derivative;c->D1(projection.LowerDistanceParameter(),point,derivative);
+                    if(std::abs(derivative.Y()*co-derivative.X()*si)<=1.e-10*std::max(1.,derivative.Magnitude())) {ambiguous=true;break;}
+                    const auto q=local(hit);if(std::abs(q.x)<=tolerance) {ambiguous=true;break;}
+                    if(q.x>0) result=!result;
+                }
+                if(ambiguous) break;
+            } else if(const auto* elliptic=std::get_if<EllipticalArc>(&g)) {
+                const auto center=local(elliptic->ellipse.center);
+                const double theta=elliptic->ellipse.axisAngle-angle;
+                const double radius=std::hypot(elliptic->ellipse.majorRadius*std::sin(theta),elliptic->ellipse.minorRadius*std::cos(theta));
+                if(std::abs(std::abs(center.y)-radius)<=tolerance) {ambiguous=true;break;}
+                const auto hits=Sketch::intersect(g,InfiniteLine{p,{co,si}},tolerance);
+                if(hits.kind==IntersectionKind::Unsupported || hits.kind==IntersectionKind::NumericalFailure) return {};
+                for(auto hit:hits.points) {
+                    const auto q=local(hit);
+                    if(std::abs(q.x)<=tolerance) {ambiguous=true;break;}
+                    if(q.x>0) result=!result;
+                }
+                if(ambiguous) break;
             } else {
                 const auto& arc=std::get<Arc>(g);const auto center=local(arc.center);
                 if(std::abs(std::abs(center.y)-arc.radius)<=tolerance) {ambiguous=true;break;}
@@ -91,6 +202,7 @@ std::optional<bool> inside(Point p,const Contour& contour,double tolerance) {
 }
 Result validate(const std::vector<Sketch::Entity>& entities,const QString& workplaneId,double tolerance) {
     using namespace Sketch;
+    try {
     if(workplaneId.isEmpty() || !std::isfinite(tolerance) || tolerance<=0)
         return failure(Status::Invalid,Code::InvalidInput,"Specify a Workplane ID and a finite positive geometry tolerance.");
     std::vector<const Entity*> sources;
@@ -102,7 +214,38 @@ Result validate(const std::vector<Sketch::Entity>& entities,const QString& workp
         const auto& e=*sources[i];QString error;
         if(!Sketch::valid(e,error)) return failure(Status::Invalid,Code::InvalidGeometry,error,{e.id});
         if(i && sources[i-1]->id==e.id) return failure(Status::Invalid,Code::DuplicateIdentity,"Profile entities must have distinct stable IDs.",{e.id});
-        if(std::holds_alternative<Segment>(e.geometry) || std::holds_alternative<Arc>(e.geometry)) {
+        if(const auto* spline=std::get_if<Spline>(&e.geometry)) {
+            const auto c=splineCurve(*spline);
+            for(int pole=1;pole<=c->NbPoles();++pole) if(!reliable(Point{c->Pole(pole).X(),c->Pole(pole).Y()},tolerance))
+                return failure(Status::Unsupported,Code::NumericalFailure,"Spline poles cannot resolve the requested tolerance.",{e.id});
+            Geom2dAPI_InterCurveCurve self(c,tolerance);
+            if(!self.Intersector().IsDone()) return failure(Status::Unsupported,Code::NumericalFailure,"Spline self-intersections could not be certified.",{e.id});
+            if(self.NbSegments()) return failure(Status::Invalid,Code::SelfIntersection,"A spline overlaps itself.",{e.id});
+            for(int hit=1;hit<=self.NbPoints();++hit) {
+                const auto& intersection=self.Intersector().Point(hit);
+                const double a=intersection.ParamOnFirst(),b=intersection.ParamOnSecond();
+                // OCCT can return seam parameters a few ULPs outside the domain.
+                // Accept only arithmetic roundoff at the two known periodic ends.
+                const double noise=64*std::numeric_limits<double>::epsilon()*std::max({1.,std::abs(c->FirstParameter()),std::abs(c->LastParameter())});
+                const auto seam=[&](double u,double v) {
+                    return std::abs(u-c->FirstParameter())<=noise && std::abs(v-c->LastParameter())<=noise
+                        && c->Value(u).Distance(c->StartPoint())<=tolerance && c->Value(v).Distance(c->EndPoint())<=tolerance;
+                };
+                if(!spline->closed || !(seam(a,b) || seam(b,a)))
+                    return failure(Status::Invalid,Code::SelfIntersection,QString("A spline intersects itself (parameters %1, %2; domain %3, %4).").arg(a,0,'g',17).arg(b,0,'g',17).arg(c->FirstParameter(),0,'g',17).arg(c->LastParameter(),0,'g',17),{e.id});
+            }
+        }
+        if(isElliptical(e.geometry)) {
+            const auto ellipse=std::holds_alternative<Ellipse>(e.geometry)?std::get<Ellipse>(e.geometry):std::get<EllipticalArc>(e.geometry).ellipse;
+            if(ellipse.minorRadius<=tolerance) return failure(Status::Invalid,Code::DegenerateCurve,"Ellipse minor radius is smaller than the geometry tolerance.",{e.id});
+            for(double t:{0.,pi/2,pi,3*pi/2}) if(!reliable(ellipsePoint(ellipse,t),tolerance))
+                return failure(Status::Unsupported,Code::NumericalFailure,"Ellipse coordinates cannot resolve the requested tolerance.",{e.id});
+            if(!reliable(ellipse.axisAngle,tolerance/std::max(1.,ellipse.majorRadius)))
+                return failure(Status::Unsupported,Code::NumericalFailure,"Ellipse orientation cannot resolve the requested tolerance.",{e.id});
+            if(const auto* a=std::get_if<EllipticalArc>(&e.geometry);a && !reliable(a->startParameter,tolerance/std::max(1.,ellipse.majorRadius)))
+                return failure(Status::Unsupported,Code::NumericalFailure,"Ellipse parameter cannot resolve the requested tolerance.",{e.id});
+        }
+        if(std::holds_alternative<Segment>(e.geometry) || std::holds_alternative<Arc>(e.geometry) || std::holds_alternative<EllipticalArc>(e.geometry) || (std::holds_alternative<Spline>(e.geometry) && !std::get<Spline>(e.geometry).closed)) {
             const auto [start,end]=ends(e.geometry);
             const auto* arc=std::get_if<Arc>(&e.geometry);
             if(distance(start,end)<=tolerance || (arc && (arc->radius<=tolerance || arc->radius*std::abs(arc->sweepAngle)<=tolerance)))
@@ -114,6 +257,11 @@ Result validate(const std::vector<Sketch::Entity>& entities,const QString& workp
                 || !reliable(Point{arc->center.x-arc->radius,arc->center.y-arc->radius},tolerance))))
                 return failure(Status::Unsupported,Code::NumericalFailure,"Profile coordinates cannot resolve the requested tolerance reliably.",{e.id});
             curveIndex[i]=finiteCurves.size();finiteCurves.push_back(&e);
+        } else if(std::holds_alternative<Spline>(e.geometry)) {
+            circles.push_back(&e);
+        } else if(const auto* ellipse=std::get_if<Ellipse>(&e.geometry)) {
+            if(ellipse->minorRadius<=tolerance) return failure(Status::Invalid,Code::DegenerateCurve,"Ellipse minor radius is smaller than the geometry tolerance.",{e.id});
+            circles.push_back(&e);
         } else if(const auto* c=std::get_if<Circle>(&e.geometry)) {
             if(c->radius<=tolerance) return failure(Status::Invalid,Code::DegenerateCurve,"A Profile circle is smaller than the geometry tolerance.",{e.id});
             if(!reliable(c->center,tolerance) || !reliable(c->radius,tolerance)
@@ -122,7 +270,7 @@ Result validate(const std::vector<Sketch::Entity>& entities,const QString& workp
                 return failure(Status::Unsupported,Code::NumericalFailure,"Circle coordinates cannot resolve the requested tolerance reliably.",{e.id});
             circles.push_back(&e);
         } else return failure(Status::Unsupported,Code::UnsupportedCurve,
-            "Only Profile segments, circular arcs and standalone full circles are supported.",{e.id});
+            "Profile supports segments, circles, ellipses, their arcs and interpolating splines; projected coefficient B-splines require separate certification.",{e.id});
     }
     // Connected components of endpoint proximity, with an explicit diameter
     // check: A~B and B~C must never silently bridge an A-C gap > tolerance.
@@ -145,7 +293,7 @@ Result validate(const std::vector<Sketch::Entity>& entities,const QString& workp
                 || (distance(sa->start,sb->end)<=tolerance && distance(sa->end,sb->start)<=tolerance))
                 return failure(Status::Invalid,Code::DuplicateCurve,"Duplicate Profile segments, including reversed copies, are not allowed.",ids);
         }
-        const auto hits=Sketch::intersect(a.geometry,b.geometry,tolerance);
+        const auto hits=profileIntersections(a.geometry,b.geometry,tolerance);
         if(hits.kind==IntersectionKind::Coincident) {
             bool duplicate=false;
             if(const auto* aa=std::get_if<Arc>(&a.geometry)) if(const auto* ab=std::get_if<Arc>(&b.geometry)) {
@@ -159,7 +307,7 @@ Result validate(const std::vector<Sketch::Entity>& entities,const QString& workp
         }
         if(hits.kind==IntersectionKind::Unsupported || hits.kind==IntersectionKind::NumericalFailure)
             return failure(Status::Unsupported,Code::NumericalFailure,"Profile intersections could not be certified.",ids);
-        if(!std::holds_alternative<Circle>(a.geometry) && !std::holds_alternative<Circle>(b.geometry)) {
+        if(!std::holds_alternative<Circle>(a.geometry) && !std::holds_alternative<Ellipse>(a.geometry) && !(std::holds_alternative<Spline>(a.geometry) && std::get<Spline>(a.geometry).closed) && !std::holds_alternative<Circle>(b.geometry) && !std::holds_alternative<Ellipse>(b.geometry) && !(std::holds_alternative<Spline>(b.geometry) && std::get<Spline>(b.geometry).closed)) {
             const size_t ia=curveIndex[i],ib=curveIndex[j];
             const auto shared=[&](size_t x,size_t y){return roots[2*ia+x]==roots[2*ib+y];};
             for(size_t x=0;x<2;++x) {
@@ -204,10 +352,14 @@ Result validate(const std::vector<Sketch::Entity>& entities,const QString& workp
             visited[edge]=true;auto g=finiteCurves[edge]->geometry;const bool reverse=roots[2*edge]!=node;
             if(reverse) {
                 if(auto* s=std::get_if<Segment>(&g)) std::swap(s->start,s->end);
-                else g=reversedArc(std::get<Arc>(g));
+                else if(const auto* a=std::get_if<Arc>(&g)) g=reversedArc(*a);
+                else if(const auto* a=std::get_if<EllipticalArc>(&g)) g=reversedEllipticalArc(*a);
+                else g=reversedSpline(std::get<Spline>(g));
             }
             if(const auto* s=std::get_if<Segment>(&g)) contour.curves.push_back({finiteCurves[edge]->id,*s,reverse});
-            else contour.curves.push_back({finiteCurves[edge]->id,std::get<Arc>(g),reverse});
+            else if(const auto* a=std::get_if<Arc>(&g)) contour.curves.push_back({finiteCurves[edge]->id,*a,reverse});
+            else if(const auto* a=std::get_if<EllipticalArc>(&g)) contour.curves.push_back({finiteCurves[edge]->id,*a,reverse});
+            else contour.curves.push_back({finiteCurves[edge]->id,std::get<Spline>(g),reverse});
             node=roots[roots[2*edge]==node?2*edge+1:2*edge];
             if(node!=start) edge=adjacent[node][0]==edge?adjacent[node][1]:adjacent[node][0];
         } while(node!=start);
@@ -225,6 +377,14 @@ Result validate(const std::vector<Sketch::Entity>& entities,const QString& workp
             if(const auto* arc=std::get_if<Arc>(&g)) {
                 const long double sweep=arc->sweepAngle,r=arc->radius;
                 twiceArea+=r*r*(sweep-std::sin(sweep));perimeter+=r*std::abs(sweep);
+            } else if(const auto* arc=std::get_if<EllipticalArc>(&g)) {
+                const long double sweep=arc->sweepParameter;
+                twiceArea+=static_cast<long double>(arc->ellipse.majorRadius)*arc->ellipse.minorRadius*(sweep-std::sin(sweep));
+                perimeter+=arc->ellipse.majorRadius*std::abs(sweep); // conservative area uncertainty bound
+            } else if(const auto* spline=std::get_if<Spline>(&g)) {
+                twiceArea+=splineIntegral(*spline,origin)-cross(p,q);
+                const auto c=splineCurve(*spline);
+                for(int pole=2;pole<=c->NbPoles();++pole) perimeter+=c->Pole(pole).Distance(c->Pole(pole-1));
             } else perimeter+=distance(p,q);
         }
         if(!std::isfinite(twiceArea) || !std::isfinite(perimeter))
@@ -236,8 +396,22 @@ Result validate(const std::vector<Sketch::Entity>& entities,const QString& workp
         contours.push_back(std::move(contour));
     }
     for(const auto* e:circles) {
-        const auto& c=std::get<Circle>(e->geometry);Contour contour;contour.curves.push_back({e->id,c});
-        contour.signedArea=std::numbers::pi_v<long double>*c.radius*c.radius;contours.push_back(std::move(contour));
+        Contour contour;
+        if(const auto* spline=std::get_if<Spline>(&e->geometry)) {
+            contour.curves.push_back({e->id,*spline});contour.signedArea=splineIntegral(*spline,spline->points.front())/2;
+            const auto c=splineCurve(*spline);long double perimeter=0;
+            for(int pole=2;pole<=c->NbPoles();++pole) perimeter+=c->Pole(pole).Distance(c->Pole(pole-1));
+            if(!std::isfinite(contour.signedArea) || 2*std::abs(contour.signedArea)<=tolerance*perimeter)
+                return failure(Status::Invalid,Code::DegenerateCurve,"Closed spline area is unresolved.",{e->id});
+            contour.orientation=contour.signedArea<0?Orientation::Clockwise:Orientation::Counterclockwise;
+        } else if(const auto* ellipse=std::get_if<Ellipse>(&e->geometry)) {
+            contour.curves.push_back({e->id,*ellipse});
+            contour.signedArea=std::numbers::pi_v<long double>*ellipse->majorRadius*ellipse->minorRadius;
+        } else {
+            const auto& c=std::get<Circle>(e->geometry);contour.curves.push_back({e->id,c});
+            contour.signedArea=std::numbers::pi_v<long double>*c.radius*c.radius;
+        }
+        contours.push_back(std::move(contour));
     }
     std::vector<std::vector<bool>> contains(contours.size(),std::vector<bool>(contours.size(),false));
     for(size_t i=0;i<contours.size();++i) for(size_t j=0;j<contours.size();++j) if(i!=j) {
@@ -275,5 +449,7 @@ Result validate(const std::vector<Sketch::Entity>& entities,const QString& workp
     result.constructionDiagnostics.push_back({Code::WireNotCertified,
         "Profile analysis is valid; exact OCCT wire closure and B-Rep validity have not been certified. A construction adapter must validate them before extrusion.",{}, {}});
     return result;
+    } catch(const Standard_Failure& e) {return failure(Status::Unsupported,Code::NumericalFailure,QString::fromUtf8(e.GetMessageString()));}
+      catch(const std::exception& e) {return failure(Status::Unsupported,Code::NumericalFailure,QString::fromUtf8(e.what()));}
 }
 }

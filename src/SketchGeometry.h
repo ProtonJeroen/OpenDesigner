@@ -1,6 +1,7 @@
 #pragma once
 #include "ConstructionGeometry.h"
 #include <variant>
+#include <Geom2d_BSplineCurve.hxx>
 #include <QStringList>
 #include <QUuid>
 
@@ -27,7 +28,30 @@ struct EllipticalArc {
     double startParameter=0, sweepParameter=1; // Positive = CCW; no full turns.
     bool operator==(const EllipticalArc&) const = default;
 };
-using Geometry = std::variant<Segment, InfiniteLine, Circle, Arc, ConstructionPoint, Ellipse, EllipticalArc>;
+// Interpolation data remains editable; the evaluated curve is derived on demand.
+// Closed curves are periodic and omit a repeated last point. End tangents are
+// optional directed vectors for open curves; their magnitudes are respected.
+struct Spline {
+    std::vector<Point> points;
+    bool closed=false;
+    std::optional<Point> startTangent, endTangent;
+    bool operator==(const Spline&) const = default;
+};
+// Exact projected B-spline coefficients; no fitted through-points or source link.
+struct BSpline {
+    int degree=3;
+    std::vector<Point> poles;
+    std::vector<double> weights,knots;
+    std::vector<int> multiplicities;
+    bool periodic=false,reversed=false;
+    double first=0,last=1;
+    bool operator==(const BSpline&) const = default;
+};
+Handle(Geom2d_BSplineCurve) bsplineCurve(const BSpline& spline);
+using Geometry = std::variant<Segment, InfiniteLine, Circle, Arc, ConstructionPoint, Ellipse, EllipticalArc, Spline, BSpline>;
+// Throws on invalid or unresolved interpolation; callers stage candidates.
+Handle(Geom2d_BSplineCurve) splineCurve(const Spline& spline);
+bool validSpline(const Spline& spline,QString& error);
 double directedArcSweep(double start,double end,bool clockwise);
 Arc reversedArc(const Arc& arc);
 Point ellipsePoint(const Ellipse& ellipse,double parameter);

@@ -73,7 +73,8 @@ PB::Result constructed(const std::vector<Entity>& entities,const std::vector<dou
             const auto& edge=wire.edges[i];const auto& source=contour.curves[i];
             check(edge.entityId==source.entityId,"edge ID mapping lost");BRepAdaptor_Curve curve(edge.shape);
             const bool segment=std::holds_alternative<Segment>(source.geometry);
-            check(curve.GetType()==(segment?GeomAbs_Line:GeomAbs_Circle),"analytic geometry approximated");
+            const bool elliptic=std::holds_alternative<Ellipse>(source.geometry) || std::holds_alternative<EllipticalArc>(source.geometry);
+            check(curve.GetType()==(segment?GeomAbs_Line:elliptic?GeomAbs_Ellipse:GeomAbs_Circle),"analytic geometry approximated");
             if(const auto* arc=std::get_if<Arc>(&source.geometry)) {
                 check(std::abs(curve.FirstParameter()-std::min(arc->startAngle,arc->startAngle+arc->sweepAngle))<1.e-12,"arc start parameter changed");
                 check(std::abs(curve.LastParameter()-curve.FirstParameter()-std::abs(arc->sweepAngle))<1.e-12,"arc short/long route changed");
@@ -144,6 +145,22 @@ void holesAndIslands() {
     for(auto& e:input)if(auto* s=std::get_if<Segment>(&e.geometry))std::swap(s->start,s->end);
     constructed(input,{5000-100*pi,5000-25*pi});
 }
+void ellipticProfiles() {
+    const Ellipse e{{12,-7},10,3,.7};
+    const gp_Ax3 frame(gp_Pnt(8,-5,20),gp_Dir(1,2,3),gp_Dir(2,-1,0));
+    constructed({entity("ellipse",e)},{30*pi},frame);
+    for(double sweep:{.5*pi,-.5*pi,1.5*pi,-1.5*pi}) {
+        const EllipticalArc a{e,5.8,sweep};const auto ends=ellipticalArcEndpoints(a);
+        constructed({entity("arc",a),entity("chord",Segment{ends[1],ends[0]})},
+            {15*std::abs(sweep-std::sin(sweep))},frame);
+    }
+    auto hole=rectangle(-30,-30,60,60);hole.push_back(entity("ellipse",e));
+    constructed(hole,{3600-30*pi},frame);
+    constructed({entity("outer",Ellipse{{},10,6,.3}),entity("hole",Ellipse{{},2,1,.8})},{58*pi},frame);
+    auto bad=PV::validate({entity("ellipse",e)},"wp");
+    std::get<Ellipse>(bad.contours[0].curves[0].geometry).minorRadius=-1;
+    refused(bad,PB::Code::InvalidValidation);
+}
 void toleranceAndRefusal() {
     auto input=rectangle();std::get<Segment>(input.back().geometry).end.y=.5e-7;
     auto validation=PV::validate(input,"wp");check(validation.status==PV::Status::Valid,"bounded gap test input invalid");
@@ -157,7 +174,7 @@ void toleranceAndRefusal() {
     const auto bounded=PB::build(larger,gp_Ax3(),{1.e-6});
     check(bounded.success && bounded.effectiveVertexTolerance==1.e-6,"approved custom construction tolerance failed");
     input.pop_back();refused(PV::validate(input,"wp"),PB::Code::InvalidValidation);
-    refused(PV::validate({entity("ellipse",Ellipse{})},"wp"),PB::Code::InvalidValidation);
+    constructed({entity("ellipse",Ellipse{})},{2*pi});
     refused(PV::validate({entity("ellipse-arc",EllipticalArc{})},"wp"),PB::Code::InvalidValidation);
     validation=PV::validate(rectangle(),"wp");validation.contours[0].curves[0].geometry=Segment{{0,0},{0,0}};
     refused(validation,PB::Code::InvalidValidation);
@@ -182,6 +199,6 @@ void toleranceAndRefusal() {
 }
 }
 int main() {
-    try {basicAndCurved();holesAndIslands();toleranceAndRefusal();std::cout<<"Profile wire/face construction passed\n";return 0;}
+    try {basicAndCurved();holesAndIslands();ellipticProfiles();toleranceAndRefusal();std::cout<<"Profile wire/face construction passed\n";return 0;}
     catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

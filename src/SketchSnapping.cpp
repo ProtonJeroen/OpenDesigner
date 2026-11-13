@@ -76,6 +76,7 @@ std::vector<std::pair<double,double>> intervals(const Geometry& curve) {
 }
 bool contains(const Geometry& curve,Point p,double tolerance) {
     if(!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(tolerance) || tolerance<=0) return false;
+    if((std::holds_alternative<Spline>(curve) || std::holds_alternative<BSpline>(curve))) {const auto nearest=nearestPoint(curve,p);return nearest && length(sub(*nearest,p))<=tolerance;}
     if(const auto* point=std::get_if<ConstructionPoint>(&curve)) return length(sub(point->position,p))<=tolerance;
     if(const auto e=ellipse(curve)) {
         const auto t=ellipseParameter(*e,p);if(!t || length(sub(ellipsePoint(*e,*t),p))>tolerance) return false;
@@ -100,6 +101,7 @@ Intersections intersect(const Geometry& a,const Geometry& b,double tolerance) {
     Intersections result;if(!std::isfinite(tolerance) || tolerance<=0) return result;
     // Standalone points supply snaps, not curve cuts or Overdraw boundaries.
     if(std::holds_alternative<ConstructionPoint>(a) || std::holds_alternative<ConstructionPoint>(b)) return result;
+    if(std::holds_alternative<Spline>(a) || std::holds_alternative<Spline>(b) || std::holds_alternative<BSpline>(a) || std::holds_alternative<BSpline>(b)) return {IntersectionKind::Unsupported,{}};
     const auto la=line(a),lb=line(b);const auto ca=circle(a),cb=circle(b);
     const auto take=[&](Point p) {if(contains(a,p,tolerance) && contains(b,p,tolerance)) unique(result.points,p,tolerance);};
     if(isElliptical(a) || isElliptical(b)) {
@@ -179,6 +181,21 @@ std::vector<Point> tangentPoints(Point anchor,const Geometry& curve,double toler
 }
 std::optional<Point> nearestPoint(const Geometry& curve,Point point) {
     if(!std::isfinite(point.x) || !std::isfinite(point.y)) return {};
+    if(const auto* s=std::get_if<BSpline>(&curve)) {
+        try {
+            Geom2dAPI_ProjectPointOnCurve projection(gp_Pnt2d(point.x,point.y),bsplineCurve(*s),s->first,s->last);
+            if(projection.NbPoints()==0) return {};
+            const auto p=projection.NearestPoint();return Point{p.X(),p.Y()};
+        } catch(const Standard_Failure&) {return {};} catch(const std::exception&) {return {};}
+    }
+    if(const auto* s=std::get_if<Spline>(&curve)) {
+        try {
+            const auto curve=splineCurve(*s);
+            Geom2dAPI_ProjectPointOnCurve projection(gp_Pnt2d(point.x,point.y),curve,curve->FirstParameter(),curve->LastParameter());
+            if(projection.NbPoints()==0) return {};
+            auto p=projection.NearestPoint();return Point{p.X(),p.Y()};
+        } catch(const Standard_Failure&) {return {};} catch(const std::exception&) {return {};}
+    }
     if(const auto e=ellipse(curve)) {
         const auto local=principal(*e,point);const double x=double(local[0]),y=double(local[1]);
         if(!std::isfinite(x) || !std::isfinite(y)) return {};
@@ -219,8 +236,8 @@ std::optional<Point> nearestPoint(const Geometry& curve,Point point) {
     return {};
 }
 namespace {
-struct FeaturePoint { Point point; SnapKind kind; const char* label; PointFeature feature; };
-bool snapEligible(const Entity& e) {return supportedSketchToolCurve(e.geometry) || isElliptical(e.geometry);}
+struct FeaturePoint { Point point; SnapKind kind; const char* label; PointFeature feature; int index=0; };
+bool snapEligible(const Entity& e) {return supportedSketchToolCurve(e.geometry) || isElliptical(e.geometry) || std::holds_alternative<Spline>(e.geometry) || std::holds_alternative<BSpline>(e.geometry);}
 // Cursor-independent features, in the historical snap order.
 std::vector<FeaturePoint> featurePoints(const Entity& e) {
     std::vector<FeaturePoint> result;
@@ -229,9 +246,22 @@ std::vector<FeaturePoint> featurePoints(const Entity& e) {
             result.push_back({point->position,SnapKind::ConstructionPoint,"Construction point",PointFeature::Position});
         return result;
     }
+    if(const auto* s=std::get_if<Spline>(&e.geometry);s && !s->points.empty()) {
+        for(size_t i=0;i<s->points.size();++i) result.push_back({s->points[i],SnapKind::Endpoint,"Spline through-point",PointFeature::ThroughPoint,int(i)});
+        result.push_back({s->points.front(),SnapKind::Endpoint,"Spline start",PointFeature::Start});
+        result.push_back({s->closed?s->points.front():s->points.back(),SnapKind::Endpoint,"Spline end",PointFeature::End});
+        return result;
+    }
+    if(const auto* s=std::get_if<BSpline>(&e.geometry)) {
+        const auto c=bsplineCurve(*s);const auto a=c->Value(s->reversed?s->last:s->first),b=c->Value(s->reversed?s->first:s->last);
+        result.push_back({{a.X(),a.Y()},SnapKind::Endpoint,"B-spline start",PointFeature::Start});
+        result.push_back({{b.X(),b.Y()},SnapKind::Endpoint,"B-spline end",PointFeature::End});return result;
+    }
     if(!snapEligible(e)) return result;
     if(const auto support=ellipse(e.geometry)) {
         result.push_back({support->center,SnapKind::Center,"Ellipse center",PointFeature::Center});
+        result.push_back({ellipsePoint(*support,0),SnapKind::Endpoint,"Ellipse major vertex",PointFeature::MajorVertex});
+        result.push_back({ellipsePoint(*support,pi/2),SnapKind::Endpoint,"Ellipse minor vertex",PointFeature::MinorVertex});
         if(const auto* arc=std::get_if<EllipticalArc>(&e.geometry)) {
             const auto ends=ellipticalArcEndpoints(*arc);
             result.push_back({ends[0],SnapKind::Endpoint,"Elliptical arc start",PointFeature::Start});
@@ -271,14 +301,14 @@ std::optional<Point> resolvePoint(const std::vector<Entity>& entities,const Poin
         if(reference.index<0 || size_t(reference.index)>=points.size()) {error=QStringLiteral("The referenced intersection no longer exists; pick it again.");return {};}
         error.clear();return points[size_t(reference.index)];
     }
-    for(const auto& f:featurePoints(*entity)) if(f.feature==reference.feature) {error.clear();return f.point;}
+    for(const auto& f:featurePoints(*entity)) if(f.feature==reference.feature && f.index==reference.index) {error.clear();return f.point;}
     error=QStringLiteral("The referenced Sketch point no longer exists on this entity; pick it again.");return {};
 }
 std::vector<SnapTarget> snapTargets(const std::vector<Entity>& entities,const QString& workplaneId,Point cursor,std::optional<Point> anchor,bool intersections) {
     std::vector<SnapTarget> targets;std::vector<const Entity*> eligible;
     const auto addTarget=[&](Point p,SnapKind kind,const char* label){targets.push_back({p,kind,QString::fromLatin1(label)});};
     for(const auto& e:entities) if(e.workplaneId==workplaneId && e.visible && e.selectable) {
-        for(const auto& f:featurePoints(e)) targets.push_back({f.point,f.kind,QString::fromLatin1(f.label),PointReference{e.id,{},f.feature,0}});
+        for(const auto& f:featurePoints(e)) targets.push_back({f.point,f.kind,QString::fromLatin1(f.label),PointReference{e.id,{},f.feature,f.index}});
         if(!snapEligible(e)) continue;
         eligible.push_back(&e);
         if(const auto c=circle(e.geometry)) {
