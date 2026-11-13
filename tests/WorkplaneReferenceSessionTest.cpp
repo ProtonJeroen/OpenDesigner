@@ -323,6 +323,45 @@ struct WorkplaneReferenceSessionTest {
         moveFaceDirections(v);
         olderDocuments(v);
     }
-    static void run() {cameraDecoupling();framePresentation();references();}
+    // 12: view modes never change Part visibility flags; toggling back restores exactly.
+    static void viewModes() {
+        MainWindow w;w.resize(1200,900);w.show();QApplication::processEvents();auto& v=*w.viewport_;QString error;
+        check(v.importDocumentSnapshot(referenceFixture(),error),qPrintable(error));w.documentDirty_=false;
+        v.view_->SetProj(V3d_XposYnegZpos);v.fitAll();QApplication::processEvents();
+        v.setPartVisible(2,false);w.documentDirty_=false;const auto history=v.undoStack_.size();
+        const auto flags=[&]{std::vector<bool> f;for(size_t i=0;i<v.boxes_.size();++i) f.push_back(v.isPartVisible(i));return f;};
+        const auto before=flags();
+        const gp_Pnt onTarget(50,40,60);
+        const auto detectsTarget=[&] {
+            const auto p=pixel(v,onTarget);v.context_->MoveTo(p.x(),p.y(),v.view_,Standard_False);
+            const bool hit=v.context_->HasDetected() && v.context_->DetectedInteractive()==v.boxes_[0].presentation;
+            v.context_->ClearDetected(Standard_False);return hit;
+        };
+        const auto rendered=[&] {
+            Image_AlienPixMap image;v.view_->Redraw();check(v.view_->ToPixMap(image,v.width(),v.height()),"capture failed");
+            // Compare with an empty background pixel in the same capture.
+            const auto p=pixel(v,onTarget);return image.PixelColor(p.x(),p.y()).GetRGB().Distance(image.PixelColor(3,3).GetRGB())>0.05;
+        };
+        check(detectsTarget() && rendered(),"target not visible/pickable initially");
+        action(w,"view.wireframe")->trigger();check(v.wireframe(),"Wireframe not applied");
+        for(size_t i=0;i<v.boxes_.size();++i) check(v.boxes_[i].presentation->DisplayMode()==AIS_WireFrame,"Part not in wireframe");
+        check(flags()==before,"Wireframe changed Part visibility");
+        action(w,"view.shaded")->trigger();check(!v.wireframe(),"Shaded not applied");
+        for(size_t i=0;i<v.boxes_.size();++i) check(v.boxes_[i].presentation->DisplayMode()==AIS_Shaded,"Part not shaded again");
+        auto* show3D=action(w,"view.show_3d");show3D->trigger();check(!v.show3DGeometry(),"Hide 3D Geometry not applied");
+        check(flags()==before,"Hide 3D Geometry changed Part visibility flags");
+        check(!detectsTarget(),"hidden solid still pickable");check(!rendered(),"hidden solid still drawn");
+        check(!v.pickReference(pixel(v,onTarget),{References::Kind::Face},error),"hidden solid supplied a reference");
+        check(v.pickReference(pixel(v,gp_Pnt(150,0,0)),{References::Kind::Axis},error).has_value(),"construction Axis not available while solids are hidden");
+        v.addBox();const size_t added=v.boxes_.size()-1;
+        const auto c=v.boxes_[added].presentation;check(!c->ViewAffinity()->IsVisible(v.view_->View()->Identification()),"new Part shown while 3D geometry is hidden");
+        show3D->trigger();check(v.show3DGeometry() && detectsTarget() && rendered(),"Show 3D Geometry did not restore");
+        auto after=flags();after.pop_back();check(after==before && v.isPartVisible(added),"Show 3D Geometry changed Part visibility");
+        check(!v.isPartVisible(2) && !v.context_->IsDisplayed(v.boxes_[2].presentation),"individually hidden Part reappeared");
+        NativeDocumentSnapshot snapshot;check(v.exportDocumentSnapshot(snapshot) && !snapshot.parts[2].visible && snapshot.parts[0].visible,"view mode leaked into saved visibility");
+        check(v.undoStack_.size()==history,"view modes created history"); // Add Box is not an Undo step either
+        std::cout<<"view modes passed\n";
+    }
+    static void run() {cameraDecoupling();framePresentation();references();viewModes();}
 };
 void runWorkplaneReferenceSessions() {WorkplaneReferenceSessionTest::run();}

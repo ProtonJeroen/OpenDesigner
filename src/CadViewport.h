@@ -89,6 +89,13 @@ public:
     // Sketch lines and Axes by screen distance; then OCCT-detected Part
     // Vertices, Edges, Faces and Workplanes.
     std::optional<References::Target> pickReference(const QPoint& pixel, const std::vector<References::Kind>& accepted, QString& error);
+    // v0.5.3 view-level display settings: never stored in Parts, Undo or .odc.
+    // Hidden 3D geometry keeps every CadPart::visible flag and is neither drawn
+    // nor pickable; Sketches, Workplanes, Axes and Points stay available.
+    void setWireframe(bool wireframe);
+    bool wireframe() const { return wireframe_; }
+    void setShow3DGeometry(bool show);
+    bool show3DGeometry() const { return show3DGeometry_; }
     enum class MoveDirectionSource { FaceNormal, Reference, PointToPoint };
     // Move Face direction input; a FaceNormal source ignores references.
     bool setMoveFaceDirection(MoveDirectionSource source, const std::vector<References::Target>& references, bool reverse);
@@ -183,6 +190,7 @@ signals:
     void sketchSelectionChanged(const QStringList& ids);
     void constructionsChanged();
     void constructionSelectionChanged(const QStringList& ids);
+    void viewModesChanged();
 protected:
     QPaintEngine* paintEngine() const override;
     void paintEvent(QPaintEvent*) override;
@@ -609,6 +617,9 @@ private:
     QCheckBox* moveDirectionReverse_ = nullptr;
     QLabel* moveDirectionLabel_ = nullptr;
     bool moveDirectionPicking_ = false;
+    bool wireframe_ = false, show3DGeometry_ = true;
+    int partDisplayMode() const;
+    void applyViewModes();
     void initializeMoveDirectionControls();
     void updateMoveDirectionControls();
     bool pickMoveDirection(const QPoint& point);
