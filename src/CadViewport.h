@@ -111,6 +111,8 @@ public:
     bool setMoveFaceDirection(MoveDirectionSource source, const std::vector<References::Target>& references, bool reverse);
     void startSketchDrawing(Sketch::DrawTool tool, Sketch::Role role = Sketch::Role::Profile);
     void startSketchOverdraw();
+    void startSketchTrim();
+    void startSketchExtend();
     void editSketchCurve(bool createSpline=false,Sketch::Role role=Sketch::Role::Profile);
     void startSketchConstruction(Sketch::ConstructionTool tool);
     void startSketchProjection();
@@ -220,6 +222,8 @@ private:
     friend struct SketchDrawingTest;
     friend struct SketchOrthogonalLineTest;
     friend struct SketchOverdrawSessionTest;
+    friend struct SketchTrimSessionTest;
+    friend struct SketchExtendSessionTest;
     friend struct SketchConstructionSessionTest;
     friend struct SketchReleaseSessionTest;
     friend struct SketchPointSessionTest;
@@ -382,6 +386,7 @@ private:
         int pickRole=0,selected=-1;
         QString error,notice;
     };
+    struct SketchExtendState { QString sourceId; bool atStart=false; };
     struct SketchOverdrawState {
         struct Pick {size_t piece,from,to;Sketch::Entity profile;};
         Sketch::OverdrawGraph graph;
@@ -431,6 +436,8 @@ private:
         std::vector<Sketch::Entity> sketchDisplayCandidates; // Transient view overlay, never saved/committed.
         std::shared_ptr<SketchDrawingState> drawing;
         std::shared_ptr<SketchOverdrawState> overdraw;
+        std::shared_ptr<SketchExtendState> extend;
+        bool trim=false; // One click-to-remove candidate in the existing Sketch transaction.
         std::shared_ptr<SketchConstructionState> lineConstruction;
         std::shared_ptr<SketchProjectionState> projection;
         std::shared_ptr<ProfileSweepState> sweep;
@@ -501,6 +508,13 @@ private:
     bool sketchConstructionMove(const QPoint& pixel);
     bool sketchConstructionClick(const QPoint& pixel);
     Handle(AIS_Shape) overdrawHover_;
+    QLabel* sketchTrimPrompt_ = nullptr;
+    QLabel* sketchExtendPrompt_ = nullptr;
+    QStringList sketchCurveHits(const QPoint& pixel);
+    bool sketchExtendClick(const QPoint& pixel);
+    bool sketchExtendMove(const QPoint& pixel);
+    bool sketchTrimClick(const QPoint& pixel);
+    bool sketchTrimMove(const QPoint& pixel);
     bool overdrawMove(const QPoint& pixel);
     bool overdrawClick(const QPoint& pixel);
     void chooseOverdrawPiece();
@@ -521,6 +535,7 @@ private:
     void useSketchNumeric(bool polar);
     void backSketchPoint();
     void refreshSketchDrawing();
+    void refreshSketchSplineDrawing();
     void acceptSketchEllipsePoint(Sketch::Point point);
     void useSketchEllipseNumeric();
     void refreshSketchEllipseDrawing();

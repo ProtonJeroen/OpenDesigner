@@ -142,6 +142,31 @@ struct SketchOverdrawSessionTest {
         const auto capture=qgetenv("OPENDESIGNER_OVERDRAW_CAPTURE");if(!capture.isEmpty()) check(image.Save(capture.constData()),"capture failed");
         if(green<=20 || blue<=20) throw std::runtime_error(QString("Preview pixels: green %1, blue %2").arg(green).arg(blue).toStdString());
     }
+    static void advancedReuse(MainWindow& w) {
+        auto& v=*w.viewport_;QString error;
+        auto initial=fixture();initial.sketchEntities[1].geometry=Sketch::Ellipse{{0,0},40,20,0};
+        check(v.importDocumentSnapshot(initial,error),qPrintable(error));check(v.activateSketchWorkplane("wp") && v.lookAtWorkplane("wp"),"elliptical Workplane activation failed");w.documentDirty_=false;
+        start(w);mouse(v,{40,0},true);mouse(v,{0,20},true);
+        check(v.commandSession_->overdraw->picks.size()==1,"elliptical Overdraw did not choose a piece");
+        const auto id=v.commandSession_->overdraw->picks[0].profile.id;
+        const BRepAdaptor_Curve curve(TopoDS::Edge(v.sketchPreviews_.at(id)->Shape()));
+        check(curve.GetType()==GeomAbs_Ellipse && std::abs(curve.Ellipse().MajorRadius()-40)<1.e-9 && std::abs(curve.Ellipse().MinorRadius()-20)<1.e-9,"elliptical blue preview lost exact analytic support");
+        mouse(v,{0,-20});render(v);mouse(v,{0,-20},true);v.confirmCommandSession();
+        const auto confirmed=v.sketchEntities_;const auto history=v.undoStack_.size();
+        check(confirmed.size()==4 && confirmed[0]==initial.sketchEntities[0] && confirmed[1]==initial.sketchEntities[1],"elliptical Overdraw changed sources or roles");
+        w.documentDirty_=false;start(w);mouse(v,{40,0},true);mouse(v,{0,20},true);mouse(v,{0,-20},true);
+        check(v.commandSession_->overdraw->picks.size()==2 && v.commandSession_->sketch->after==confirmed,"repeat Overdraw would duplicate existing Profile pieces");
+        v.confirmCommandSession();check(v.sketchEntities_==confirmed && v.undoStack_.size()==history && !w.documentDirty_,"reused Overdraw changed IDs, values or history");
+        // Partial reuse leaves the existing Profile whole, including metadata,
+        // visibility and lock flags; only transient chosen portions are blue.
+        auto partial=fixture();partial.sketchEntities.resize(1);auto existing=partial.sketchEntities[0];
+        existing.id="existing";existing.geometry=Sketch::Segment{{-10,0},{10,0}};existing.role=Sketch::Role::Profile;existing.visible=false;existing.selectable=false;existing.name="Keep metadata";
+        partial.sketchEntities.push_back(existing);
+        check(v.importDocumentSnapshot(partial,error),qPrintable(error));check(v.activateSketchWorkplane("wp") && v.lookAtWorkplane("wp"),"reuse Workplane activation failed");w.documentDirty_=false;
+        start(w);mouse(v,{-10,0},true);mouse(v,{0,0},true);
+        check(v.commandSession_->overdraw->picks.size()==1 && v.commandSession_->sketch->after==partial.sketchEntities,"partial covered piece would duplicate an existing Profile");
+        v.confirmCommandSession();check(v.sketchEntities_==partial.sketchEntities && v.undoStack_.empty() && !w.documentDirty_,"partial Profile reuse modified canonical values");
+    }
     static void run() {
         MainWindow w;w.resize(1400,1000);w.show();QApplication::processEvents();auto& v=*w.viewport_;QString error;
         const auto initial=fixture();check(v.importDocumentSnapshot(initial,error),"fixture import failed");w.documentDirty_=false;
@@ -229,6 +254,7 @@ struct SketchOverdrawSessionTest {
         (v.activateSketchWorkplane("wp")&&v.lookAtWorkplane("wp"));start(w);mouse(v,{80,0},true);mouse(v,{60,0},true);w.documentDirty_=false;w.newDocument();
         check(v.sketchEntities_.empty() && !v.commandSession_ && v.sketchPreviews_.empty() && !v.sketchOverdrawPanel_
             && v.overdrawHover_.IsNull() && !w.findChild<QAction*>("sketch.overdraw")->isEnabled(),"New retained Overdraw state");
+        advancedReuse(w);
         w.documentDirty_=false;
     }
 };

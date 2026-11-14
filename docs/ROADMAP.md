@@ -809,10 +809,11 @@ Sketch and projected-geometry references during design and acceptance.
 - v0.5.5: advanced Sketch curves — **implemented and merged** (PR #76);
   7/7 user-reported manual acceptance categories passed; 110/110 Linux CI
   tests passed. Known limits of projected coefficient B-splines, interactive
-  Trim/Extend and elliptical/spline intersection-based Overdraw remain.
-- **v0.5.6 (next priority): SolidDesigner-style interactive Trim, Extend and
-  Overdraw** for Sketch curves and exact projections, especially oblique
-  projected ellipses (detailed scope below).
+  Trim/Extend and elliptical/spline intersection-based Overdraw remained at that
+  release; see the scoped v0.5.6 implementation below.
+- **v0.5.6 candidate: interactive Trim, Extend and exact Overdraw** implemented
+  on the feature branch with focused automated coverage. Final CI review and
+  manual Fedora KDE/Wayland acceptance remain pending (scope below).
 - **v0.5.7: shared geometry-first B-Rep reconstruction foundation**
   for Move Face, Rotate Face, Pull/Resize and Delete Face, including complex
   extruded ellipse/spline profiles and holes; consolidate proven specialized
@@ -828,51 +829,51 @@ Sketch and projected-geometry references during design and acceptance.
 - Cross-platform desktop packaging; initial iPadOS/Android mouse-and-keyboard
   technical builds, then opt-in touch/stylus mode.
 
-Version numbers 0.5.6–0.5.8 are **proposed development milestones**, not
-claims of delivered functionality. The three milestones below are now explicit
-priority requirements; each must follow the existing geometry-first, current-
-B-Rep and conservative-certification principles.
+Version 0.5.6 is an implemented release candidate, not yet a merged release.
+Versions 0.5.7–0.5.8 remain proposed development milestones. All retain the
+geometry-first, current-B-Rep and conservative-certification principles.
 
-## Planned — v0.5.6 Interactive Trim, Extend and Overdraw
+## v0.5.6 candidate — Interactive Trim, Extend and Exact Overdraw
 
-**Goal:** reproduce the practical CoCreate SolidDesigner 15.50 workflow:
-select Trim/Extend, pick the unwanted curve portion or target, and perform
-a predictable geometry edit without manually entering angular parameter
-intervals. Existing v0.5.5 *Edit Curve / Trim Parameters* remains available,
-but it is not considered a complete interactive Trim implementation.
+- [x] **Trim:** click an unwanted span of a segment, circular/elliptical arc,
+  circle/ellipse or certified spline; preview exact remaining portions and
+  confirm one SketchChange. Periodic seams and directed traversal are preserved.
+  Interpolating fragments become exact coefficient B-splines without refitting.
+- [x] **Extend:** select the endpoint and an explicit boundary; extend exact
+  line/conic support to a unique certified crossing. Coefficient B-splines can
+  reveal only their existing knot domain. Unsupported extrapolation is refused.
+- [x] **Overdraw:** extend the existing finite-piece graph to exact ellipses and
+  supported B-splines. Split at certified intersections and common-support
+  endpoints, preserve traversal, and reuse existing Profiles without duplicates.
+- [x] Validate exact oblique circle-to-ellipse projection through the existing
+  SketchProjection path, including axes, transformed placement and reversal.
+  Projection geometry remains independent of its source; no tessellation is used.
+- [x] Reuse Profile Validation intersection adapters/certification through a small
+  geometry-only SketchCurveOperations layer. Distinguish crossings, tangencies,
+  overlaps and unresolved geometry without loosening 1e-7 Sketch or applicable
+  1e-6 certification tolerances.
+- [x] Reuse existing picking, Sketch sessions, blue preview, OK/Cancel,
+  Undo/Redo and native persistence. Add focused geometry and real-click session
+  coverage at normal/200% Qt scaling, including command cleanup and role/ID reuse.
+- [x] Accept bounded nonrational coefficient B-spline Profile fragments of degree
+  at most 3, with exact polynomial area integration and existing wire/face checks.
+  Focused coverage includes mixed contours, holes and disjoint regions.
+- [ ] Manual Fedora KDE/Wayland acceptance at 100% and 200% remains **pending**.
+  Automated xcb sessions do not replace this checklist or certify every downstream
+  Extrude/Revolve case.
 
-- [ ] **Trim** Sketch lines, arcs, circles, ellipses/elliptic arcs and certified
-  2D interpolating/B-spline segments at geometric intersection points. A click
-  on a curve span identifies the portion to remove; support clear choice
-  between multiple intersections, complete-circle/ellipse split behavior,
-  tangent contacts and closed/open result policy.
-- [ ] **Extend** supported open curves to an explicitly selected boundary or
-  nearest unambiguous intersection, extending the underlying exact support
-  rather than adding an unrelated polyline. Refuse non-unique, unbounded or
-  geometrically invalid extensions with an actionable diagnostic.
-- [ ] **Overdraw** (SolidDesigner-style) existing or projected geometry using
-  exact analytic/parametric supports; add intersection-aware snapping and
-  segment reuse/splitting without creating coincident duplicate edges.
-  Keep Sketch versus Construction roles explicit and predictable.
-- [ ] **Oblique projection of circles/ellipses**: project solid edges, trimmed
-  curves and supported face boundaries into a rotated/translated Workplane.
-  Preserve exact elliptical curves (including correct axes, placement,
-  parameter direction, trims and reversal) where the orthogonal projection
-  is nondegenerate; do not silently approximate them as polylines.
-- [ ] Extend curve–curve intersection and Overdraw certification to supported
-  ellipse/ellipse, line/ellipse, circle/ellipse and B-spline combinations.
-  State which tangencies, overlaps and near-coincident cases are supported;
-  reject uncertifiable solutions atomically.
-- [ ] Reuse the v0.5.3 shared reference resolver/picker, Workplane-local
-  coordinates, v0.5.5 curve storage and certified Profile Builder. Preserve
-  Preview, OK/Cancel, Undo/Redo, stable entity IDs where applicable,
-  duplication, transformed Workplanes, visibility/locks and native Save/Open.
-- [ ] Validate resulting mixed open/closed contours, holes, self-intersections
-  and downstream Extrude/Revolve. Never sacrifice exactness or weaken OCCT
-  validity/tolerance requirements to get apparent sketch closure.
-- [ ] Add focused exact-geometry and Qt session regressions, including the
-  user case of a circular hole projected obliquely onto a second Workplane;
-  manual Fedora KDE/Wayland 100% and 200% acceptance.
+**Remaining limits:** one Trim or Extend operation per confirmation; tangential,
+ambiguous and uncertifiable geometry may be refused atomically. No invented
+spline extrapolation. Rational, higher-degree and whole closed coefficient
+B-spline Profiles remain unsupported. B-spline overlap requires exact support
+proof, not sampled similarity. Partial Profile Overdraw reuse retains complete
+original Profile entities, including portions outside the selected route; these
+may prevent later profile construction. Source tails are never silently removed.
+Existing v0.5.5 curve editing remains available.
+
+See [Trim](INTERACTIVE_TRIM.md), [Extend](INTERACTIVE_EXTEND.md),
+[exact Overdraw](EXACT_OVERDRAW.md) and the consolidated
+[Fedora KDE/Wayland acceptance checklist](V056_KDE_ACCEPTANCE.md).
 
 ## Planned — v0.5.7 Shared B-Rep Reconstruction Architecture & Advanced Face Editing
 

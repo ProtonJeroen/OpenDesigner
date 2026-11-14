@@ -19,7 +19,7 @@ struct Diagnostic {
 };
 struct Curve {
     QString entityId;
-    std::variant<Sketch::Segment,Sketch::Circle,Sketch::Arc,Sketch::Ellipse,Sketch::EllipticalArc,Sketch::Spline> geometry;
+    std::variant<Sketch::Segment,Sketch::Circle,Sketch::Arc,Sketch::Ellipse,Sketch::EllipticalArc,Sketch::Spline,Sketch::BSpline> geometry;
     bool reversed=false; // Traversal relative to the referenced source entity.
 };
 enum class Orientation { Clockwise, Counterclockwise };

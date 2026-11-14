@@ -9,7 +9,7 @@
 
 void CadViewport::startSketchOverdraw() {
     const auto* owner=constructionObject(activeSketchWorkplaneId_);
-    if(!owner || !owner->visible || !owner->selectable) {emit statusMessage(tr("Activate a visible, unlocked Workplane before Overdraw."));return;}
+    if(!owner || !constructionShown(*owner) || !owner->selectable) {emit statusMessage(tr("Activate a visible, unlocked Workplane before Overdraw."));return;}
     cancelCommandSession();clearHistorySelection();refreshSketchPicking();
     commandSession_.emplace();auto& session=*commandSession_;session.kind=CommandSession::Kind::Sketch;
     session.sketch=std::make_shared<SketchChange>(SketchChange{sketchEntities_,sketchEntities_});
@@ -73,8 +73,17 @@ void CadViewport::chooseOverdrawPiece() {
         if(std::any_of(d.picks.begin(),d.picks.end(),[&](const auto& p){return p.piece==index;})) return;
         const auto from=*d.currentNode,to=piece.start==from?piece.end:piece.start;
         if(piece.start!=from && piece.end!=from) return;
-        Sketch::Entity profile;profile.workplaneId=activeSketchWorkplaneId_;profile.role=Sketch::Role::Profile;
-        profile.name=tr("Overdraw %1").arg(d.picks.size()+1);profile.geometry=Sketch::directedPiece(piece,from);
+        Sketch::Entity profile;
+        if(!piece.existingProfileId.isEmpty()) {
+            const auto existing=std::find_if(sketchEntities_.begin(),sketchEntities_.end(),[&](const auto& e){return e.id==piece.existingProfileId;});
+            if(existing==sketchEntities_.end()) {d.error=tr("The reusable Profile is stale. Cancel and start Overdraw again.");refreshOverdraw();return;}
+            profile=*existing;
+            // A partial/reversed traversal is a view-only value. The canonical
+            // entity and its ID are kept exactly, even if several pieces use it.
+            profile.id=piece.existingProfileId+QString(":overdraw-preview:%1").arg(index);
+            profile.visible=true;profile.selectable=true;
+        } else {profile.workplaneId=activeSketchWorkplaneId_;profile.role=Sketch::Role::Profile;profile.name=tr("Overdraw %1").arg(d.picks.size()+1);}
+        profile.geometry=Sketch::directedPiece(piece,from);
         d.picks.push_back({index,from,to,profile});d.currentNode=to;d.hover.reset();d.hits.clear();d.feedback.clear();
     } else d.feedback=d.hits.size()>1?tr("Ambiguous pieces: explicitly choose the desired portion in the list or move farther along it."):tr("Point along an unchosen piece connected to the blue point.");
     refreshOverdraw();
@@ -114,7 +123,7 @@ void CadViewport::refreshOverdraw() {
             p->SetZLayer(Graphic3d_ZLayerId_Topmost);displaySketchPresentation(e,*owner,p,true);overdrawHover_=p;
         }
         if(d.error.isEmpty() && !d.picks.empty()) {
-            for(const auto& pick:d.picks) session.sketch->after.push_back(pick.profile);
+            for(const auto& pick:d.picks) if(d.graph.pieces[pick.piece].existingProfileId.isEmpty()) session.sketch->after.push_back(pick.profile);
             session.valid=true;
         }
     } catch(const Standard_Failure& failure) {d.error=tr("Cannot preview this piece: %1. Use Back or Cancel.").arg(QString::fromUtf8(failure.GetMessageString()));}
@@ -127,7 +136,7 @@ void CadViewport::refreshOverdraw() {
         if(!d.currentNode) {const auto p=d.graph.nodes[index];labels<<tr("Start at X %1, Y %2").arg(p.x,0,'g',12).arg(p.y,0,'g',12);continue;}
         const auto& piece=d.graph.pieces[index];const auto directed=Sketch::directedPiece(piece,*d.currentNode);const auto* arc=std::get_if<Sketch::Arc>(&directed);
         QString source=piece.sourceId;for(const auto& e:session.sketch->before) if(e.id==source && !e.name.isEmpty()) {source=e.name;break;}
-        labels<<tr("%1 — piece %2: %3").arg(source).arg(index+1).arg(arc?tr("arc R %1, sweep %2°").arg(arc->radius,0,'g',9).arg(arc->sweepAngle*180/3.141592653589793,0,'g',9):tr("line segment"));
+        labels<<tr("%1 — piece %2: %3").arg(source).arg(index+1).arg(arc?tr("arc R %1, sweep %2°").arg(arc->radius,0,'g',9).arg(arc->sweepAngle*180/3.141592653589793,0,'g',9):Sketch::typeName(directed));
     }
     const auto selected=d.currentNode?d.hover:d.nodeHover;int selectedIndex=-1;
     if(selected) for(size_t i=0;i<d.hits.size();++i) if(d.hits[i]==*selected) selectedIndex=int(i);
@@ -142,6 +151,8 @@ void CadViewport::refreshOverdraw() {
     }
     if(d.hits.size()>1 && !selected) prompt=tr("Ambiguous: explicitly choose one of the %1 candidates in the list, or move to separate them.").arg(d.hits.size());
     if(!d.feedback.isEmpty()) prompt=d.feedback;
+    if(std::any_of(d.picks.begin(),d.picks.end(),[&](const auto& pick){return !d.graph.pieces[pick.piece].existingProfileId.isEmpty();}))
+        prompt+=tr(" Existing Profiles are reused whole. Any portions outside this path are retained and may prevent profile construction; no user geometry is removed.");
     if(!d.error.isEmpty()) prompt=tr("Overdraw unavailable: %1").arg(d.error);
     session.state=session.valid?CommandSession::State::Preview:CommandSession::State::Selection;
     sketchOverdrawPanel_->update(prompt,d.graph.notice,labels,selectedIndex,int(d.picks.size()),d.currentNode.has_value(),session.valid);

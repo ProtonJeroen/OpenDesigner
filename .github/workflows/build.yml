@@ -28,7 +28,7 @@ jobs:
           mkdir -p dist/OpenDesigner
           cp build/OpenDesigner dist/OpenDesigner/
           cat > dist/OpenDesigner/README.txt <<'EOF'
-          OpenDesigner v0.5.5 Advanced Sketch Curves Linux prototype
+          OpenDesigner v0.5.6 Interactive Trim, Extend and Exact Overdraw Linux prototype
           This is an unbundled executable, NOT a standalone AppImage.
           Requires compatible Qt 6, Open CASCADE and graphics runtime libraries.
           On Ubuntu 24.04 the build dependencies from .github/workflows/build.yml

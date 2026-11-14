@@ -11,7 +11,7 @@ class QDialogButtonBox;
 class QFormLayout;
 class QIcon;
 namespace Sketch {
-enum class DrawTool { Segment, InfiniteLine, Circle, Arc, Ellipse, EllipticalArc, HorizontalInfiniteLine, VerticalInfiniteLine };
+enum class DrawTool { Segment, InfiniteLine, Circle, Arc, Ellipse, EllipticalArc, HorizontalInfiniteLine, VerticalInfiniteLine, Spline };
 inline bool ellipseTool(DrawTool tool) {return tool==DrawTool::Ellipse || tool==DrawTool::EllipticalArc;}
 inline bool orthogonalLineTool(DrawTool tool) {return tool==DrawTool::HorizontalInfiniteLine || tool==DrawTool::VerticalInfiniteLine;}
 inline bool infiniteLineTool(DrawTool tool) {return tool==DrawTool::InfiniteLine || orthogonalLineTool(tool);}
