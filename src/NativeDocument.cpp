@@ -18,6 +18,7 @@
 #include <TopLoc_Location.hxx>
 #include <TopoDS_Compound.hxx>
 #include <BRep_Builder.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <FSD_BinaryFile.hxx>
 #include <PCDM_ReadWriter.hxx>
@@ -456,8 +457,16 @@ bool NativeDocumentStorage::save(const QString& path, const NativeDocumentSnapsh
         app->NewDocument(TCollection_ExtendedString("BinXCAF"), document);
         const auto shapeTool = XCAFDoc_DocumentTool::ShapeTool(document->Main());
         TopoDS_Compound compound; BRep_Builder builder; builder.MakeCompound(compound);
-        for (const auto& part : snapshot.parts)
-            builder.Add(compound, part.shape.Moved(TopLoc_Location(part.transform)));
+        for (const auto& part : snapshot.parts) {
+            // Exported snapshots may share the live document's TShapes. Add()
+            // freezes its child; XCAF/storage must only receive owned topology.
+            // Copy geometry and meshes as well so serialization cannot mutate
+            // shared support data. Keep caller identity and placement untouched.
+            BRepBuilderAPI_Copy owned(part.shape, Standard_True, Standard_True);
+            if (!owned.IsDone() || owned.Shape().IsNull())
+                throw std::runtime_error("Could not isolate Part geometry for saving.");
+            builder.Add(compound, owned.Shape().Moved(TopLoc_Location(part.transform)));
+        }
         const auto root = shapeTool->AddShape(compound, Standard_True, Standard_True);
         TDataStd_Name::Set(root, TCollection_ExtendedString("Assembly 1"));
         TDataStd_AsciiString::Set(root, TCollection_AsciiString(schema==1?kLegacyRootMarker:schema==2?kV2RootMarker:schema==3?kV3RootMarker:schema==4?kV4RootMarker:schema==5?kV5RootMarker:kRootMarker));

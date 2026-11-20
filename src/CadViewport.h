@@ -2,6 +2,7 @@
 #include <functional>
 #include "EdgeBlendFeatures.h"
 #include <QWidget>
+#include <QByteArray>
 #include <QPoint>
 #include <QColor>
 #include <QJsonObject>
@@ -9,6 +10,7 @@
 #include <memory>
 #include <optional>
 class QLineEdit;
+class QTimer;
 class QCheckBox;
 class QVBoxLayout;
 class QFormLayout;
@@ -482,7 +484,41 @@ private:
         MoveDirectionSource directionSource = MoveDirectionSource::FaceNormal;
         std::vector<References::Target> directionReferences;
         bool directionReverse = false;
+        bool allowEllipticalCapMove = false; // Move Face opts in; Pull keeps its existing policy.
         gp_Dir faceNormal = gp_Dir(0,0,1); // outward world normal at session start
+        // P2: exact, session-only content guards; never a persistent revision ID.
+        // Opt-in display-only geometry: never candidate/FaceChange/P2.
+        enum class MovePreviewPhase { Idle, Provisional, Certifying, Certified, Failed, Cancelled };
+        MovePreviewPhase movePreviewPhase=MovePreviewPhase::Idle;
+        bool provisionalPreviewEnabled=false;
+        // F2.9E.2: one session-owned provisional binding. Present from the first
+        // provisional publication until full certification retires it (F2.9D.3:
+        // a certified fallback, e.g. at 0 mm, keeps the rebinding owners).
+        // Source identity stays in faceBefore/moveSourceSnapshot; the phase
+        // stays movePreviewPhase. candidate is display-only, null whenever the
+        // provisional overlay is not shown, and never enters candidate,
+        // FaceChange, movePreviewCertificate, history or Save.
+        struct ProvisionalBinding {
+            TopoDS_Face face;        // selected Face at publication
+            quint64 revision=0;      // moveNumericRevision_ of the published input
+            double value=0;          // published input value
+            std::vector<Handle(SelectMgr_EntityOwner)> owners; // renderer-adjusted selection
+            TopoDS_Shape candidate;  // Ready Provisional::Candidate shape (shared with preview AIS)
+        };
+        std::optional<ProvisionalBinding> provisional;
+        TopoDS_Shape provisionalCandidate() const {return provisional?provisional->candidate:TopoDS_Shape();}
+        QByteArray moveSourceSnapshot;
+        bool moveSourceInvalidated=false;
+        bool moveNumericContextInvalidated=false;
+        struct MovePreviewCertificate {
+            TopoDS_Face face;
+            TopoDS_Shape candidate;
+            std::shared_ptr<FaceChange> change;
+            QByteArray inputs, after;
+            std::vector<Handle(SelectMgr_EntityOwner)> owners;
+            std::vector<size_t> selection;
+        };
+        std::optional<MovePreviewCertificate> movePreviewCertificate;
     };
     QString activeSketchWorkplaneId_;
     int sketchSnapPixels_ = 10;
@@ -594,6 +630,24 @@ private:
     void restoreConstructionPicker();
     QJsonObject debugCommand(const CommandSession& session) const;
     std::optional<CommandSession> commandSession_;
+    // Input scheduling only. This is never a geometry/certification cache.
+    struct PendingMoveNumeric {
+        quint64 revision;
+        QString text;
+        TopoDS_Face face;
+        std::shared_ptr<CadPart> before;
+        QByteArray source;
+        std::vector<Handle(SelectMgr_EntityOwner)> owners;
+        std::vector<size_t> selection;
+    };
+    bool forceCertifiedMovePreview_ = false; // lexical OK evaluation only
+    QTimer* moveNumericTimer_ = nullptr;
+    quint64 moveNumericRevision_ = 0;
+    std::optional<PendingMoveNumeric> pendingMoveNumeric_;
+    bool scheduleMoveNumericPreview();
+    void stopMoveNumericPreview();
+    bool consumeMoveNumericPreview();
+    void invalidateMoveNumericContext();
     QWidget* commandPanel_ = nullptr;
     QVBoxLayout* commandLayout_ = nullptr;
     CommandPanelPositioner* commandPanelPositioner_ = nullptr;
@@ -609,8 +663,14 @@ private:
     bool pickEdgeBlend(const QPoint& point);
     bool adoptEdgeBlend(size_t index, const TopoDS_Edge& edge);
     bool previewEdgeBlend(double value);
-    bool startMoveFace(size_t index, const TopoDS_Face& face);
+    bool startMoveFace(size_t index, const TopoDS_Face& face, bool allowEllipticalCapMove = true);
     bool previewMoveFace(double value);
+    QByteArray movePartSnapshot(const CadPart& part) const;
+    QByteArray moveInputSnapshot(double value) const;
+    bool moveSourceUnchanged() const;
+    bool moveProvisionalSelectionUnchanged() const;
+    void certifyMovePreview(double value);
+    bool reuseMovePreview(double value);
     bool moveFaceReference(const TopoDS_Shape& shape, const TopoDS_Face& face,
                            MoveFaceFeature& feature, gp_Pnt& center, gp_Dir& axis, QString& error) const;
     void initializeCylindricalMoveControls();

@@ -1,4 +1,5 @@
 #include "SketchProfileExtrusion.h"
+#include "BRepMeasurement.h"
 #include "BooleanGeometry.h"
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
@@ -24,12 +25,19 @@ Result extrude(const SketchProfileBuilder::Result& faces,const gp_Dir& normal,do
             if(f.shape.IsNull() || !BRepCheck_Analyzer(f.shape).IsValid())return fail(Code::InvalidFace,"A source face is not a valid B-Rep.",i);
             BRepAdaptor_Surface surface(f.shape);
             if(surface.GetType()!=GeomAbs_Plane || !surface.Plane().Axis().Direction().IsParallel(normal,1.e-12))return fail(Code::InvalidFace,"Extrusion direction must be normal to every source Workplane face.",i);
-            GProp_GProps area;BRepGProp::SurfaceProperties(f.shape,area,1.e-12);
+            BRepMeasurement::Result measured;QString measurementError;
+            if(!BRepMeasurement::area(f.shape,measured,measurementError,BRepMeasurement::Integration::Adaptive))
+                return fail(Code::NumericalFailure,measurementError,i);
+            const auto& area=measured.properties;
             if(!std::isfinite(area.Mass()) || area.Mass()<=0)return fail(Code::InvalidFace,"A source face has no positive area.",i);
             BRepPrimAPI_MakePrism prism(f.shape,gp_Vec(normal)*distance,true,true);
             if(!prism.IsDone())return fail(Code::InvalidSolid,"OCCT could not construct the prism.",i);
             const auto shape=prism.Shape();double volume=0;size_t solids=0;
-            if(shape.ShapeType()!=TopAbs_SOLID || !BooleanGeometry::certifiedSolid(shape,volume,solids) || solids!=1)return fail(Code::InvalidSolid,"Prism is not an oriented, closed, positive-volume solid.",i);
+            if(shape.ShapeType()!=TopAbs_SOLID || !BooleanGeometry::certifiedSolid(shape,volume,solids) || solids!=1) {
+                BRepMeasurement::Result measuredVolume;QString volumeError;
+                if(!BRepMeasurement::volume(shape,measuredVolume,volumeError)) return fail(Code::NumericalFailure,volumeError,i);
+                return fail(Code::InvalidSolid,"Prism is not an oriented, closed, positive-volume solid.",i);
+            }
             if(i==0)first=shape;builder.Add(compound,shape);expected+=area.Mass()*std::abs(distance);
             // Refuse placements which cannot resolve the approved geometric tolerance.
             Bnd_Box bounds;BRepBndLib::AddOptimal(shape,bounds,false,false);double a,b,c,d,e,fz;bounds.Get(a,b,c,d,e,fz);

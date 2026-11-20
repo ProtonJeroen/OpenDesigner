@@ -8992,3 +8992,10 @@ The same 4 pre-existing failures remain on both versions:
 
 Changed files in F2.9G.5A: `src/BRepReconstruction.cpp`,
 `tests/MoveFaceTest.cpp`, this document.
+
+**Manual acceptance (DellJV, Fedora KDE, OCCT 7.9.3): PASS** for newly
+constructed obround models. The obround with two holes, built either with the
+holes in the sketch profile or with a separate Cut, shows continuous
+cylindrical walls after Move Face +10 and OK, with no segmentation lines.
+Compatibility with legacy `.odc` documents (models created and saved before
+this change) was **not tested**; private documents were not opened.

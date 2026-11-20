@@ -1,3 +1,4 @@
+#include "BRepCertification.h"
 #include "CylindricalMoveGeometry.h"
 #include "BooleanGeometry.h"
 #include "MoveFaceGeometry.h"
@@ -57,37 +58,9 @@ bool sameCylinder(const gp_Cylinder& a,const gp_Cylinder& b,double tolerance) {
 }
 // Count edge uses, including both uses of periodic seams. Also certify that
 // faces around each vertex form one connected fan (reject pinched vertices).
-bool manifold(const TopoDS_Shape& shape) {
-    TopTools_IndexedMapOfShape edges,faces,vertices;
-    TopExp::MapShapes(shape,TopAbs_EDGE,edges); TopExp::MapShapes(shape,TopAbs_FACE,faces);
-    TopExp::MapShapes(shape,TopAbs_VERTEX,vertices);
-    std::vector<std::vector<int>> uses(edges.Extent()+1);
-    for(int f=1;f<=faces.Extent();++f)
-        for(TopExp_Explorer e(faces(f),TopAbs_EDGE);e.More();e.Next())
-            uses[edges.FindIndex(e.Current())].push_back(f);
-    for(int e=1;e<=edges.Extent();++e)
-        if(BRep_Tool::Degenerated(TopoDS::Edge(edges(e))) || uses[e].size()!=2) return false;
-    for(int v=1;v<=vertices.Extent();++v) {
-        std::vector<int> incident;
-        std::vector<std::pair<int,int>> links;
-        for(int e=1;e<=edges.Extent();++e) {
-            bool touches=false;
-            for(TopExp_Explorer it(edges(e),TopAbs_VERTEX);it.More();it.Next())
-                touches=touches||it.Current().IsSame(vertices(v));
-            if(touches) { links.emplace_back(uses[e][0],uses[e][1]);
-                incident.push_back(uses[e][0]); incident.push_back(uses[e][1]); }
-        }
-        if(incident.empty()) return false;
-        std::vector<bool> reached(faces.Extent()+1,false); reached[incident.front()]=true;
-        bool changed=true;
-        while(changed) { changed=false; for(const auto& [a,b]:links)
-            if(reached[a]!=reached[b]) { reached[a]=reached[b]=true; changed=true; } }
-        for(int f:incident) if(!reached[f]) return false;
-    }
-    return true;
-}
+bool manifold(const TopoDS_Shape& shape) {return BRepCertification::manifold(shape);}
 TopAbs_State classify(const TopoDS_Shape& shape,const gp_Pnt& point,double tolerance) {
-    BRepClass3d_SolidClassifier classifier(shape,point,tolerance); return classifier.State();
+    return BRepCertification::occupancy(shape,point,tolerance);
 }
 }
 

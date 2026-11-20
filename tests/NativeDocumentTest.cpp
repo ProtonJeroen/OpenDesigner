@@ -1,6 +1,12 @@
 #include "NativeDocument.h"
 
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
+#include <BinTools.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <chrono>
+#include <sstream>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepGProp.hxx>
 #include <BRepCheck_Analyzer.hxx>
@@ -40,6 +46,54 @@ int count(const TopoDS_Shape& shape, TopAbs_ShapeEnum type) {
 }
 }
 
+// F2.9C.2: full stored geometry/flag binding, independent of Save output.
+std::string sourceBinding(const TopoDS_Shape& shape) {
+    std::ostringstream out(std::ios::binary|std::ios::out);
+    BinTools::Write(shape,out,false,false,BinTools_FormatVersion_CURRENT);
+    TopTools_IndexedMapOfShape graph;TopExp::MapShapes(shape,graph);
+    for(int i=1;i<=graph.Extent();++i) {
+        const auto& item=graph(i);
+        out<<item.Free()<<item.Locked()<<item.Modified()<<item.Checked()<<item.Orientable()
+           <<item.Closed()<<item.Infinite()<<item.Convex();
+    }
+    return out.str();
+}
+bool saveOwnership(const NativeDocumentSnapshot& source,const QString& directory) {
+    using Clock=std::chrono::steady_clock;
+    auto elapsed=[](auto start){return std::chrono::duration<double,std::milli>(Clock::now()-start).count();};
+    bool unchanged=true;
+    for(int n:{1,2}) {
+        std::vector<double> shallow,owned,saves;
+        for(int trial=0;trial<3;++trial) {
+            auto fixture=source;fixture.parts.resize(size_t(n));
+            if(n==1)fixture.activePartId=fixture.parts.front().id;
+            for(auto& part:fixture.parts)part.shape=BRepBuilderAPI_Copy(part.shape,true,true).Shape();
+            std::vector<std::string> before;std::vector<TopoDS_Shape> identities;
+            for(const auto& part:fixture.parts){before.push_back(sourceBinding(part.shape));identities.push_back(part.shape);}
+            auto start=Clock::now();auto snapshot=fixture;shallow.push_back(elapsed(start));
+            start=Clock::now();auto isolated=fixture;
+            for(auto& part:isolated.parts)part.shape=BRepBuilderAPI_Copy(part.shape,true,true).Shape();
+            owned.push_back(elapsed(start));
+            QString error;start=Clock::now();
+            if(!NativeDocumentStorage::save(directory+QString("/ownership-%1.odc").arg(n),snapshot,error))return false;
+            saves.push_back(elapsed(start));
+            // Repeated Save must also leave the caller graph intact.
+            if(!NativeDocumentStorage::save(directory+QString("/ownership-%1.odc").arg(n),snapshot,error))return false;
+            for(size_t i=0;i<fixture.parts.size();++i)
+                unchanged&=fixture.parts[i].shape.IsEqual(identities[i])&&sourceBinding(fixture.parts[i].shape)==before[i];
+            NativeDocumentSnapshot loaded;
+            if(!NativeDocumentStorage::load(directory+QString("/ownership-%1.odc").arg(n),loaded,error)
+               ||loaded.parts.size()!=fixture.parts.size())return false;
+            for(size_t i=0;i<loaded.parts.size();++i)
+                if(loaded.parts[i].id!=fixture.parts[i].id||!close(volume(loaded.parts[i].shape),volume(fixture.parts[i].shape)))return false;
+        }
+        auto median=[](auto values){std::sort(values.begin(),values.end());return values[1];};
+        std::printf("SAVE_OWNERSHIP parts=%d shallow_ms=%.6f owned_ms=%.6f save_ms=%.6f save_min=%.6f save_max=%.6f unchanged=%d\n",
+            n,median(shallow),median(owned),median(saves),*std::min_element(saves.begin(),saves.end()),*std::max_element(saves.begin(),saves.end()),unchanged);
+    }
+    return unchanged;
+}
+
 int main() {
     QTemporaryDir directory;
     if (!directory.isValid()) return 1;
@@ -77,6 +131,7 @@ int main() {
     }
     source.constructionNameCounters={7,9,12};
     source.activePartId=box.id;
+    if(!saveOwnership(source,directory.path()))return 70;
     if (!NativeDocumentStorage::save(path, source, error)) { std::fprintf(stderr, "save: %s\n", error.toUtf8().constData()); return 2; }
     NativeDocumentSnapshot loaded;
     if (!NativeDocumentStorage::load(path, loaded, error)) { std::fprintf(stderr, "load: %s\n", error.toUtf8().constData()); return 3; }

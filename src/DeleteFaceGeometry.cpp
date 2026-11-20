@@ -1,4 +1,5 @@
 #include "DeleteFaceGeometry.h"
+#include "BRepCertification.h"
 #include "CylindricalMoveGeometry.h"
 #include "PlanarFaceDeletion.h"
 #include <BRepAlgoAPI_Defeaturing.hxx>
@@ -207,15 +208,16 @@ static bool removeNative(const TopoDS_Shape& source,const std::vector<TopoDS_Fac
         if(!BRepReconstruction::equivalent(oracle,candidate))
             return fail(QStringLiteral("Reconstruction changes material outside the uniquely removable feature."));
 
+        BRepReconstruction::TopologyIndex resultTopology;
+        if(!BRepReconstruction::TopologyIndex::build(candidate,resultTopology,error)) return false;
         // Preserve every surviving patch, not just its carrier or face count.
         // Also require every result support to have a surviving source owner.
         for(int i=1;i<=members.Extent();++i) {
             const auto original=TopoDS::Face(members(i));BRepReconstruction::FaceMapping mapping{original,{}};
             if(!selected.Contains(original)) {
-                for(TopExp_Explorer f(candidate,TopAbs_FACE);f.More();f.Next())
-                    if(BRepReconstruction::sameAnalyticSupport(original,TopoDS::Face(f.Current()))) mapping.modified.push_back(TopoDS::Face(f.Current()));
-                double overlap=0;for(const auto& f:mapping.modified) overlap+=area(combine<BRepAlgoAPI_Common>(original,f));
-                if(mapping.modified.empty()||std::abs(overlap-area(original))>1.e-7*std::max(1.0,area(original)))
+                const auto coverage=BRepCertification::coverage(original,resultTopology);
+                mapping.modified=coverage.carriers;
+                if(mapping.modified.empty()||!BRepCertification::areaMatches(area(original),coverage.coveredArea,1.e-7))
                     return fail(QStringLiteral("Reconstruction would remove or alter an unselected face patch."));
             }
             result.history.push_back(mapping);
