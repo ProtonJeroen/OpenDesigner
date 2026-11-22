@@ -179,6 +179,7 @@
 - **Test result: 142/142 PASS.** CTest summary line: `100% tests passed, 0 tests failed out of 142`, `Total Test time (real) = 1754.68 sec`, command `xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX" ctest --test-dir build -C Release --output-on-failure -j2`. Every test touched by Phases 2–10 passed on CI: `brep-certification-correspondence` 0.99 s, `move-face-drag-initialization` 68.61 s, `cylindrical-move-face-recognition` 14.24 s, `cylindrical-move-face-boundary` 65.72 s, `move-face-crash03112026` 10.80 s, `cylindrical-open-notch-sessions`, `sloped-planar-opening-move`, `edge-blend-sessions` 32.20 s, `construction-sessions` 26.85 s.
 - **OCCT 7.6.3 confirmed.** The Dependencies step installed `libocct-foundation-7.6t64`, `libocct-modeling-data-7.6t64`, `libocct-modeling-algorithms-7.6t64`, `libocct-visualization-7.6t64`, `libocct-data-exchange-7.6t64`, `libocct-ocaf-7.6t64`, `libocct-draw-7.6t64` on Ubuntu 24.04, and the Build step compiled `src/MoveFace.cpp` against them. The Phase 7 flag setters therefore compile on 7.6.3; the local probe numbers remain 7.9.3 numbers.
 - **CI runs 142 tests, local runs 144 — fully explained, not a gap.** Verified by diffing `ctest --test-dir build -N -C Release` names against the names in the CI log: local-only = `command-panel-cross-screen` (inside `if(Qt6Widgets_VERSION VERSION_GREATER_EQUAL 6.11)`, `CMakeLists.txt:210`, CI Qt is 6.4.2) and `experimental-whole-section-lines` (registered only when Boost.Multiprecision headers are found, `CMakeLists.txt:136-139`, not in the CI dependency list); CI-only = none.
+- **Which SHA the CI evidence belongs to.** The green run `45063550829` is for `c50f054`, the code+test commit. Pushing this documentation commit triggered a second Actions run, **`45070445941`**, for the docs-only tip. A fresh session must not read "CI green" as covering an unobserved run: check `gh pr checks 79` for the current tip before relying on either run.
 - **The Phase 11b CI wall clock is deliberately *not* in the CSV `test_seconds` field.** That field is defined as the duration of a test command run for the task in this session, and no test command ran. The CI durations are recorded in prose here.
 
 ## 4. Files changed and why
@@ -731,3 +732,11 @@ documentation files, so no build and no test command was run, and `context_compa
 0. The CI durations quoted in 3.13 (Build 1314 s, CTest 1757 s) are **GitHub Actions**
 durations read from the Actions log and are deliberately not entered in either timing
 field.
+
+**Measurement honesty for the Phase 11b row.** Its `end_utc` was captured when the
+documentation content and its validation were complete, immediately before the row was
+written, as the rule requires. Two documentation-only commits resulted from the task:
+`64b7e7e` carried the row itself, and a later commit added the "which SHA the CI evidence
+belongs to" bullet. The extra wall clock after `end_utc` is **not** back-filled into
+`duration_seconds` — the CSV is append-only and the recorded interval is the one that was
+actually measured.
