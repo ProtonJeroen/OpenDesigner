@@ -3,6 +3,7 @@
 #include "BoxShadowObservation.h"
 #endif
 #include <BinTools.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
 #include <QDataStream>
 #include <sstream>
 #include "CadViewport.h"
@@ -44,8 +45,21 @@ QByteArray CadViewport::movePartSnapshot(const CadPart& part) const {
     BRepTiming::Scope timingScope("MoveFace.movePartSnapshot");
     try {
         if(part.shape.IsNull()||!part.blends.features.empty()||!part.blends.sharp.IsNull()||!part.blends.certified.IsNull()) return {};
+        // OCCT attaches derived caches (curve-on-surface curves and their locations)
+        // to the live TShape while previews and display run, so serializing the live
+        // shape of an unedited Part is not stable. A copy normalizes those caches to
+        // one entry per (edge, face) incidence, leaving only authoritative topology
+        // and geometry in the stream. The copy starts with default TShape flags, so
+        // the live shape's flags are carried over: whether the shape is currently
+        // composed into another topology (Free) must stay visible to the signature.
+        auto canonical=BRepBuilderAPI_Copy(part.shape).Shape();
+        if(canonical.IsNull()) return {};
+        canonical.Free(part.shape.Free());canonical.Modified(part.shape.Modified());
+        canonical.Checked(part.shape.Checked());canonical.Orientable(part.shape.Orientable());
+        canonical.Closed(part.shape.Closed());canonical.Infinite(part.shape.Infinite());
+        canonical.Convex(part.shape.Convex());
         std::ostringstream binary(std::ios::out|std::ios::binary);
-        BinTools::Write(part.shape,binary,false,false,BinTools_FormatVersion_CURRENT);
+        BinTools::Write(canonical,binary,false,false,BinTools_FormatVersion_CURRENT);
         if(!binary.good()) return {};
         const auto geometry=binary.str();QByteArray result;QDataStream out(&result,QIODevice::WriteOnly);
         out.setFloatingPointPrecision(QDataStream::DoublePrecision);

@@ -10,6 +10,7 @@
 #include <QMessageBox>
 #include <iomanip>
 #include "MainWindow.h"
+#include "MainWindowTestHelpers.h"
 #include "MoveFaceGeometry.h"
 #include "RotateMoveFixture.h"
 #include "EllipticalExtrusionFixture.h"
@@ -615,7 +616,10 @@ struct MoveFaceTest {
             // form; eligibility now judges the stored matrix, so ON stays provisional.
             require(v.boxes_[0].orientation.Form()==gp_CompoundTrsf,"Save/Open placement representation changed; revisit F2.9D.4 note");
             dragSession(window,v,flag,flag,names[fixture][flag][1]);
-            window.close();
+            // The document is untitled, so Discard cannot destroy a file.
+            MainWindowTest::PromptReport prompts;
+            { MainWindowTest::UnsavedPromptGuard guard(window,QString(),prompts); window.close(); }
+            require(prompts.answered==1,"closing the dirty window raised exactly one unsaved-changes prompt");
         }
         qunsetenv("OPENDESIGNER_ENABLE_PROVISIONAL_BOX_PREVIEW");
         std::cout<<"Move Face drag initialization: Box/Extrude, new/reopened, flag OFF/ON, zero jitter, numeric, Escape, Enter, Undo/Redo passed\n";
@@ -759,15 +763,12 @@ struct MoveFaceTest {
                 }
             }
             // The measured edits leave the document dirty, so MainWindow::maybeSave
-            // opens a modal "Unsaved changes" prompt on close. Answer Discard from
-            // the harness; an unattended (or locked) run otherwise blocks here.
-            int prompts=0;QTimer discard;discard.setInterval(20);
-            QObject::connect(&discard,&QTimer::timeout,[&] {
-                if(auto* box=qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))
-                    if(auto* button=box->button(QMessageBox::Discard)){++prompts;button->click();}
-            });
-            QElapsedTimer closing;closing.start();discard.start();window.close();discard.stop();
-            std::cout<<"ACCEPT_CLOSE fixture="<<fixture<<" unsaved_prompts_discarded="<<prompts<<" close_ms="<<closing.nsecsElapsed()/1.e6<<'\n';
+            // opens a modal "Unsaved changes" prompt on close. The shared guard
+            // answers it with Discard for the duration of the close only.
+            MainWindowTest::PromptReport prompts;
+            QElapsedTimer closing;closing.start();
+            { MainWindowTest::UnsavedPromptGuard guard(window,QString(),prompts); window.close(); }
+            std::cout<<"ACCEPT_CLOSE fixture="<<fixture<<" unsaved_prompts_discarded="<<prompts.answered<<" close_ms="<<closing.nsecsElapsed()/1.e6<<'\n';
         }
         qunsetenv("OPENDESIGNER_ENABLE_PROVISIONAL_BOX_PREVIEW");qunsetenv("OPENDESIGNER_BOX_SHADOW");
         std::cout<<"F2.9E.6 acceptance timings complete\n";

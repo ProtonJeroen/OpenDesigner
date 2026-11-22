@@ -1,5 +1,6 @@
 #include "CadViewport.h"
 #include "MainWindow.h"
+#include "MainWindowTestHelpers.h"
 #include "ConstructionPanel.h"
 #include <QApplication>
 #include <QAction>
@@ -39,13 +40,6 @@ void chooseFile(const QString& path) {
             dialog->setDirectory(QFileInfo(path).absolutePath());dialog->selectFile(QFileInfo(path).fileName());
             if(auto* edit=dialog->findChild<QLineEdit*>("fileNameEdit")) edit->setText(QFileInfo(path).fileName());
             QTimer::singleShot(50,dialog,[dialog]{QMetaObject::invokeMethod(dialog,"accept",Qt::DirectConnection);});return;
-        }
-    });
-}
-void discardPrompt() {
-    QTimer::singleShot(50,[] {
-        for(auto* widget:QApplication::topLevelWidgets()) if(auto* dialog=qobject_cast<QMessageBox*>(widget);dialog && dialog->isVisible()) {
-            dialog->button(QMessageBox::Discard)->click();return;
         }
     });
 }
@@ -283,7 +277,12 @@ struct ConstructionSessionTest {
         // Property edits participate in the same dirty prompt and New path.
         auto property=*v.constructionObject(axisId);property.selectable=false;v.updateConstruction(property);
         check(window.documentDirty_,"construction property change did not dirty document");
-        discardPrompt();window.newDocument();
+        // The document is bound to the fixture under QTemporaryDir, so Discard
+        // only throws away test data. The guard checks that claim before
+        // newDocument() runs.
+        MainWindowTest::PromptReport prompts;
+        { MainWindowTest::UnsavedPromptGuard guard(window,window.documentPath_,prompts); window.newDocument(); }
+        check(prompts.answered==1,"New did not raise exactly one unsaved-changes prompt");
         check(v.constructions_.empty() && v.constructionPresentations_.empty() && window.constructionRoot_->childCount()==0,"New retained construction objects");
         window.documentDirty_=false;
     }

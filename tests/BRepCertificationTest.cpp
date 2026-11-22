@@ -38,8 +38,13 @@ TopoDS_Shape box(double x,double y,double z,double dx,double dy,double dz) {
 TopoDS_Face rectangle(double x0,double x1,double y0=0,double y1=10) {
     return BRepBuilderAPI_MakeFace(gp_Pln(gp_Pnt(0,0,0),gp_Dir(0,0,1)),x0,x1,y0,y1).Face();
 }
+// BRep_Builder::Add clears the Free flag of the added shape's shared TShape,
+// which changes the caller's own serialization. Each child is therefore added
+// as an independent copy so fixtures cannot report a false source mutation.
 TopoDS_Shape compound(const std::vector<TopoDS_Shape>& shapes) {
-    BRep_Builder b;TopoDS_Compound c;b.MakeCompound(c);for(const auto& s:shapes) b.Add(c,s);return c;
+    BRep_Builder b;TopoDS_Compound c;b.MakeCompound(c);
+    for(const auto& s:shapes) {BRepBuilderAPI_Copy copy(s,true,false);b.Add(c,copy.Shape());}
+    return c;
 }
 TopoDS_Face top(const TopoDS_Shape& shape,double z) {
     for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {

@@ -18,6 +18,7 @@
 #include <QMenu>
 #include <QStandardItemModel>
 #include <QThread>
+#include <QElapsedTimer>
 #include <QTreeWidget>
 #include <QTemporaryDir>
 #include <QFile>
@@ -311,7 +312,7 @@ struct CylindricalMoveFaceSessionTest {
         auto* tree=window.findChild<QTreeWidget*>();auto* row=tree->topLevelItem(0)->child(0);const auto before=v.boxes_[0];const auto active=v.activePartId();double offset=0;
         const auto identity=[&](bool same) {const auto& part=v.boxes_[0];check(part.persistentId==before.persistentId&&part.name==before.name&&part.color==before.color&&part.visible==before.visible&&v.activePartId()==active,"planar edit lost Part identity/appearance/Active Part");for(int r=1;r<=3;++r) for(int c=1;c<=4;++c) near(part.orientation.Value(r,c),before.orientation.Value(r,c),"planar edit changed placement");check(!v.boxes_.back().visible&&!v.context_->IsDisplayed(v.boxes_.back().presentation),"planar edit displayed hidden witness");if(same) check(part.presentation==before.presentation&&tree->topLevelItem(0)->child(0)==row,"planar edit replaced Part/browser presentation");};
         const auto save=[&](bool reopen) {NativeDocumentSnapshot captured,restored;check(v.exportDocumentSnapshot(captured),"planar snapshot capture failed");const auto file=temporary.filePath("plane.odc");const auto undo=v.undoStack_.size(),redo=v.redoStack_.size();check(NativeDocumentStorage::save(file,captured,error)&&NativeDocumentStorage::load(file,restored,error),qPrintable(error));verify(restored.parts[0].shape,offset,holes);check(v.undoStack_.size()==undo&&v.redoStack_.size()==redo,"planar Save changed history");if(reopen) {check(v.importDocumentSnapshot(restored,error),qPrintable(error));check(v.undoStack_.empty()&&v.redoStack_.empty()&&!v.commandSession_&&v.context_->NbSelected()==0&&!v.arrowVisible_,"planar Open retained history/preview/selection");identity(false);v.fitSelection({0});}};
-        const auto start=[&](double delta) {const auto face=planeAt(v.boxes_[0].shape,offset);select(v,0,face);check(v.startMoveFace(0,face),"current planar face cannot start Move Face");check(v.commandSession_->moveFeature==CadViewport::MoveFaceFeature::Planar,"planar face classified as a cylinder command");input(v,QLocale().toString(delta*std::abs(before.orientation.ScaleFactor()),'g',15));check(v.commandSession_->valid,qPrintable(v.commandSession_->geometryError));verify(v.commandSession_->candidate,offset+delta,holes);};
+        const auto start=[&](double delta) {const auto face=planeAt(v.boxes_[0].shape,offset);select(v,0,face);check(v.startMoveFace(0,face),"current planar face cannot start Move Face");check(v.commandSession_->moveFeature==CadViewport::MoveFaceFeature::Planar,"planar face classified as a cylinder command");input(v,QLocale().toString(delta*std::abs(before.orientation.ScaleFactor()),'g',15));awaitNumericPreview(v);check(v.commandSession_->valid,qPrintable(v.commandSession_->geometryError));verify(v.commandSession_->candidate,offset+delta,holes);};
         start(5);const auto shown=v.commandSession_->preview;check(!shown.IsNull()&&v.boxes_[0].shape.IsSame(before.shape),"planar preview changed confirmed geometry");TColStd_ListOfInteger modes;v.context_->ActivatedModes(shown,modes);check(modes.IsEmpty(),"planar preview is selectable");save(false);v.cancelCommandSession();check(!v.commandSession_&&v.boxes_[0].shape.IsSame(before.shape)&&v.undoStack_.empty()&&v.context_->DisplayStatus(shown)==PrsMgr_DisplayStatus_None,"planar Cancel changed model/history or leaked preview");identity(true);
         std::vector<TopoDS_Shape> states{before.shape};std::vector<double> offsets{0};
         for(double delta:{5.,-2.,1.}) {start(delta);const auto candidate=v.commandSession_->candidate;const auto preview=v.commandSession_->preview;v.confirmCommandSession();offset+=delta;check(!v.commandSession_&&BRepReconstruction::equivalent(v.boxes_[0].shape,candidate)&&v.context_->DisplayStatus(preview)==PrsMgr_DisplayStatus_None,"numeric planar confirmation differs from preview or leaked it");verify(v.boxes_[0].shape,offset,holes);states.push_back(v.boxes_[0].shape);offsets.push_back(offset);identity(true);currentOwners(v,0);}
@@ -483,14 +484,14 @@ struct CylindricalMoveFaceSessionTest {
         check(v.commandSession_->valid&&std::abs(v.commandSession_->value-5)<.5,"Interactive crash-range preview failed");verify(v.commandSession_->candidate,v.commandSession_->value);
         check(!v.commandSession_->preview.IsNull()&&v.context_->IsDisplayed(v.commandSession_->preview),"Live preview not displayed");
         v.cancelCommandSession();check(v.boxes_[0].shape.IsSame(before.shape)&&v.undoStack_.size()==history,"Drag Cancel changed document/history");
-        start();input(v,"5");check(v.commandSession_->valid,"Exact crash offset preview failed");verify(v.commandSession_->candidate,5);
-        input(v,"-5");check(!v.commandSession_->valid,"Invalid preview is confirmable");
-        input(v,"13");check(v.commandSession_->valid,"Full-cylinder transition preview failed");verify(v.commandSession_->candidate,13);
-        input(v,"5");const auto previewCandidate=v.commandSession_->candidate;v.commandButtons_->button(QDialogButtonBox::Ok)->click();
+        start();input(v,"5");awaitNumericPreview(v);check(v.commandSession_->valid,"Exact crash offset preview failed");verify(v.commandSession_->candidate,5);
+        input(v,"-5");awaitNumericPreview(v);check(!v.commandSession_->valid,"Invalid preview is confirmable");
+        input(v,"13");awaitNumericPreview(v);check(v.commandSession_->valid,"Full-cylinder transition preview failed");verify(v.commandSession_->candidate,13);
+        input(v,"5");awaitNumericPreview(v);const auto previewCandidate=v.commandSession_->candidate;v.commandButtons_->button(QDialogButtonBox::Ok)->click();
         const auto committed=v.boxes_[0].shape;check(BRepReconstruction::equivalent(committed,previewCandidate),"Commit differs from crash preview");
         verify(v.boxes_[0].shape,5);currentOwners(v,0);check(v.boxes_[0].persistentId==before.persistentId&&v.boxes_[0].presentation==before.presentation,"Crash fix changed Part identity");
         v.undoPull();check(v.boxes_[0].shape.IsSame(before.shape),"Crash edit Undo failed");v.redoPull();check(v.boxes_[0].shape.IsSame(committed),"Crash edit Redo failed");
-        start();input(v,"2");check(v.commandSession_->valid,"Repeated right-end preview failed");verify(v.commandSession_->candidate,7);v.cancelCommandSession();
+        start();input(v,"2");awaitNumericPreview(v);check(v.commandSession_->valid,"Repeated right-end preview failed");verify(v.commandSession_->candidate,7);v.cancelCommandSession();
         check(file.open(QIODevice::ReadOnly)&&file.readAll()==bytes,"Original crash document was modified");
         std::cout<<"Isolated native crash geometry, drag, preview, Cancel and Undo/Redo regression passed\n";
     }
@@ -616,7 +617,7 @@ struct CylindricalMoveFaceSessionTest {
             const auto f=TopoDS::Face(it.Current());const BRepAdaptor_Surface s(f);
             if(s.GetType()==GeomAbs_Plane&&s.Plane().Axis().Direction().IsParallel(gp_Dir(0,0,1),1.e-8)&&std::abs(s.Plane().Location().Z()-115)<1.e-6) {cap=f;break;}
         }
-        select(v,0,cap);action->trigger();check(v.commandSession_.has_value(),"Unchanged boss cap lost Move Face");input(v,QLocale().toString(scale,'g',15));check(v.commandSession_->valid,"Boss cap cannot preview after notch edits");v.cancelCommandSession();
+        select(v,0,cap);action->trigger();check(v.commandSession_.has_value(),"Unchanged boss cap lost Move Face");input(v,QLocale().toString(scale,'g',15));awaitNumericPreview(v);check(v.commandSession_->valid,"Boss cap cannot preview after notch edits");v.cancelCommandSession();
         for(size_t i=states.size()-1;i>0;--i) {v.undoPull();check(v.boxes_[0].shape.IsSame(states[i-1]),"Repeated notch Undo did not restore cached source");}
         check(serialized(before.shape)==stamp,"Notch operations mutated original Part");currentOwners(v,0);
         for(size_t i=1;i<states.size();++i) {v.redoPull();check(v.boxes_[0].shape.IsSame(states[i]),"Repeated notch Redo rebuilt or lost cached geometry");}
@@ -718,7 +719,7 @@ struct CylindricalMoveFaceSessionTest {
                 // paths. Exercise both signed previews, not just recognition.
                 if(std::abs(normal.Z())>.99) {
                     move->trigger();check(v.commandSession_.has_value(),"Post-boundary planar context activation failed");
-                    for(const auto value:{"2","-2"}) {input(v,value);check(v.commandSession_->valid,qPrintable(QString("Plane z=%1 offset=%2 Trim=%3: %4").arg(s.Plane().Location().Z()).arg(value).arg(trim).arg(v.commandSession_->geometryError)));}
+                    for(const auto value:{"2","-2"}) {input(v,value);awaitNumericPreview(v);check(v.commandSession_->valid,qPrintable(QString("Plane z=%1 offset=%2 Trim=%3: %4").arg(s.Plane().Location().Z()).arg(value).arg(trim).arg(v.commandSession_->geometryError)));}
                     v.cancelCommandSession();
                 }
             }
@@ -731,9 +732,9 @@ struct CylindricalMoveFaceSessionTest {
                     if(s.GetType()==GeomAbs_Plane&&s.Plane().Axis().Direction().IsParallel(gp_Dir(0,0,1),1.e-8)&&s.Plane().Location().Z()<1) return f;
                 }return TopoDS_Face();
             };
-            select(v,0,bottom());action->trigger();input(v,"2");check(v.commandSession_->valid,"Bottom preview failed");
+            select(v,0,bottom());action->trigger();input(v,"2");awaitNumericPreview(v);check(v.commandSession_->valid,"Bottom preview failed");
             const auto bottomResult=v.commandSession_->candidate;v.commandButtons_->button(QDialogButtonBox::Ok)->click();currentOwners(v,0);
-            select(v,0,bottom());action->trigger();input(v,"1");check(v.commandSession_->valid,"Repeated bottom edit failed");v.cancelCommandSession();
+            select(v,0,bottom());action->trigger();input(v,"1");awaitNumericPreview(v);check(v.commandSession_->valid,"Repeated bottom edit failed");v.cancelCommandSession();
             v.undoPull();check(BRepReconstruction::equivalent(v.boxes_[0].shape,candidate),"Planar Undo lost boss result");
             v.redoPull();check(BRepReconstruction::equivalent(v.boxes_[0].shape,bottomResult),"Planar Redo lost result");
             select(v,0,bottom());action->trigger();check(v.commandSession_.has_value(),"Planar activation failed after Redo");v.cancelCommandSession();
@@ -759,7 +760,7 @@ struct CylindricalMoveFaceSessionTest {
             const auto picked=v.selectionContext().faces.front();
             check(picked.partIndex==0&&picked.face.IsSame(planar),"Planar test ray did not hit the intended unchanged plane");
             action->trigger();check(v.commandSession_&&v.commandSession_->moveFeature==CadViewport::MoveFaceFeature::Planar,"Planar Move Face activation rejected after boss commit");
-            input(v,"2");check(v.commandSession_->valid,"Planar Move Face preview failed after boss commit");v.cancelCommandSession();
+            input(v,"2");awaitNumericPreview(v);check(v.commandSession_->valid,"Planar Move Face preview failed after boss commit");v.cancelCommandSession();
             select(v,0,radiusFace(v.boxes_[0].shape,18));action->trigger();
             check(v.commandSession_&&v.commandSession_->moveFeature==CadViewport::MoveFaceFeature::Boss,"Boundary boss cannot activate repeated Move Face");
             v.cylinderBossBoundary_->setCurrentIndex(trim?1:0);v.cylinderMoveDirection_->setCurrentIndex(2);
@@ -941,7 +942,7 @@ struct CylindricalMoveFaceSessionTest {
             if(s.GetType()==GeomAbs_Plane&&std::abs(s.Plane().Axis().Direction().X())>.99&&s.Plane().Distance(gp_Pnt(163,0,0))<1.e-6) {side=face;break;}
         }
         select(v,0,side);action->trigger();check(v.commandSession_&&v.commandSession_->moveFeature==CadViewport::MoveFaceFeature::Planar,"Planar capability was coupled to boss recognition");
-        input(v,"2");check(v.commandSession_->valid,"Planar edit after open hole/local boss move failed");v.cancelCommandSession();
+        input(v,"2");awaitNumericPreview(v);check(v.commandSession_->valid,"Planar edit after open hole/local boss move failed");v.cancelCommandSession();
         if(!path.isEmpty()) {QFile file(path);check(file.open(QIODevice::ReadOnly)&&file.readAll()==originalBytes,"Supplied document bytes changed");}
         std::cout<<"Two-feature document selection/availability/recognition regression passed\n";
     }
@@ -965,6 +966,14 @@ struct CylindricalMoveFaceSessionTest {
     static void input(CadViewport& v,const QString& text) {
         v.dragDimension_->setText(text);
         QMetaObject::invokeMethod(v.dragDimension_,"textEdited",Qt::DirectConnection,Q_ARG(QString,text));
+    }
+    // A planar Move Face defers its certified preview to the 300 ms numeric
+    // debounce timer, so a just-typed value is legitimately not valid yet.
+    // Pump until the pending request is consumed; the caller still owns the
+    // validity assertion.
+    static void awaitNumericPreview(CadViewport& v) {
+        QElapsedTimer timer;timer.start();
+        while(v.pendingMoveNumeric_&&timer.elapsed()<60000) {QApplication::processEvents();QThread::msleep(5);}
     }
     static void panelBounds(CadViewport& v) {
         events();v.commandPanelPositioner_->update();events();

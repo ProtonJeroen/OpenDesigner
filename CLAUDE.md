@@ -51,3 +51,85 @@ Every report states: branch and SHA; exact build and test commands with PASS/FAI
 tests intentionally not run; changed files; remaining manual (GUI, Fedora KDE/Wayland, HiDPI)
 checks; unsupported or safely refused cases. Never claim a test passed that was not run in the
 current session.
+
+## Mandatory task timing (all development tasks)
+
+Every development task is timed. Timings are recorded, never reconstructed.
+
+- Record the **start** timestamp as the first action of the task, before any other
+  tool call or file change. In a Mistral Vibe session, capture it with `run_typescript`
+  (`new Date().toISOString()`) and keep the value in the session context so it survives
+  context compaction.
+- Record the **end** timestamp after implementation and validation are complete,
+  immediately before writing the task's row.
+- Duration is the actual wall-clock difference between the two recorded timestamps,
+  in seconds. Never derive it from a subjective impression of how long the work took.
+- Append exactly one row per completed task to `docs/LOCAL_AI_TASK_TIMES.csv`.
+  Append only: never rewrite, reorder or delete existing rows, and never add a row
+  for a task that was not timed in its own session.
+- Required fields per row: task identifier, start timestamp, end timestamp,
+  duration, result, build time, test time and context compactions.
+- Write the literal string `not measured` for any value that was not captured.
+  Never estimate, interpolate or invent a historical timing: a task whose start
+  was not recorded keeps `not measured` for start, end and duration.
+- Build time and test time are the measured durations of the build and test
+  commands run for the task, not a sum of everything that happened to run.
+- Context compactions is the number of context compactions observed during the
+  task when the session reports it; otherwise `not measured`.
+- Failed and blocked tasks still get a row, with `result` set accordingly.
+- Timing is measurement only. It never changes build flags, test selection,
+  tolerances or timeouts, and it does not replace the reporting rules above.
+
+### Task-time CSV conventions
+
+- `docs/LOCAL_AI_TASK_TIMES.csv` header, in this order:
+  `task_id,task_title,start_utc,end_utc,duration_seconds,result,build_seconds,test_seconds,context_compactions,notes`.
+- Timestamps are ISO-8601 UTC with milliseconds, for example
+  `2026-11-21T22:03:37.038Z`.
+- `result` is one of `pass`, `fail`, `blocked`, `not measured`.
+- Quote a field only when it contains a comma, a double quote or a newline;
+  escape inner double quotes by doubling them.
+- One row per task, appended at the end of the file. Do not sort, deduplicate
+  or add a summary row.
+
+## Mandatory Technical Handover (all development tasks)
+
+At the end of every development task, update `docs/LOCAL_AI_PROGRESS.md` BEFORE presenting the
+final report.
+
+The handover must contain:
+
+- Current branch, commit and working-tree status.
+- Task objective and completion status.
+- Root cause and technical decisions.
+- Files changed and why.
+- Actual build and test commands with PASS/FAIL results.
+- Remaining problems and known limitations.
+- Exact next recommended development step.
+- Important findings required by a fresh AI session.
+
+Rules:
+
+- Preserve relevant findings from previous tasks.
+- Keep the document concise and avoid duplication.
+- Distinguish verified results from assumptions.
+- Never claim tests passed unless executed.
+- Never weaken or disable tests to make them pass.
+- Do not commit or push without explicit permission.
+- Do not modify files outside the current worktree.
+- If a task fails or is blocked, document the actual status and blocker.
+- A task is not complete until the handover has been updated.
+
+### Handover file conventions
+
+- `docs/LOCAL_AI_PROGRESS.md` — the per-task handover described above. One snapshot per session
+  family: state the snapshot date, worktree path, branch, baseline commit and whether the claims
+  were verified by execution. Update it in place; do not append an unbounded log.
+- `docs/LOCAL_AI_TASK_TIMES.csv` — append-only log of measured task timings, one
+  row per task that was timed in its own session. See "Mandatory task timing";
+  unmeasured fields stay `not measured`.
+- `docs/LOCAL_AI_HANDOVER.md` — long-lived navigation and engineering handover. An index, not an
+  alternative truth source.
+- Checked-out source, tests and `CMakeLists.txt` are authoritative. A handover claim is only as
+  good as the command that produced it; re-run the recorded reproduction commands before acting
+  on any claim.
