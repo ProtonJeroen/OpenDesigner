@@ -1,4 +1,5 @@
 #include "SketchProfileBuilder.h"
+#include "BRepMeasurement.h"
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepTools.hxx>
@@ -230,7 +231,9 @@ Result build(const SketchProfileValidation::Result& profile,const gp_Ax3& frame,
             // The fixed quadrature overload can miss knot-span changes on a
             // periodic spline boundary. Adaptive integration improves the area
             // estimate; the independent validation tolerance remains unchanged.
-            GProp_GProps area;BRepGProp::SurfaceProperties(face.shape,area,1.e-12);face.area=area.Mass();
+            BRepMeasurement::Result area;QString measurementError;
+            require(BRepMeasurement::area(face.shape,area,measurementError,BRepMeasurement::Integration::Adaptive),
+                Code::NumericalFailure,measurementError);face.area=area.properties.Mass();
             const long double areaTolerance=8*tolerance*perimeter+256*std::numeric_limits<double>::epsilon()*std::abs(expected);
             require(std::isfinite(face.area) && face.area>0 && expected>0 && std::abs(face.area-expected)<=areaTolerance,
                 Code::AreaMismatch,"Constructed face area disagrees with the validated material region.",face.entityIds);

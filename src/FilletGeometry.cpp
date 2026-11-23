@@ -1,4 +1,5 @@
 #include "FilletGeometry.h"
+#include "BRepCertification.h"
 #include "EdgeBlendValidation.h"
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepAdaptor_Curve.hxx>
@@ -9,12 +10,7 @@
 #include <TopExp_Explorer.hxx>
 namespace {
 bool withinTolerance(const TopoDS_Shape& shape) {
-    for(auto type:{TopAbs_FACE,TopAbs_EDGE,TopAbs_VERTEX}) for(TopExp_Explorer it(shape,type);it.More();it.Next()) {
-        const double t=type==TopAbs_FACE?BRep_Tool::Tolerance(TopoDS::Face(it.Current())):
-            type==TopAbs_EDGE?BRep_Tool::Tolerance(TopoDS::Edge(it.Current())):BRep_Tool::Tolerance(TopoDS::Vertex(it.Current()));
-        if(!std::isfinite(t)||t>1.e-6) return false;
-    }
-    return true;
+    return BRepCertification::withinTolerance(shape,1.e-6);
 }
 }
 TopoDS_Shape FilletGeometry::apply(const TopoDS_Shape& source,const TopoDS_Edge& edge,

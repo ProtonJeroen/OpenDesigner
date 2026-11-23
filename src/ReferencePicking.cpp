@@ -236,7 +236,9 @@ void CadViewport::updateMoveDirectionControls() {
 }
 bool CadViewport::setMoveFaceDirection(MoveDirectionSource source,const std::vector<References::Target>& references,bool reverse) {
     if(!commandSession_ || commandSession_->kind!=CommandSession::Kind::MoveFace) return false;
+    stopMoveNumericPreview();
     auto& s=*commandSession_;
+    s.movePreviewCertificate.reset();
     if(s.moveFeature!=MoveFaceFeature::Planar && source!=MoveDirectionSource::FaceNormal) {
         emit statusMessage(tr("Direction references are certified for planar Faces only; cylindrical walls use their lateral reference."));return false;
     }

@@ -1,3 +1,4 @@
+#include "BRepTiming.h"
 #include "CadViewport.h"
 #include "PartPresentation.h"
 #include "CommandPanelPositioner.h"
@@ -9,10 +10,12 @@
 #include <QResizeEvent>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QTimer>
 #include <QDoubleSpinBox>
 #include <QDoubleValidator>
 #include <QCheckBox>
 #include <QSignalBlocker>
+#include <QScopedValueRollback>
 #include <QShortcut>
 #include <QAction>
 #include <QVBoxLayout>
@@ -175,8 +178,34 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
             previewFaceTransform(0.0);
         }
     });
+    moveNumericTimer_=new QTimer(this);
+    moveNumericTimer_->setSingleShot(true);
+    moveNumericTimer_->setTimerType(Qt::PreciseTimer);
+    moveNumericTimer_->setInterval(300);
+    connect(moveNumericTimer_,&QTimer::timeout,this,[this]{
+        BRepTiming::Scope timing("MoveFace.numericTimerFired");
+        if(!pendingMoveNumeric_||!consumeMoveNumericPreview())return;
+        updateCommandParameter(false);
+    });
+    // Programmatic controls can also change the value. Do not invalidate a
+    // receipt when a manipulator merely writes its already-certified value.
+    connect(dragDimension_,&QLineEdit::textChanged,this,[this]{
+        if(!commandSession_||commandSession_->kind!=CommandSession::Kind::MoveFace)return;
+        if(pendingMoveNumeric_&&pendingMoveNumeric_->text!=dragDimension_->text())stopMoveNumericPreview();
+        bool ok=false;const double value=QLocale().toDouble(dimensionNumber(dragDimension_->text()),&ok);
+        if(!ok||!std::isfinite(value)||!dragDimension_->hasAcceptableInput()||value!=commandSession_->value) {
+            // textEdited/textChanged ordering is not a scheduling contract:
+            // a matching pending request already represents this same edit.
+            if(!pendingMoveNumeric_)++moveNumericRevision_;
+            commandSession_->movePreviewCertificate.reset();
+            // Manipulators may format a just-certified value here. User edits
+            // clear commit-ready state in scheduleMoveNumericPreview below;
+            // programmatic text alone still cannot bypass confirm's full path.
+        }
+    });
     connect(dragDimension_, &QLineEdit::textEdited, this, [this]() {
-        if (commandSession_) updateCommandParameter(false);
+        BRepTiming::Scope request("Input.numericTextEdited");
+        if(commandSession_&&!scheduleMoveNumericPreview())updateCommandParameter(false);
     });
     connect(dragDimension_, &QLineEdit::returnPressed, this, &CadViewport::confirmCommandSession);
     cancelDimension_ = new QShortcut(QKeySequence(Qt::Key_Escape), this);
@@ -202,8 +231,70 @@ CadViewport::CadViewport(QWidget* parent) : QWidget(parent) {
     connect(this,&CadViewport::constructionsChanged,this,invalidateProjection);
     connect(this,&CadViewport::sketchEntitiesChanged,this,invalidateProjection);
 }
+void CadViewport::stopMoveNumericPreview() {
+    if(moveNumericTimer_)moveNumericTimer_->stop();
+    pendingMoveNumeric_.reset();++moveNumericRevision_;
+}
+void CadViewport::invalidateMoveNumericContext() {
+    stopMoveNumericPreview();
+    if(!commandSession_||commandSession_->kind!=CommandSession::Kind::MoveFace)return;
+    auto& s=*commandSession_;
+    s.moveNumericContextInvalidated=true;s.movePreviewCertificate.reset();
+    s.valid=false;s.state=CommandSession::State::Parameters;s.candidate.Nullify();
+    if(s.changes.size()==1)s.changes.front().faceChange.reset();
+    QString error;
+    if(s.faceBefore)presentFacePreview(*s.faceBefore,false,error);
+    if(s.provisionalPreviewEnabled)s.movePreviewPhase=CommandSession::MovePreviewPhase::Failed;
+    emit statusMessage(tr("Move Face source or selection changed. Cancel and select the Face again."));
+}
+bool CadViewport::consumeMoveNumericPreview() {
+    if(!pendingMoveNumeric_)return true;
+    const auto request=*pendingMoveNumeric_;
+    bool matches=commandSession_&&commandSession_->kind==CommandSession::Kind::MoveFace
+        &&request.revision==moveNumericRevision_&&commandSession_->faceBefore==request.before
+        &&commandSession_->face.IsEqual(request.face)&&dragDimension_->text()==request.text
+        &&commandSession_->moveSourceSnapshot==request.source&&moveSourceUnchanged()
+        &&selectedPartIndices_==request.selection&&!commandSession_->moveNumericContextInvalidated;
+    std::vector<Handle(SelectMgr_EntityOwner)> owners;
+    for(context_->InitSelected();context_->MoreSelected();context_->NextSelected())owners.push_back(context_->SelectedOwner());
+    matches=matches&&owners==request.owners;
+    stopMoveNumericPreview();
+    if(!matches) {BRepTiming::Scope stale("MoveFace.numericPendingRejected");invalidateMoveNumericContext();return false;}
+    return true;
+}
+bool CadViewport::scheduleMoveNumericPreview() {
+    if(!commandSession_||commandSession_->kind!=CommandSession::Kind::MoveFace
+        ||!commandSession_->allowEllipticalCapMove||commandSession_->moveFeature!=MoveFaceFeature::Planar
+        ||commandSession_->moveSourceSnapshot.isEmpty()||moveFaceByPoints()||dragDimension_->isReadOnly())return false;
+    BRepTiming::Scope timing("MoveFace.numericInputScheduled");
+    stopMoveNumericPreview();
+    auto& s=*commandSession_;
+    s.movePreviewCertificate.reset();s.valid=false;s.state=CommandSession::State::Parameters;
+    s.geometryError.clear();s.candidate.Nullify();
+    if(s.changes.size()==1)s.changes.front().faceChange.reset();
+    if(s.moveNumericContextInvalidated||!moveSourceUnchanged()) {invalidateMoveNumericContext();return true;}
+    const auto selected=selectionContext();
+    if(!selected.faces.empty()&&(selected.faces.size()!=1||selected.faces.front().partIndex!=s.changes.front().partIndex
+        ||!selected.faces.front().face.IsEqual(s.face))) {invalidateMoveNumericContext();return true;}
+    bool ok=false;const double value=QLocale().toDouble(dimensionNumber(dragDimension_->text()),&ok);
+    if(!ok||!std::isfinite(value)||!dragDimension_->hasAcceptableInput())return false;
+    QString error;presentFacePreview(*s.faceBefore,false,error);
+    if(!moveFaceArrow_.IsNull())displayPullArrow(moveFaceArrow_,s.pivot,gp_Vec(s.direction));
+    PendingMoveNumeric request{moveNumericRevision_,dragDimension_->text(),s.face,s.faceBefore,s.moveSourceSnapshot,{},selectedPartIndices_};
+    for(context_->InitSelected();context_->MoreSelected();context_->NextSelected())request.owners.push_back(context_->SelectedOwner());
+    pendingMoveNumeric_=std::move(request);
+    // Enabled means OK may synchronously certify, never that this input has a
+    // committable candidate. valid is false and the FaceChange/receipt are gone.
+    commandButtons_->button(QDialogButtonBox::Ok)->setEnabled(true);
+    moveNumericTimer_->start();
+    redrawFacePreview();
+    emit statusMessage(tr("Move Face: preview pending. OK/Enter applies the current value."));
+    return true;
+}
 void CadViewport::beginCommandSession(CommandSession::Kind kind,
         const std::vector<size_t>& indices, const gp_Dir& direction, const gp_Pnt& pivot) {
+    BRepTiming::Scope timingScope("CadViewport.CadViewport::beginCommandSession");
+    stopMoveNumericPreview();
     if(kind!=CommandSession::Kind::Sketch) endSketchEditing();
     if(commandSession_) cancelCommandSession();
     commandSession_.emplace();
@@ -258,6 +349,8 @@ void CadViewport::showCommandControls(const QPoint&) {
 }
 void CadViewport::showCommandPanel(QWidget* panel) {commandPanelPositioner_->show(panel);}
 bool CadViewport::previewCommand(double value) {
+    BRepTiming::Scope timingScope("CadViewport.CadViewport::previewCommand");
+    if(commandSession_&&commandSession_->kind==CommandSession::Kind::MoveFace)stopMoveNumericPreview();
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::DeleteFace) return commandSession_->valid;
     if (!commandSession_ || !std::isfinite(value)) return false;
     if (commandSession_->kind==CommandSession::Kind::Fillet || commandSession_->kind==CommandSession::Kind::Chamfer) return previewEdgeBlend(value);
@@ -287,6 +380,8 @@ bool CadViewport::previewCommand(double value) {
     return true;
 }
 bool CadViewport::updateCommandParameter(bool reportError) {
+    BRepTiming::Scope timingScope("CadViewport.CadViewport::updateCommandParameter");
+    if(!consumeMoveNumericPreview())return false;
     if(commandSession_) commandSession_->geometryError.clear();
     // Move Face by Points has no numeric input: the points define the value.
     if(moveFaceByPoints()) return previewCommand(0.0);
@@ -296,10 +391,12 @@ bool CadViewport::updateCommandParameter(bool reportError) {
         const bool faceCommand=commandSession_ && (commandSession_->kind==CommandSession::Kind::MoveFace
             || commandSession_->kind==CommandSession::Kind::RotateFace || commandSession_->kind==CommandSession::Kind::AlignFace || commandSession_->kind==CommandSession::Kind::Fillet || commandSession_->kind==CommandSession::Kind::Chamfer);
         if(faceCommand && commandSession_->faceBefore) {
+            commandSession_->movePreviewCertificate.reset();
             commandSession_->valid=false;
             commandSession_->state=CommandSession::State::Parameters;
             QString error;
             presentFacePreview(*commandSession_->faceBefore,false,error);
+            if(commandSession_->provisionalPreviewEnabled)commandSession_->movePreviewPhase=CommandSession::MovePreviewPhase::Failed;
             if(commandSession_->kind==CommandSession::Kind::MoveFace && commandSession_->moveFeature!=MoveFaceFeature::Planar
                && commandSession_->lateralDirectionReady && !moveFaceArrow_.IsNull())
                 displayPullArrow(moveFaceArrow_,commandSession_->pivot,gp_Vec(commandSession_->direction));
@@ -310,9 +407,23 @@ bool CadViewport::updateCommandParameter(bool reportError) {
     }
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Pull && primitivePullDragging_)
         value=(value-primitivePullStartDimension())/(primitivePullIsDiameter()?2.0:1.0);
-    return previewCommand(value);
+    const bool result=previewCommand(value);
+    if(result&&commandSession_&&commandSession_->kind==CommandSession::Kind::MoveFace&&commandSession_->valid)
+        emit statusMessage(tr("Move Face preview ready. OK/Enter applies; Cancel/Esc discards."));
+    return result;
 }
 void CadViewport::confirmCommandSession() {
+    BRepTiming::Scope timingScope("CadViewport.CadViewport::confirmCommandSession");
+    if(!consumeMoveNumericPreview())return;
+    if(commandSession_&&commandSession_->kind==CommandSession::Kind::MoveFace&&commandSession_->moveNumericContextInvalidated) {
+        invalidateMoveNumericContext();return;
+    }
+    if(commandSession_&&commandSession_->kind==CommandSession::Kind::MoveFace
+       &&commandSession_->provisionalPreviewEnabled&&commandSession_->provisional
+       &&commandSession_->directionSource==MoveDirectionSource::FaceNormal
+       &&(!moveSourceUnchanged()||!moveProvisionalSelectionUnchanged())) {
+        invalidateMoveNumericContext();return;
+    }
     if(commandSession_ && commandSession_->sweep) {finishProfileSweep(true);return;}
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Sketch) {finishSketchEdit(true);return;}
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Construction) {
@@ -328,13 +439,29 @@ void CadViewport::confirmCommandSession() {
         if(previewBooleanSession()) closeCommandSession(true);
         return;
     }
+    if(commandSession_&&commandSession_->kind==CommandSession::Kind::MoveFace&&!moveFaceByPoints()) {
+        bool ok=false;const double value=QLocale().toDouble(dimensionNumber(dragDimension_->text()),&ok);
+        if(ok&&std::isfinite(value)&&dragDimension_->hasAcceptableInput()&&reuseMovePreview(value)) {
+            closeCommandSession(true);return;
+        }
+    }
     if (commandSession_) {
-        if(updateCommandParameter()) closeCommandSession(true);
+        bool ready=false;
+        if(commandSession_->kind==CommandSession::Kind::MoveFace) {
+            // Only the full production path may satisfy OK, including pending
+            // numeric input. No provisional bool/result can reach commit.
+            QScopedValueRollback<bool> full(forceCertifiedMovePreview_,true);
+            if(commandSession_->provisionalPreviewEnabled)
+                commandSession_->movePreviewPhase=CommandSession::MovePreviewPhase::Certifying;
+            ready=updateCommandParameter();
+        } else ready=updateCommandParameter();
+        if(ready) closeCommandSession(true);
         else if(!commandSession_->geometryError.isEmpty())
             reportGeometryFailure(commandPanel_->windowTitle().remove(tr(" Preview")),commandSession_->geometryError,true);
     }
 }
 void CadViewport::cancelCommandSession() {
+    stopMoveNumericPreview();
     cancelTargetPicking();
     if(commandSession_ && commandSession_->sweep) {finishProfileSweep(false);return;}
     if(commandSession_ && commandSession_->kind==CommandSession::Kind::Sketch) {finishSketchEdit(false);return;}
@@ -346,6 +473,13 @@ void CadViewport::cancelCommandSession() {
     else resetModelingTools();
 }
 void CadViewport::closeCommandSession(bool confirm) {
+    BRepTiming::Scope timingScope("CadViewport.CadViewport::closeCommandSession");
+    if(confirm&&commandSession_->kind==CommandSession::Kind::MoveFace&&commandSession_->provisionalPreviewEnabled
+       &&(!commandSession_->valid||!commandSession_->provisionalCandidate().IsNull()
+          ||commandSession_->movePreviewPhase==CommandSession::MovePreviewPhase::Certifying))return;
+    if(!confirm&&commandSession_->kind==CommandSession::Kind::MoveFace)
+        commandSession_->movePreviewPhase=CommandSession::MovePreviewPhase::Cancelled;
+    stopMoveNumericPreview();
     commandSession_->state = confirm ? CommandSession::State::Confirmed : CommandSession::State::Cancelled;
     const auto session = std::move(*commandSession_);
     commandSession_.reset();
@@ -609,9 +743,13 @@ void CadViewport::initializeViewer() {
 }
 void CadViewport::stabilizeViewCamera() {if(!view_.IsNull()) stabilizeOrthographicCamera(view_->Camera());}
 void CadViewport::paintEvent(QPaintEvent*) {
+    BRepTiming::Scope timing("Viewport.paintEvent");
     initializeViewer();
     refreshActivePart(false);
-    if (!view_.IsNull()) {updateConstructionLabels();view_->Redraw();}
+    if (!view_.IsNull()) {
+        updateConstructionLabels();
+        BRepTiming::Event event("Viewport.paintEvent.Redraw");view_->Redraw();event.finish();
+    }
 }
 void CadViewport::configureSelectionHighlights() {
     if(context_.IsNull()) return;
@@ -2052,6 +2190,7 @@ void CadViewport::fitSelection(const std::vector<size_t>& indices) {
     view_->Redraw();
 }
 void CadViewport::selectParts(const std::vector<size_t>& indices) {
+    BRepTiming::Scope timingScope("CadViewport.CadViewport::selectParts");
     if(commandSession_ && commandSession_->sweep) {chooseExtrusionTarget(indices);return;}
     if(commandSession_ && commandSession_->projection) {
         emit statusMessage(tr("Project 3D Geometry requires vertices, edges or faces picked in the viewport, not whole Parts."));return;
@@ -2524,6 +2663,7 @@ void CadViewport::setRotateMode(bool enabled) {
 void CadViewport::setAngleSnap(double degrees) { rotationSnap_ = degrees; }
 
 void CadViewport::mousePressEvent(QMouseEvent* e) {
+    BRepTiming::Scope timingScope("CadViewport.CadViewport::mousePressEvent");
     if (e->button()==Qt::RightButton) return;
     previous_ = e->pos();
     rotating_ = e->button() == Qt::MiddleButton && !(e->modifiers() & Qt::ShiftModifier);
@@ -2727,6 +2867,7 @@ void CadViewport::mousePressEvent(QMouseEvent* e) {
     }
 }
 void CadViewport::updateSelectedFaceArrow(const QPoint& point) {
+    BRepTiming::Scope timingScope("void CadViewport::updateSelectedFaceArrow");
     // Keep one manipulation arrow as an anchor for a multi-face selection.
     // The grouped drag operation will use all selected face owners.
     cylindricalFacePull_=false;bossHeightPull_=false;bossPullHeight_=0;
@@ -2934,6 +3075,7 @@ void CadViewport::setSnapStep(double stepMm) {
         : tr("Face snapping disabled."));
 }
 void CadViewport::mouseMoveEvent(QMouseEvent* e) {
+    BRepTiming::Scope timingScope("CadViewport.CadViewport::mouseMoveEvent");
     if(!rotating_ && !panning_ && (sketchTrimMove(e->pos()) || sketchExtendMove(e->pos()) || sketchConstructionMove(e->pos()) || overdrawMove(e->pos()) || sketchDrawingMove(e->pos(),e->modifiers()))) return;
     if (view_.IsNull()) return;
     QPoint p = e->pos();
@@ -3000,6 +3142,7 @@ void CadViewport::mouseMoveEvent(QMouseEvent* e) {
     previous_ = p;
 }
 void CadViewport::mouseReleaseEvent(QMouseEvent* e) {
+    BRepTiming::Scope timingScope("CadViewport.CadViewport::mouseReleaseEvent");
     if(e->button()==Qt::LeftButton) constructionMouseRelease();
     if (e->button() == Qt::MiddleButton) { rotating_ = false; panning_ = false; }
     if(e->button()==Qt::LeftButton && commandSession_ && (commandSession_->sweep || commandSession_->kind==CommandSession::Kind::Boolean

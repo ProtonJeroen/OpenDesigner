@@ -34,6 +34,12 @@ struct State {
 };
 // True when one support is curved (cylinder/cone): a circular transition.
 bool circular(const Feature& feature);
+// Optional recipe replay or current-B-Rep recovery, independent of provenance.
+// Support/topology analysis never assigns transition identity from surface type.
+// Recovery currently covers only the existing separated rectangular-stock and
+// conical certificates; general imported circular Fillets remain unsupported.
+// Failure to resolve a Chamfer identity is not a prerequisite failure for an
+// ordinary Face operation: those callers retain their own geometric certificate.
 bool resolve(const TopoDS_Shape& current,State& state,QString& error);
 int selected(const State& state,const TopoDS_Face& face);
 bool create(const TopoDS_Shape& current,const State& prior,const TopoDS_Edge& edge,

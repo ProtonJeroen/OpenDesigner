@@ -1,6 +1,6 @@
 # OpenDesigner roadmap
 
-Versioned sections below are ordered by development history, from early foundations to v0.4.9. The older `v0.20` milestone names are retained as originally recorded. Planned and in-progress items follow separately; proposed milestone numbers and order are not release commitments.
+Versioned sections below record development history and the explicitly staged v0.5.x work. The older `v0.20` milestone names are retained as originally recorded. Planned and in-progress items follow separately; proposed milestone numbers and order are not release commitments.
 
 ## Cross-cutting principle — Geometry-first, history-independent B-Rep editing
 
@@ -811,13 +811,16 @@ Sketch and projected-geometry references during design and acceptance.
   tests passed. Known limits of projected coefficient B-splines, interactive
   Trim/Extend and elliptical/spline intersection-based Overdraw remained at that
   release; see the scoped v0.5.6 implementation below.
-- **v0.5.6 candidate: interactive Trim, Extend and exact Overdraw** implemented
-  on the feature branch with focused automated coverage. Final CI review and
-  manual Fedora KDE/Wayland acceptance remain pending (scope below).
+- **v0.5.6: interactive Trim, Extend and exact Overdraw — merged** (PR #78,
+  locally available `origin/develop` at `98ed414`). Historical manual checklist
+  entries below remain unverified here; merging alone is not evidence that every
+  manual/platform acceptance category passed.
 - **v0.5.7: shared geometry-first B-Rep reconstruction foundation**
   for Move Face, Rotate Face, Pull/Resize and Delete Face, including complex
   extruded ellipse/spline profiles and holes; consolidate proven specialized
-  reconstruction paths without reducing certified coverage.
+  reconstruction paths without reducing certified coverage. In progress:
+  shared infrastructure, scoped ellipse/obround/no-hole spline cap Move and
+  P1/P2 are implemented; see the status ledger and remaining gates below.
 - **v0.5.8: advanced Hole Editing** on current B-Reps, regardless of whether
   the opening originated from Sketch/Remove Material, Boolean or STEP import.
 - Sweep (including 3D spline paths), then Loft, after the interactive curve
@@ -829,11 +832,43 @@ Sketch and projected-geometry references during design and acceptance.
 - Cross-platform desktop packaging; initial iPadOS/Android mouse-and-keyboard
   technical builds, then opt-in touch/stylus mode.
 
-Version 0.5.6 is an implemented release candidate, not yet a merged release.
-Versions 0.5.7–0.5.8 remain proposed development milestones. All retain the
-geometry-first, current-B-Rep and conservative-certification principles.
+Version 0.5.6 is merged; v0.5.7 remains an unreleased development milestone and
+v0.5.8 remains planned. All retain the geometry-first, current-B-Rep and
+conservative-certification principles. No milestone number or capability target
+is reassigned by this status update.
 
-## v0.5.6 candidate — Interactive Trim, Extend and Exact Overdraw
+### Scheduling boundaries and decisions (2026-11-15)
+
+- The original v0.5.7 checklist covers Move, Rotate, Pull/Resize and Delete on
+  broader mixed profiles and holes. Completed scoped axial Move Face work does
+  **not** close that checklist. Proposed resolution: retain the open requirements
+  and define explicit release acceptance before declaring v0.5.7 complete; any
+  narrower release or carry-over requires a separate decision, not an implicit
+  move to v0.5.8.
+- Preserving an existing hole during cap translation (v0.5.7) is distinct from
+  independently recognizing, moving, resizing or deleting that hole (v0.5.8).
+  One- and two-hole spline extrusions remain v0.5.7 work; advanced Hole Editing
+  keeps its established v0.5.8 assignment.
+- The v0.5.0 Fillet/Chamfer heading records the delivered creation foundation,
+  not completion of its broader multi-edge/advanced checklist. v0.5.1/v0.5.2
+  circular/conical scopes remain as recorded. Elliptical/spline/variable-radius
+  and general imported-transition increments have no agreed release number.
+  Proposed resolution: scope and assign those increments explicitly against the
+  shared foundation, while retaining v0.5.8 and Sweep-before-Loft ordering until
+  a priority/version decision is approved.
+- The earlier v0.5.3 curve-foundation list records original requirements;
+  bounded ellipses/2D splines were delivered in v0.5.5 and interactive exact
+  editing in v0.5.6 within their documented limits. This does not complete
+  arbitrary projected/freeform curves or the **3D spline paths** required by
+  Sweep. Preserve Workplanes, Axes, Points and live geometric references as
+  foundations for all later commands, including assemblies/alignment.
+- Assemblies/Structure Browser and geometric alignment remain future work.
+  STEP/IGES/STL precede the planned GLB/glTF/FBX exchange increments. Desktop
+  Linux/Windows/macOS packaging and validation, initial iPadOS/Android technical
+  builds, and optional cross-platform touch/stylus mode retain their existing
+  scopes below; desktop controls remain available.
+
+## v0.5.6 — Interactive Trim, Extend and Exact Overdraw
 
 - [x] **Trim:** click an unwanted span of a segment, circular/elliptical arc,
   circle/ellipse or certified spline; preview exact remaining portions and
@@ -875,7 +910,7 @@ See [Trim](INTERACTIVE_TRIM.md), [Extend](INTERACTIVE_EXTEND.md),
 [exact Overdraw](EXACT_OVERDRAW.md) and the consolidated
 [Fedora KDE/Wayland acceptance checklist](V056_KDE_ACCEPTANCE.md).
 
-## Planned — v0.5.7 Shared B-Rep Reconstruction Architecture & Advanced Face Editing
+## In progress — v0.5.7 Shared B-Rep Reconstruction Architecture & Advanced Face Editing
 
 **Architectural priority:** new Sketch curves or solid types must not require
 five independent direct-modeling implementations. Introduce a shared, geometry-
@@ -884,6 +919,80 @@ Pull/Resize and Delete Face. It must operate on the current B-Rep, independent
 of original primitives, Sketch/Extrude history and imported provenance. This
 is a staged, conservative capability target: no claim that every arbitrary
 freeform or multi-shell B-Rep can be modified.
+
+### Scoped implementation and acceptance status (2026-11-15)
+
+This ledger describes the approved work on the feature branch, **not a shipped
+release or general freeform capability**. The broader requirements below remain
+open wherever their full operation/geometry scope is not yet certified.
+
+- [x] **Shared topology/support infrastructure:** SupportDescriptor and
+  TopologyIndex retain exact carriers, trims, oriented edge uses, inner wires
+  and adjacency. Existing BRepReconstruction remains the one reconstruction
+  engine; no parallel command or transaction system.
+- [x] **Shared certification/correspondence and measurement:** BRepCertification
+  and BRepMeasurement consolidate validity, closure/manifold policies,
+  material-set comparison, protected regions and trimmed-Face correspondence,
+  including bounded invariant spline supports. Carrier identity is not trimmed
+  region identity; split/merge/removal/new/ambiguous cases remain distinct.
+- [x] **Elliptical extrusion Move Face:** certified axial cap growth/shortening,
+  including the central cylindrical through-hole case; automatic and user
+  manual acceptance reported. This does not enable arbitrary cap rotation.
+- [x] **Obround extrusion Move Face:** exact straight/circular outer boundary,
+  circular through-hole and 30-degree rotated Workplane geometry passed
+  automatic and user manual acceptance, using the existing local planar route.
+- [x] **No-hole spline extrusion Move Face:** Phase 5B.3 approved with focused
+  geometry/session acceptance, exact cubic coefficients/knots, growth/shortening,
+  placement, material occupancy, history and persistence. No broad manual/CI or
+  arbitrary B-spline-surface acceptance is inferred from this scoped approval.
+- [x] **P1:** remove duplicate successful planar menu availability validation
+  within one synchronous call; command startup still validates current geometry.
+- [x] **P2:** session-local reuse of an already certified planar Face-normal Move
+  preview on identical OK. Exact source/candidate/Face/frame/input/options guards
+  and invalidation are retained; reference-driven, blend and cylindrical-feature
+  operations keep full confirmation. No persistent/global modeling cache.
+- [x] **P3A:** individual Boolean/copy/integration analysis completed; eight
+  repeated spline Face-pair Commons within correspondence invocations measured
+  at 106–121 ms. Independent 3D material certificates must remain.
+- [ ] **P3B optimization and review:** scoped implementation and focused checks
+  completed; review/sign-off remains pending. Each identical **ordered, oriented,
+  trimmed Face pair** is evaluated once per correspondence invocation, retaining
+  coverage, region, split/merge, ambiguity and error checks. The synthetic spline
+  trace has 26 → 18 Booleans and 8 → 0 within-invocation repeats; observed preview
+  medians are 1624 → 1482 ms, not a general speed guarantee. No unrelated ellipse
+  Boolean, tolerance or material-certificate optimization. See
+  [P3B evidence](P3B_CORRESPONDENCE_REUSE.md).
+- [ ] **Spline with one circular through-hole:** next separately approved
+  synthetic geometry/eligibility, exact support and material regression stage.
+- [ ] **Spline with two separate circular through-holes:** subsequent stage;
+  prove both remain open and unchanged, including rotated Part/Workplane frames.
+  No implementation is authorized merely by this roadmap entry.
+- [ ] **v0.5.7 release validation and CI:** review scoped changes, compatibility
+  and safe refusals; required manual desktop/HiDPI acceptance and release CI
+  remain pending. Focused test passes are not a full-suite or cross-platform claim.
+
+Current refusal boundaries: the spline path requires exact bounded linear-
+extrusion carriers with eligible nonperiodic, nonrational B-spline bases of
+degree at most 3, planar/regular certified sections, consistent finite rectangular
+trims, a complete invariant boundary, one selected unsplit planar cap and no
+holes. A single closed/periodic basis segment, collinear bases awaiting analytic
+plane canonicalization, and nonmonotone/discontinuous or otherwise unproven
+bases remain refused; a closed contour assembled from supported open segments
+is a different supported case. Rational/higher-degree bases, generic
+Geom_BSplineSurface equivalents, unproven knot-insertion/degree-elevation
+correspondence, inconsistent axes, nonrectangular/ambiguous trims, non-axial
+spline edits and collapsed/inverted heights remain unsupported. General cap
+rotation, spline Pull/Resize/Delete and arbitrary freeform reconstruction are
+not enabled by the Move Face acceptance. Existing analytic/blend operations
+retain their own certified scopes. Unsupported or numerically uncertifiable
+results refuse atomically; no feature is healed away to obtain acceptance.
+
+Keep the existing 1e-6 topology ceiling, material/region tolerance policies and
+1e-12 adaptive integration precision. Equal volume never proves equal material.
+Reuse the existing previews, references, history, Part identity and native .odc
+persistence; native/imported source labels cannot establish geometric eligibility.
+Details: [shared B-Rep architecture](SHARED_BREP_RECONSTRUCTION.md),
+[P1/P2](MOVE_FACE_STARTUP_TIMINGS.md), [P3A](PREVIEW_BOOLEAN_CERTIFICATION_ANALYSIS.md).
 
 ### Reusable reconstruction pipeline
 
@@ -1151,7 +1260,7 @@ still require manual acceptance. Targeted tests only were run for this update.
 See [implementation, limitations and Fedora KDE checklist](FILLET_CHAMFER.md).
 The broader multi-edge milestone below remains future work.
 
-- [ ] Add separate **3D Modeling > Fillet** and **3D Modeling > Chamfer**
+- [x] Add separate **3D Modeling > Fillet** and **3D Modeling > Chamfer**
   commands, accessible from toolbar and appropriate edge context menus.
 - [ ] **Fillet (round)**: apply a constant-radius blend to one or multiple
   selected solid edges; support internal/concave and external/convex edges
@@ -1177,6 +1286,63 @@ The broader multi-edge milestone below remains future work.
 - [ ] Advanced variable-radius fillets, face-to-face blends, setback corners,
   and complex freeform transitions remain future work; no blanket claim that
   all OCCT-valid geometry is editable.
+
+### Blend priorities and geometry-first acceptance
+
+Existing narrowly certified capabilities (see v0.5.0–v0.5.2 and
+[FILLET_CHAMFER.md](FILLET_CHAMFER.md)):
+
+- [x] Single straight-edge constant-radius Fillet and equal-distance Chamfer
+  creation; documented separated planar-support transition Edit/Delete and
+  applicable Keep ON/OFF via the existing sessions and sharp reconstruction.
+- [x] Supported complete circular plane/cylinder rim, hole-rim and boss-foot
+  Fillets with certified recipes; supported plane/cone circular Fillets and
+  equal-distance conical Chamfers, including narrow recipe-free conical recovery.
+- [x] Supported absolute Edit Fillet/Edit Chamfer and sharp Delete, with
+  certified Keep ON/OFF for the documented planar cap Move/Pull cases and
+  separated planar supporting-cap Rotate cases. These are automated certified
+  scopes, not a claim of completed manual acceptance for every blend variant.
+  Circular/conical cap Rotate and unsupported body-wall edits still refuse.
+
+Future priority requirements, **not completed and not assigned new versions**:
+
+- [ ] **Elliptical edge Fillets:** exact noncircular rims, support continuity,
+  trim/adjacency and sharp-support reconstruction with independent material proof.
+- [ ] **Spline-edge Fillets:** certified exact curve/support classes, not mesh
+  approximations or a blanket promise that any spline boundary is editable.
+- [ ] **Complex surface transitions:** multi-edge junctions, interacting blends,
+  face-to-face/freeform transitions, setback corners and controlled topology changes.
+- [ ] **Variable-radius Fillets:** defined radius law, exact support/continuity,
+  safe range/refusal policy and independent regression oracles.
+- [ ] **Advanced Chamfers:** asymmetric two-distance, distance-angle and other
+  separately certified modes, with explicit face-side and junction semantics.
+- [ ] **Imported STEP Fillets:** recognize supported features from exact surface
+  geometry, continuity, adjacent Faces, trims, orientation and material side.
+  A cylinder/torus alone is not a Fillet. Reuse the existing v0.5.1/v0.5.2
+  recognition and sharp-support infrastructure. Optional native recipes may
+  accelerate/hint, but must not be mandatory for equivalent certified B-Reps.
+  Generic imported circular transition recovery is still pending; narrow
+  recipe-free conical/rectangular-stock cases do not establish general parity.
+- [ ] **History-independent Edit/Delete Fillet wherever certified:** the same
+  geometric criteria and material certificates must govern equivalent native
+  and imported B-Reps; prove ambiguity/refusal and unsupported representations.
+  Synthetic source-independent cases may precede the STEP importer milestone;
+  actual STEP roundtrip acceptance remains tied to CAD interoperability delivery.
+- [ ] **Chamfers as ordinary B-Rep Faces:** preserve ordinary certified Move,
+  Rotate, Pull/Resize or Delete eligibility without mandatory Chamfer identity.
+  Optional specialized recognition may enable Edit distance, sharp Delete and
+  Keep ON/OFF; never classify every planar transition as a Chamfer. Apply the
+  same rules to native and imported geometry, with unsupported operations refused.
+- [ ] **Blended-solid regressions across Move, Rotate, Pull and Delete:** extend
+  existing straight/circular/conical cases to supported new profiles and imports,
+  both Keep states, unrelated holes/blends/material, reversed/transformed topology,
+  failure atomicity, Part identity, preview, Undo/Redo and native persistence.
+  Test supported outcomes and expected safe refusals separately; surface type,
+  recipes or equal volume alone never certify success.
+
+No future blend item replaces the preserved Sweep, Loft, advanced Hole Editing,
+assembly, reference, Sketch, interoperability or platform milestones. Agree any
+new version/priority allocation explicitly (see scheduling boundaries above).
 
 ### Materials & Colors — Part and Face appearance (future milestone)
 

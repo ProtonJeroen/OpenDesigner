@@ -1,3 +1,4 @@
+#include "BRepTiming.h"
 #include "CadViewport.h"
 #include <QIcon>
 #include <TColStd_ListOfInteger.hxx>
@@ -28,6 +29,7 @@
 #include <cmath>
 
 CadViewport::SelectionContext CadViewport::selectionContext() const {
+    BRepTiming::Scope timingScope("SelectionContext.CadViewport::selectionContext");
     SelectionContext result;
     if (context_.IsNull()) return result;
     bool faces=false,parts=false,edges=false;
@@ -102,6 +104,7 @@ void CadViewport::activateAutomaticSelection(bool parts) {
     if(context_->PixelTolerance()!=4) context_->SetPixelTolerance(4);
 }
 void CadViewport::setSelectionMode(SelectionMode mode) {
+    BRepTiming::Scope timingScope("SelectionContext.CadViewport::setSelectionMode");
     if(selectionMode_==mode && !(mode==SelectionMode::Face && (movePartMode_ || directMoveMode_ || rotateMode_))) return;
     cancelCommandSession();
     std::vector<Handle(SelectMgr_EntityOwner)> owners;
@@ -132,6 +135,7 @@ void CadViewport::setSelectionMode(SelectionMode mode) {
         : tr("Selection: Faces. Ctrl adds/removes faces; Alt selects parts."));
 }
 bool CadViewport::supportsResize(const SelectionContext& selection) const {
+    BRepTiming::Scope timingScope("bool CadViewport::supportsResize");
     if(selection.kind!=SelectionContext::Kind::Faces || selection.faces.empty()) return false;
     if(selection.faces.size()>1&&std::all_of(selection.faces.begin(),selection.faces.end(),[&](const auto& f){return f.partIndex==selection.faces.front().partIndex;})) {
         const auto& first=selection.faces.front();BRepReconstruction::Neighborhood local;QString error;
@@ -170,6 +174,7 @@ bool CadViewport::supportsResize(const SelectionContext& selection) const {
     return true;
 }
 QMenu* CadViewport::createSelectionMenu(const QPoint& anchor) {
+    BRepTiming::Scope timingScope("QMenu* CadViewport::createSelectionMenu");
     const auto selection=selectionContext();
     auto* menu=new QMenu(this);
     menu->setObjectName(QStringLiteral("viewportContextMenu"));
@@ -281,6 +286,7 @@ void CadViewport::populatePartMenu(QMenu& menu,const SelectionContext& selection
     });
 }
 void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection,const QPoint& anchor) {
+    BRepTiming::Scope timingScope("void CadViewport::populateFaceMenu");
     if(!selection.faces.empty()) {
         auto* remove=menu.addAction(tr("Delete Face"));
         remove->setObjectName(QStringLiteral("context.delete_face"));
@@ -305,10 +311,13 @@ void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection
     }
     auto* move=menu.addAction(tr("Move Face"));move->setObjectName(QStringLiteral("context.move_face"));
     QString error=tr("Select exactly one supported planar face.");gp_Pnt center;gp_Dir direction;
-    const bool supported=selection.faces.size()==1 && BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Plane && MoveFaceGeometry::reference(
+    const bool planar=selection.faces.size()==1 && BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Plane;
+    const bool supported=planar && MoveFaceGeometry::reference(
         boxes_[selection.faces.front().partIndex].shape,selection.faces.front().face,center,direction,error);
     MoveFaceFeature feature;
-    const bool moveSupported=blendIndex>=0 || supported || (selection.faces.size()==1 && moveFaceReference(
+    // A planar moveFaceReference delegates to the identical reference check
+    // above, including failures. Only nonplanar selections need that fallback.
+    const bool moveSupported=blendIndex>=0 || supported || (selection.faces.size()==1 && !planar && moveFaceReference(
         boxes_[selection.faces.front().partIndex].shape,selection.faces.front().face,feature,center,direction,error));
     const bool cylinder=selection.faces.size()==1&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Cylinder;
     const bool cone=selection.faces.size()==1&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Cone;
@@ -343,7 +352,12 @@ void CadViewport::populateFaceMenu(QMenu& menu,const SelectionContext& selection
     }
     auto* resize=menu.addAction(tr("Pull / Resize"));resize->setObjectName(QStringLiteral("context.resize"));
     const bool conicalTarget=selection.faces.size()==1&&BRepAdaptor_Surface(selection.faces.front().face).GetType()==GeomAbs_Cone;
-    if(!supportsResize(selection)&&!conicalTarget) { delete resize; return; }
+    // For this single planar Face, a successful reference already implies
+    // supportsResize: primitive recognition either succeeds, or that function
+    // falls back to the same planar reference. Reuse only this synchronous
+    // result; never retain it in the QAction, Part or command session. Failed
+    // and nonplanar cases keep the full existing eligibility path.
+    if(!supported&&!supportsResize(selection)&&!conicalTarget) { delete resize; return; }
     connect(resize,&QAction::triggered,this,[this,anchor]() { previous_=anchor; startPrimitivePull(); });
 }
 void CadViewport::contextMenuEvent(QContextMenuEvent* event) {
@@ -384,6 +398,7 @@ void CadViewport::contextMenuEvent(QContextMenuEvent* event) {
 }
 
 void CadViewport::resetModelingTools() {
+    stopMoveNumericPreview();
     const bool restoreFacePicker=faceAxisPicking_ || selectionMode_!=SelectionMode::Face;
     std::vector<Handle(SelectMgr_EntityOwner)> retainedOwners;
     if(restoreFacePicker && !context_.IsNull())
@@ -429,7 +444,7 @@ void CadViewport::startPrimitivePull() {
         if(EdgeBlendFeatures::resolve(boxes_[selected.partIndex].shape,state,diagnostic)) {
             if(EdgeBlendFeatures::selected(state,selected.face)>=0) {startEditEdgeBlend(selected.partIndex,selected.face);return;}
             if(BRepAdaptor_Surface(selected.face).GetType()==GeomAbs_Plane) {
-                if(startMoveFace(selected.partIndex,selected.face)) commandPanel_->setWindowTitle(tr("Pull / Resize Preview"));
+                if(startMoveFace(selected.partIndex,selected.face,false)) commandPanel_->setWindowTitle(tr("Pull / Resize Preview"));
                 return;
             }
         }
@@ -438,7 +453,7 @@ void CadViewport::startPrimitivePull() {
         const auto& selected=selection.faces.front();auto part=boxes_[selected.partIndex];
         if(BRepAdaptor_Surface(selected.face).GetType()==GeomAbs_Plane&&!recognizePullPrimitive(part)
            &&!CylindricalMoveGeometry::bossHeightReference(part.shape,selected.face)) {
-            if(startMoveFace(selected.partIndex,selected.face)) commandPanel_->setWindowTitle(tr("Pull / Resize Preview"));
+            if(startMoveFace(selected.partIndex,selected.face,false)) commandPanel_->setWindowTitle(tr("Pull / Resize Preview"));
             return;
         }
         auto state=part.blends;QString diagnostic;

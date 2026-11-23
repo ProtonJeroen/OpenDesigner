@@ -1,4 +1,6 @@
+#include "BRepTiming.h"
 #include "MoveFaceGeometry.h"
+#include "BRepCertification.h"
 #include "BRepReconstruction.h"
 #include "CylindricalMoveGeometry.h"
 #include <BRepAdaptor_Surface.hxx>
@@ -65,8 +67,9 @@ bool supported(const TopoDS_Shape& shape) {
 }
 
 }
-bool MoveFaceGeometry::reference(const TopoDS_Shape& solid, const TopoDS_Face& face,
-                                 gp_Pnt& center, gp_Dir& outward, QString& error) {
+static bool planarReference(const TopoDS_Shape& solid, const TopoDS_Face& face,
+                                 gp_Pnt& center, gp_Dir& outward, QString& error,bool certifySource) {
+    BRepTiming::Scope timingScope("MoveFaceGeometry.MoveFaceGeometry::reference");
     error.clear();
     try {
         bool member=false;
@@ -80,14 +83,15 @@ bool MoveFaceGeometry::reference(const TopoDS_Shape& solid, const TopoDS_Face& f
         double volume=0;
         // Recognize the selected plane independently of unrelated surfaces.
         // Reconstruction routes certify their own local supports separately.
-        if (count(solid,TopAbs_FACE)>64 || !BRepReconstruction::validSolid(solid,volume)) {
+        if (count(solid,TopAbs_FACE)>64 || (certifySource&&!BRepReconstruction::validSolid(solid,volume))) {
             error=QStringLiteral("Move Face needs one valid solid and shell (up to 64 faces).");
             qWarning().noquote()<<"Move Face unsupported topology:"<<error<<topologyDetails(solid,face)
                                <<"valid="<<BRepCheck_Analyzer(solid).IsValid();
             return false;
         }
         GProp_GProps props;
-        BRepGProp::SurfaceProperties(face,props);
+        BRepTiming::Event centroidEvent("Integrate.Area.ReferenceCentroid",face);
+        BRepGProp::SurfaceProperties(face,props);centroidEvent.finish({},props.Mass());
         center=props.CentreOfMass();
         outward=BRepAdaptor_Surface(face).Plane().Axis().Direction();
         if (face.Orientation()==TopAbs_REVERSED) outward.Reverse();
@@ -96,8 +100,22 @@ bool MoveFaceGeometry::reference(const TopoDS_Shape& solid, const TopoDS_Face& f
         error=QStringLiteral("Open CASCADE could not analyze this face safely."); return false;
     }
 }
+bool MoveFaceGeometry::reference(const TopoDS_Shape& solid,const TopoDS_Face& face,
+                                 gp_Pnt& center,gp_Dir& outward,QString& error) {
+    return planarReference(solid,face,center,outward,error,true);
+}
+bool MoveFaceGeometry::referenceForMove(const TopoDS_Shape& solid,const TopoDS_Face& face,
+                                        gp_Pnt& center,gp_Dir& outward,QString& error) {
+    bool spline=false;
+    if(!BRepReconstruction::preflightPlanarSpline(solid,face,spline,error))return false;
+    // Only the proven spline route validates its source in neighborhood before
+    // construction. No receipt/candidate is certified by this command reference.
+    return planarReference(solid,face,center,outward,error,!spline);
+}
+
 static TopoDS_Shape offsetMove(const TopoDS_Shape& source, const TopoDS_Face& sourceFace,
                                    double distance, QString& error) {
+    BRepTiming::Scope timingScope("MoveFaceGeometry.offsetMove");
     gp_Pnt center; gp_Dir normal;
     if (!std::isfinite(distance)) { error=QStringLiteral("Enter a finite face offset."); return {}; }
     if (!MoveFaceGeometry::reference(source,sourceFace,center,normal,error)) return {};
@@ -158,13 +176,8 @@ static TopoDS_Shape offsetMove(const TopoDS_Shape& source, const TopoDS_Face& so
         // Only the edge network: face-size heuristics in UpdateTolerances(true)
         // must not replace the existing surface tolerances.
         BRepLib::UpdateTolerances(network,true);
-        for(const auto type:{TopAbs_FACE,TopAbs_EDGE,TopAbs_VERTEX})
-            for(TopExp_Explorer it(result,type);it.More();it.Next()) {
-                const double t=type==TopAbs_FACE?BRep_Tool::Tolerance(TopoDS::Face(it.Current())):
-                    type==TopAbs_EDGE?BRep_Tool::Tolerance(TopoDS::Edge(it.Current())):BRep_Tool::Tolerance(TopoDS::Vertex(it.Current()));
-                if(!std::isfinite(t)||t>1.e-6)
-                    return fail(QStringLiteral("the offset result exceeds the local reconstruction tolerance limit."));
-            }
+        if(!BRepCertification::withinTolerance(result,1.e-6))
+            return fail(QStringLiteral("the offset result exceeds the local reconstruction tolerance limit."));
         double volume=0;
         if (result.IsNull() || !supported(result) || !BRepReconstruction::validSolid(result,volume)) {
             const QString details=QStringLiteral("solids=%1 shells=%2 faces=%3 edges=%4 vertices=%5 valid=%6 supported=%7")
@@ -190,13 +203,31 @@ static TopoDS_Shape offsetMove(const TopoDS_Shape& source, const TopoDS_Face& so
 }
 
 TopoDS_Shape MoveFaceGeometry::move(const TopoDS_Shape& source,const TopoDS_Face& face,
-                                  double distance,QString& error) {
+                                  double distance,QString& error,ReconstructionPolicy policy) {
+    BRepTiming::Scope timingScope("MoveFaceGeometry.MoveFaceGeometry::move");
     gp_Pnt center;gp_Dir normal;
     if(!std::isfinite(distance)) {error=QStringLiteral("Enter a finite face offset.");return {};}
-    if(!reference(source,face,center,normal,error)) return {};
+    const bool nonzeroSplinePolicy=policy==ReconstructionPolicy::AxialInvariantCap&&std::abs(distance)>=tolerance;
+    if(nonzeroSplinePolicy ? !referenceForMove(source,face,center,normal,error)
+                           : !reference(source,face,center,normal,error)) return {};
     if(std::abs(distance)<tolerance) return source;
     BRepReconstruction::Result local;QString localError;
-    if(BRepReconstruction::movePlanarLocal(source,face,distance,local,localError)) {error.clear();return local.solid;}
+    if(BRepReconstruction::movePlanarLocal(source,face,distance,local,localError,policy==ReconstructionPolicy::AxialInvariantCap)) {error.clear();return local.solid;}
+    // Only Move Face opts into elliptical cap reconstruction. An unsuccessful
+    // certificate must not retry global offset/stock reconstruction on it.
+    if(policy!=ReconstructionPolicy::Existing) for(TopExp_Explorer it(source,TopAbs_FACE);it.More();it.Next()) {
+        BRepCertification::EllipticExtrusion support;
+        if(!BRepCertification::ellipticExtrusion(BRepReconstruction::SupportDescriptor(TopoDS::Face(it.Current())),support)) continue;
+        if(BRepReconstruction::moveEllipticalCap(source,face,gp_Vec(normal)*distance,local,error)) return local.solid;
+        return {};
+    }
+    // Never retry unrelated global algorithms after a spline certificate fails.
+    for(TopExp_Explorer it(source,TopAbs_FACE);it.More();it.Next()) {
+        const auto type=BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType();
+        if(type==GeomAbs_BSplineSurface||type==GeomAbs_SurfaceOfExtrusion) {
+            error=localError;return {};
+        }
+    }
     const auto preserved=CylindricalMoveGeometry::movePlanarPreservingExterior(source,face,distance);
     if(preserved) {error.clear();return preserved.shape;}
     // OCCT 7.9's global offset intersection can SIGSEGV at a planar cut through

@@ -1,7 +1,10 @@
+#include "BRepTiming.h"
 #include "EdgeBlendFeatures.h"
 #include "FilletGeometry.h"
 #include "ChamferGeometry.h"
 #include "BRepReconstruction.h"
+#include "BRepTopology.h"
+#include "BRepCertification.h"
 #include "MoveFaceGeometry.h"
 #include "FaceTransformGeometry.h"
 #include <BRepAdaptor_Surface.hxx>
@@ -41,14 +44,10 @@ bool member(const TopoDS_Shape& shape,const TopoDS_Face& face) {
 bool strictSharp(const TopoDS_Shape& shape) {
     double volume=0;
     if(!BRepReconstruction::validSolid(shape,volume)) return false;
-    for(auto type:{TopAbs_FACE,TopAbs_EDGE,TopAbs_VERTEX}) for(TopExp_Explorer it(shape,type);it.More();it.Next()) {
-        const double t=type==TopAbs_FACE?BRep_Tool::Tolerance(TopoDS::Face(it.Current())):
-            type==TopAbs_EDGE?BRep_Tool::Tolerance(TopoDS::Edge(it.Current())):BRep_Tool::Tolerance(TopoDS::Vertex(it.Current()));
-        if(!std::isfinite(t)||t>linear) return false;
-        if(type==TopAbs_FACE) {
-            const auto surface=BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType();
-            if(surface!=GeomAbs_Plane&&surface!=GeomAbs_Cylinder&&surface!=GeomAbs_Cone) return false;
-        }
+    if(!BRepCertification::withinTolerance(shape,linear)) return false;
+    for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next()) {
+        const auto surface=BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType();
+        if(surface!=GeomAbs_Plane&&surface!=GeomAbs_Cylinder&&surface!=GeomAbs_Cone) return false;
     }
     return true;
 }
@@ -111,12 +110,10 @@ TopoDS_Edge supportEdge(const TopoDS_Shape& shape,const Feature& f) {
     return match;
 }
 std::vector<TopoDS_Face> neighbors(const TopoDS_Shape& shape,const TopoDS_Face& face) {
-    TopTools_IndexedDataMapOfShapeListOfShape map;
-    TopExp::MapShapesAndUniqueAncestors(shape,TopAbs_EDGE,TopAbs_FACE,map);
-    std::vector<TopoDS_Face> result;
-    for(TopExp_Explorer it(face,TopAbs_EDGE);it.More();it.Next()) for(const auto& other:map.FindFromKey(it.Current()))
-        if(!other.IsSame(face)&&std::none_of(result.begin(),result.end(),[&](const auto& f){return f.IsSame(other);})) result.push_back(TopoDS::Face(other));
-    return result;
+    BRepTiming::Scope timingScope("EdgeBlendFeatures.neighbors");
+    BRepReconstruction::TopologyIndex topology;QString error;
+    if(!BRepReconstruction::TopologyIndex::build(shape,topology,error)) throw Standard_Failure(error.toUtf8().constData());
+    return topology.neighbors(face);
 }
 bool touches(const TopoDS_Shape& a,const TopoDS_Shape& b) {
     for(TopExp_Explorer x(a,TopAbs_VERTEX);x.More();x.Next())
@@ -133,6 +130,7 @@ bool transitionSupport(const TopoDS_Face& a,const TopoDS_Face& b) {
     return BRepReconstruction::sameAnalyticSupport(a,b);
 }
 bool bind(State& state,const TopoDS_Shape& current,QString& error) {
+    BRepTiming::Scope timingScope("EdgeBlendFeatures.bind");
     // Prototypes from replay are carrier geometry, never saved topology IDs.
     for(auto& feature:state.features) {
         auto prototypes=feature.faces;feature.faces.clear();
@@ -150,6 +148,7 @@ bool bind(State& state,const TopoDS_Shape& current,QString& error) {
     state.certified=current;return true;
 }
 bool rebuild(State& state,TopoDS_Shape& result,QString& error) {
+    BRepTiming::Scope timingScope("EdgeBlendFeatures.rebuild");
     result.Nullify();error.clear();
     if(!strictSharp(state.sharp)) {error=QStringLiteral("The sharp supporting solid must be planar/cylindrical/conical, valid, and within the existing 1e-6 tolerance limit.");return false;}
     auto shape=state.sharp;
@@ -176,6 +175,7 @@ bool rebuild(State& state,TopoDS_Shape& result,QString& error) {
     result=shape;return true;
 }
 bool recover(const TopoDS_Shape& source,State& state,QString& error) {
+    BRepTiming::Scope timingScope("EdgeBlendFeatures.recover");
     // Conservative import path: six axis-aligned stock planes, plus separated
     // tangent cylinders / equal-distance planar transitions. Full material
     // equivalence with replay is mandatory; surface type alone proves nothing.
@@ -320,6 +320,7 @@ bool certifyChamfer(const Meridian& m,const TopoDS_Face& cap,double tp,const Top
 // interpretation of the face chain is certified; exactly one must survive, and
 // the replayed sharp frustum plus recipes must be material-equivalent to source.
 bool recoverConical(const TopoDS_Shape& source,State& state,QString& error) {
+    BRepTiming::Scope timingScope("EdgeBlendFeatures.recoverConical");
     std::vector<TopoDS_Face> faces;
     for(TopExp_Explorer it(source,TopAbs_FACE);it.More();it.Next()) {
         const auto type=BRepAdaptor_Surface(TopoDS::Face(it.Current())).GetType();
@@ -434,6 +435,7 @@ template<class Operation> bool changeSupport(const TopoDS_Shape& current,const S
 
 bool circular(const Feature& f) {return f.cylinders[0]||f.cylinders[1]||f.cones[0]||f.cones[1];}
 bool resolve(const TopoDS_Shape& current,State& state,QString& error) {
+    BRepTiming::Scope timingScope("EdgeBlendFeatures.resolve");
     error.clear();
     try {
         if(!current.IsNull()&&!state.sharp.IsNull()&&!state.features.empty()&&state.certified.IsSame(current)) return true;

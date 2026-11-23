@@ -399,7 +399,7 @@ static void circular() {
     check(!v.commandSession_->valid || BRepCheck_Analyzer(v.commandSession_->candidate).IsValid(),"circular Chamfer produced invalid preview");
     check(v.commandSession_->valid || !v.commandButtons_->button(QDialogButtonBox::Ok)->isEnabled(),"unsupported circular Chamfer can be confirmed");
     v.cancelCommandSession();
-    arm(true);v.dragDimension_->setText("2.345");check(v.updateCommandParameter(false),"circular numeric radius failed");
+    arm(true);v.dragDimension_->setText(QLocale().toString(2.345,'f',3));check(v.updateCommandParameter(false),"circular numeric radius failed");
     const auto& session=*v.commandSession_;
     auto mid=session.pivot.Translated(gp_Vec(session.direction)*(session.value-15.5));
     Standard_Integer x,y;v.view_->Convert(mid.X(),mid.Y(),mid.Z(),x,y);QPoint start(x,y);
@@ -408,7 +408,7 @@ static void circular() {
     QMouseEvent drag(QEvent::MouseMove,QPointF(end),QPointF(end),Qt::NoButton,Qt::LeftButton,Qt::ShiftModifier);v.mouseMoveEvent(&drag);
     check(v.commandSession_->valid&&v.commandSession_->value>2.345,"circular drag did not change radius");
     QMouseEvent release(QEvent::MouseButtonRelease,QPointF(end),QPointF(end),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);v.mouseReleaseEvent(&release);
-    v.dragDimension_->setText("2.345");check(v.updateCommandParameter(false),"circular exact radius recovery");v.confirmCommandSession();
+    v.dragDimension_->setText(QLocale().toString(2.345,'f',3));check(v.updateCommandParameter(false),"circular exact radius recovery");v.confirmCommandSession();
     check(v.undoStack_.size()==1&&v.boxes_[0].blends.features.size()==1,"circular commit missing recipe/history");
     v.undoPull();check(v.boxes_[0].shape.IsSame(original.shape),"circular Undo failed");v.redoPull();
     TopoDS_Face cap,wall;
@@ -424,14 +424,14 @@ static void circular() {
     check(v.startEditEdgeBlend(0,v.boxes_[0].blends.features[0].faces.front()),"circular Edit unavailable");
     checkFilletDirection(v);
     check(std::abs(v.commandSession_->value-2.345)<1.e-9&&!v.moveFaceArrow_.IsNull(),"circular absolute radius/arrow incorrect");
-    v.dragDimension_->setText("1.25");v.confirmCommandSession();
+    v.dragDimension_->setText(QLocale().toString(1.25,'f',2));v.confirmCommandSession();
     NativeDocumentSnapshot saved,loaded;QTemporaryDir temp;QString error;
     check(v.exportDocumentSnapshot(saved)&&NativeDocumentStorage::save(temp.filePath("circle.odc"),saved,error)
         &&NativeDocumentStorage::load(temp.filePath("circle.odc"),loaded,error)&&v.importDocumentSnapshot(loaded,error),"circular native roundtrip failed");
     check(v.startEditEdgeBlend(0,v.boxes_[0].blends.features[0].faces.front()),"loaded circular Edit unavailable");v.cancelCommandSession();
     v.selectParts({0});v.duplicateSelectedParts();
     check(v.startEditEdgeBlend(1,v.boxes_[1].blends.features[0].faces.front()),"duplicate circular Edit unavailable");
-    v.dragDimension_->setText("1.5");v.confirmCommandSession();
+    v.dragDimension_->setText(QLocale().toString(1.5,'f',1));v.confirmCommandSession();
     check(std::abs(v.boxes_[0].blends.features[0].size-1.25)<1.e-9,"duplicate circular edit changed original");
     v.context_->ClearSelected(false);v.selectedPartIndices_.clear();
     Handle(StdSelect_BRepOwner) owner=new StdSelect_BRepOwner(v.boxes_[0].blends.features[0].faces.front(),v.boxes_[0].presentation,5,true);
@@ -468,7 +468,7 @@ static void preselection() {
         check(v.commandSession_->valid && v.commandSession_->edge.IsSame(first) && !v.moveFaceArrow_.IsNull(),"preselected straight Edge not adopted with preview/arrow");
         checkFilletDirection(v);
         v.dragDimension_->setText("0");check(!v.updateCommandParameter(false),"invalid preselection value accepted");
-        v.dragDimension_->setText("1.23456789");check(v.updateCommandParameter(false),"exact preselection input failed");
+        v.dragDimension_->setText(QLocale().toString(1.23456789,'f',8));check(v.updateCommandParameter(false),"exact preselection input failed");
         QKeyEvent escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier);QApplication::sendEvent(v.commandPanel_,&escape);
         check(!v.commandSession_ && v.boxes_[0].shape.IsSame(original) && v.undoStack_.empty(),"preselection Escape changed geometry/history");
         v.selectParts({});select(first);v.startEdgeBlend(chamfer);v.confirmCommandSession();

@@ -1,4 +1,9 @@
 #include "FilletGeometry.h"
+#include "BRepTopology.h"
+#include "BooleanGeometry.h"
+#include <BRepAlgoAPI_Cut.hxx>
+#include <TopExp.hxx>
+#include <algorithm>
 #include "EdgeBlendFeatures.h"
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
@@ -31,11 +36,61 @@ TopoDS_Edge edgeAt(const TopoDS_Shape& s,const gp_Pnt& p) {
 TopoDS_Face planeAt(const TopoDS_Shape& s,const gp_Pnt& p,const gp_Dir& n) {
  for(TopExp_Explorer it(s,TopAbs_FACE);it.More();it.Next()){BRepAdaptor_Surface a(TopoDS::Face(it.Current()));if(a.GetType()==GeomAbs_Plane&&a.Plane().Axis().Direction().IsParallel(n,1.e-8)&&a.Plane().Distance(p)<1.e-6)return TopoDS::Face(it.Current());}return {};
 }
+void topology(const TopoDS_Shape& shape) {
+ BRepReconstruction::TopologyIndex index;QString error;
+ std::ostringstream before;BRepTools::Write(shape,before);
+ check(BRepReconstruction::TopologyIndex::build(shape,index,error),"index current geometry");
+ TopTools_IndexedDataMapOfShapeListOfShape oracle;
+ TopExp::MapShapesAndUniqueAncestors(shape,TopAbs_EDGE,TopAbs_FACE,oracle);
+ for(const auto& edge:index.edges()) {
+  check(int(edge.faces.size())==oracle.FindFromKey(edge.edge).Extent(),"distinct edge adjacency changed");
+  for(const auto& owner:oracle.FindFromKey(edge.edge))
+   check(std::any_of(edge.faces.begin(),edge.faces.end(),[&](const auto& f){return f.IsEqual(owner);}),"oriented owner lost");
+  for(const auto& use:edge.uses) {
+   const auto& face=index.faces().at(use.faceIndex);
+   check(face.wires.at(use.wireIndex).wire.IsNull()==false,"wire owner lost");
+   double first=0,last=0;
+   check(!BRep_Tool::CurveOnSurface(use.edge,face.support.face,first,last).IsNull(),"trim pcurve lost");
+  }
+  if(edge.faces.size()==1&&BRep_Tool::IsClosed(edge.edge,edge.faces.front())) {
+   check(edge.uses.size()==2,"periodic seam uses lost");
+   check(edge.uses[0].edge.Orientation()!=edge.uses[1].edge.Orientation(),"seam orientations lost");
+  }
+ }
+ for(const auto& face:index.faces()) {
+  check(face.support.surface.GetType()==BRepAdaptor_Surface(face.support.face).GetType(),"carrier identity changed");
+  int outer=0;for(const auto& wire:face.wires) outer+=wire.outer;
+  check(outer==1,"outer wire not identified");
+  for(const auto& neighbor:index.neighbors(face.support.face))
+   check(!neighbor.IsSame(face.support.face),"seam became a neighboring face");
+ }
+ std::ostringstream after;BRepTools::Write(shape,after);check(before.str()==after.str(),"index mutated source");
+ check(!BRepReconstruction::TopologyIndex::build({},index,error)&&index.faces().empty()&&index.edges().empty(),"failed index retained stale data");
+}
 }
 int main(int argc,char** argv){try{
  auto box=BRepPrimAPI_MakeBox(100,80,60).Shape();QString error;
  auto f=FilletGeometry::apply(box,edgeAt(box,gp_Pnt(0,0,30)),5,error);check(!f.IsNull(),"fixture fillet");
  auto both=ChamferGeometry::apply(f,edgeAt(f,gp_Pnt(100,80,30)),3,error);check(!both.IsNull(),"fixture chamfer");
+ if(argc>1&&std::string(argv[1])=="--topology") {
+  topology(box);topology(both);
+  const auto cylinder=BRepPrimAPI_MakeCylinder(20,40).Shape();topology(cylinder);
+  const auto hole=BooleanGeometry::combine<BRepAlgoAPI_Cut>(box,BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(50,40,0),gp_Dir(0,0,1)),10,60).Shape());
+  topology(hole);
+  BRepReconstruction::TopologyIndex holeIndex;check(BRepReconstruction::TopologyIndex::build(hole,holeIndex,error),"index inner wires");
+  check(std::count_if(holeIndex.faces().begin(),holeIndex.faces().end(),[](const auto& face){return face.wires.size()==2;})==2,"hole cap inner wires lost");
+  gp_Trsf placement;placement.SetRotation(gp_Ax1(gp_Pnt(0,0,0),gp_Dir(1,2,3)),.4);placement.SetTranslationPart(gp_Vec(7,11,13));
+  topology(both.Moved(TopLoc_Location(placement)));
+  // A recipe-free serialized B-Rep exercises the existing import recognition
+  // path, without claiming a STEP translator test or broader Fillet support.
+  std::stringstream stream;BRepTools::Write(both,stream);BRep_Builder builder;TopoDS_Shape restored;BRepTools::Read(restored,stream,builder);
+  topology(restored);EdgeBlendFeatures::State native,recovered;
+  check(EdgeBlendFeatures::resolve(both,native,error)&&EdgeBlendFeatures::resolve(restored,recovered,error),"recipe-free recognition changed");
+  check(native.features.size()==2&&recovered.features.size()==2,"transition recognition count changed");
+  for(const auto& expected:native.features)
+   check(std::count_if(recovered.features.begin(),recovered.features.end(),[&](const auto& actual){return actual.kind==expected.kind&&std::abs(actual.size-expected.size)<1.e-6;})==1,"recipe-free transition dimension changed");
+  std::cout<<"Shared support/topology and recipe-free adjacency passed\n";return 0;
+ }
  if(argc>1&&std::string(argv[1])=="--baseline") {
  for(const auto& s:{box,f,both}) {
   std::cout<<"tolerances (face/edge/vertex): ";
