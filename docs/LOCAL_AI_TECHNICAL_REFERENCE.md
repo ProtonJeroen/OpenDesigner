@@ -1,6 +1,13 @@
 # OpenDesigner — Deep technical reference annex
 **Snapshot:** 2026-11-07 · **Reference:** `develop` v0.4.9 · **Companion:** [Local AI Handover](LOCAL_AI_HANDOVER.md) · **Agent startup:** [Mistral Vibe](MISTRAL_VIBE_START.md)
 
+> **Anchoring note (2026-11-23):** this annex is a **v0.4.9-anchored** API and contract reference.
+> Its OCCT/Qt call-level notes remain useful, but its version, target and merge-state statements
+> are historical. The current baseline is `develop` `fb370e5` (project version `0.5.6`, v0.5.7
+> merged by PR #79 but unreleased); read `docs/SHARED_BREP_RECONSTRUCTION.md` for the v0.5.7
+> shared B-Rep module contracts and `docs/LOCAL_AI_PROGRESS.md` for the current handover.
+> Do not treat the v0.4.9 build graph below as current.
+
 This annex expands the engineering handover with **source-anchored implementation contracts**. It is deliberately conservative: where an exact call graph, class signature, merge state or manual acceptance result has not been inspected, it is marked **VERIFY**. Source and tests always outrank this prose.
 
 ## 1. Verified build graph and entry points
@@ -119,7 +126,9 @@ The native panel should anchor to viewport top-right with approximately 12 logic
 | Manual KDE | user-recorded checklists | Observed real desktop workflow | Other OS, all arbitrary B-Reps |
 | CI Release | GitHub Actions Linux + Xvfb | Reproducible configured CI scope | Windows/macOS release readiness |
 
-The v0.4.9 integration review records 86 cases passing **across full and targeted reruns**, after corrections to test expectations/fixture; it does not claim one clean full suite. Historical PR #68 reportedly had 88/88 CI green; its merge status and relation to this baseline remain **VERIFY**. The README reports 47/47 manual checks, explicitly user-reported.
+The v0.4.9 integration review records 86 cases passing **across full and targeted reruns**, after corrections to test expectations/fixture; it does not claim one clean full suite. Historical PR #68 reportedly had 88/88 CI green; its merge status is **resolved** — merged 2026-11-07
+as merge commit `60d4bccc16efef762f01f099a1a850151e8cb020`. The README reports 47/47 manual checks,
+explicitly user-reported.
 
 **Required test record:** git SHA, build type, OS/Qt/OCCT versions, exact command, number passed/failed/skipped, GUI backend, test fixture provenance, and whether results were obtained in one run or combined across reruns.
 
@@ -166,7 +175,8 @@ Target hardware: Lenovo RTX 3070 8 GB VRAM, 48 GB RAM, Fedora KDE. Ollama + Mist
 - [ ] Map each geometry certificate to focused tests and expected failure modes.
 - [ ] Verify native v1–v5 compatibility tests and sample document fixtures.
 - [ ] Inspect workflow YAML and confirm Linux/Windows/macOS CI coverage.
-- [ ] Reconcile PR #68 and all open PRs with `develop`.
+- [x] Reconcile PR #68 and all open PRs with `develop`. (PR #68 merged as `60d4bccc`; PRs #70-#79
+  are merged through `fb370e5`; re-check open PRs against the current HEAD before acting.)
 - [ ] Execute the full suite on the target Fedora host and record exact results.
 - [ ] Perform pending physical HiDPI/multi-monitor and projection GUI acceptance.
 - [ ] Obtain explicit approval before scheduling the next implementation milestone.

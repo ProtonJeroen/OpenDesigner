@@ -1,6 +1,6 @@
 # OpenDesigner — Engineering operations, traceability and acceptance manual
 
-**Document status:** technical handover, snapshot 2026-11-07. Read alongside `LOCAL_AI_HANDOVER.md`, `LOCAL_AI_TECHNICAL_REFERENCE.md`, `MISTRAL_VIBE_START.md` and actual repository code. This manual defines **how to verify** the project rather than treating all historical statements as proven.
+**Document status:** technical handover, snapshot 2026-11-23 (baseline `develop` `fb370e5`, PR #79 merged, project version `0.5.6`). Read alongside `AGENTS.md`, `LOCAL_AI_HANDOVER.md`, `LOCAL_AI_PROGRESS.md`, `LOCAL_AI_TASK_TIMES.csv`, `LOCAL_AI_TECHNICAL_REFERENCE.md`, `MISTRAL_VIBE_START.md` and actual repository code. This manual defines **how to verify** the project rather than treating all historical statements as proven.
 
 ## 1. Evidence hierarchy and change control
 
@@ -113,7 +113,7 @@ Next safe action:
 
 ## 8. Prioritized technical debt and next steps
 
-**Priority 0: evidence and safety.** Reconcile current `develop` with PR #68; capture exact SHA; run fresh full CTest on Fedora; check pending v0.4.9 manual acceptance, including physical HiDPI and cylindrical Move Face session/persistence coverage. This is verification work, not proof that the code is broken.
+**Priority 0: evidence and safety.** Confirm `develop` HEAD (`fb370e5`) and a clean working tree, then resolve why `develop` CI run `45172009344` failed on `rotation-pivot` at 60.03 s while the byte-identical PR #79 head `63ff9a6` passed the same test in 58.35 s. Decide between a CI re-run and a test-registry budget change **without** weakening the assertion or its tolerance. Then re-run the relevant CTest subset on Fedora for the v0.5.7 shared pipeline and complete the pending Fedora KDE manual acceptance, including legacy `.odc` compatibility for F2.9G.5A. This is verification work, not proof that the code is broken.
 
 **Priority 1: reliability.** Regression-hardening for transformed/large-coordinate geometry; certified repeated face edits; topology identity after Boolean; atomic multi-Part commands; native document schema compatibility; command-panel focus and cleanup.
 
@@ -129,6 +129,12 @@ A checkpoint must contain task ID, SHA, branch, current phase, last successful c
 
 ## 10. Source references for technical claims
 
-Primary: `README.md`, `CMakeLists.txt`, `docs/ROADMAP.md`, `docs/V049_INTEGRATION_REVIEW.md`, `docs/NATIVE_DOCUMENTS.md`, `docs/EXTRUDE_PROFILE.md`, `docs/REVOLVE.md`, `docs/MOVE_FACE.md`, `docs/DELETE_FACE.md`, `docs/SKETCH_PROJECTION.md`, `docs/COMMAND_SESSIONS.md`, `docs/CROSS_SCREEN_HIDPI.md`, `docs/GUI_TEST_PLAN.md`. Further geometry-specific docs are linked from these pages.
+Primary: `README.md`, `CMakeLists.txt`, `docs/ROADMAP.md`, `docs/SHARED_BREP_RECONSTRUCTION.md`, `docs/FAST_DIRECT_MODELING_CERTIFICATION.md`, `docs/NATIVE_DOCUMENTS.md`, `docs/EXTRUDE_PROFILE.md`, `docs/REVOLVE.md`, `docs/MOVE_FACE.md`, `docs/DELETE_FACE.md`, `docs/SKETCH_PROJECTION.md`, `docs/COMMAND_SESSIONS.md`, `docs/CROSS_SCREEN_HIDPI.md`, `docs/GUI_TEST_PLAN.md`, `docs/V049_INTEGRATION_REVIEW.md` and `docs/V056_KDE_ACCEPTANCE.md`. Further geometry-specific docs are linked from these pages.
 
-**Not yet verified in this handover:** complete symbol-level call graph; all test names against current `ctest -N`; PR #68 merge; Fedora working-tree state; actual multi-monitor acceptance; live Windows/macOS builds. These remain explicit audit items, not concealed assumptions.
+**Verified in the 2026-11-23 documentation pass:** PR #68 merge status (merge commit `60d4bcc`),
+PR #79 head/merge SHAs (`63ff9a6` / `fb370e5`) and their byte-identical trees, the CI pass/fail
+counts quoted in `docs/ROADMAP.md`, and the CMake project version `0.5.6`.
+**Still not verified:** complete symbol-level call graph; all test names against a live
+`ctest -N` in this session; Fedora working-tree build state; actual multi-monitor acceptance;
+live Windows/macOS builds; whether the `rotation-pivot` timeout reproduces on a re-run. These
+remain explicit audit items, not concealed assumptions.

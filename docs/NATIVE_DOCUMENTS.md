@@ -1,6 +1,6 @@
 # Native OpenDesigner documents
 
-Current v0.5.5 scope and limits: [Advanced Sketch Curves](ADVANCED_SKETCH_CURVES.md).
+Latest scope pointers: [Advanced Sketch Curves](ADVANCED_SKETCH_CURVES.md) (v0.5.5), [Interactive Trim](INTERACTIVE_TRIM.md), [Interactive Extend](INTERACTIVE_EXTEND.md) and [Exact Overdraw](EXACT_OVERDRAW.md) (v0.5.6), plus [Shared B-Rep Reconstruction](SHARED_BREP_RECONSTRUCTION.md) (v0.5.7).
 The phase descriptions below retain their historical scope.
 
 ## Active Part metadata (v0.4.6)

@@ -48,5 +48,8 @@ Known risks / unsupported cases:
 Next smallest safe step:
 ```
 
-## Initial assignment (analysis only)
-Audit current v0.4.9 `develop`, PR #68 status, tests and remaining GUI acceptance; produce a proposed prioritized plan. Do not modify code until the user approves the task.
+## Current assignment (analysis only)
+Audit the actual `develop` HEAD (expected `fb370e5`, PR #79 merged, project version `0.5.6`,
+v0.5.7 merged but unreleased), the open v0.5.7/v0.5.8 acceptance gates in `docs/ROADMAP.md`,
+the current CTest registration and the `rotation-pivot` CI timeout, then produce a proposed
+prioritized plan. Do not modify code until the user approves the task.
