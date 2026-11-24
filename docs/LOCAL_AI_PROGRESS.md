@@ -1,12 +1,15 @@
 # OpenDesigner PR #79 — Local AI progress handover
 
-**Snapshot:** 2026-11-23 (documentation synchronization after PR #79 merged into `develop`) | **Worktree:** `/home/Jeroen/OpenDesigner-develop` | **Branch:** `docs/synchronize-after-pr-79` | **Baseline HEAD:** `fb370e5bc7fb0c83064a35e8e03176280504f260` (`origin/develop`, PR #79 squash merge) | **Audience:** Mistral Vibe
+**Snapshot:** 2026-11-24 (CTest budget fix for the unstable `rotation-pivot` test) | **Worktree:** `/home/Jeroen/OpenDesigner-develop` | **Branch:** `fix/rotation-pivot-ctest-timeout` @ baseline `f201ac05a99cf4f2f80c0a72597edc413f58e77f` (`origin/develop`, documentation sync of PR #80) | **Audience:** Mistral Vibe | **Verified by execution in this session:** section 13
 
 > Sections 1-11 are the PR #79 development session family (worktree `/home/Jeroen/OpenDesigner-vibe`,
 > branch `ai/vibe-moveface-review` / PR head `feature/v0.5.7-shared-brep-reconstruction`, baseline
-> `c50f054`); their findings are preserved unchanged. Section 12 is this documentation task.
+> `c50f054`); their findings are preserved unchanged. Section 12 is the documentation task on
+> `docs/synchronize-after-pr-79`. Section 13 is the `rotation-pivot` CTest budget fix; its root
+> cause was established by the read-only investigation that still lives in `git stash@{0}` and
+> was read with `git stash show -p` without applying or dropping that stash.
 > Items marked **verified** were executed in the recorded session. Re-run the commands in section
-> 5 (and section 12) before acting on any claim.
+> 5 (and sections 12 and 13) before acting on any claim.
 
 ## 1. Git and working-tree status (verified)
 
@@ -863,3 +866,95 @@ and only if it reproduces, raise the shared `TIMEOUT 60` group at `CMakeLists.tx
 split `rotation-pivot` into its own registration with a measured budget. Then take the first
 open v0.5.7 acceptance gate: legacy `.odc` compatibility for F2.9G.5A on a copy of a private
 document opened from a temporary directory.
+
+## 13. `rotation-pivot` CTest budget fix (2026-11-24, implemented and verified)
+
+**Status: complete.** Branch `fix/rotation-pivot-ctest-timeout` created from `origin/develop`
+`f201ac05a99cf4f2f80c0a72597edc413f58e77f`. One CMake file changed, no production C++, no test
+source, no CI workflow file. PR #81 opened against `develop`, **not merged**.
+
+### 13.1 Root cause, carried over from the read-only investigation
+
+The root cause was established on 2026-11-23 and still lives only in `git stash@{0}`
+(`On docs/synchronize-after-pr-79: rotation-pivot CI onderzoek na PR79`). It was read with
+`git stash show -p stash@{0}`; the stash was **not** applied and **not** dropped, so that
+section 13 text remains available for the `docs/synchronize-after-pr-79` branch. Evidence
+verified in that session, not re-run here:
+
+- `rotation-pivot` was the tightest-budgeted test in the registry: 58.35 s against the shared
+  60 s ceiling (97.25 % of budget) set by the group `set_tests_properties` at
+  `CMakeLists.txt:295`.
+- CI runner speed varies by far more than the 2.75 % headroom: the same binary and arguments
+  measured 20.32 s (run 45248489745), 58.35 s (run 45071533024) and over 60 s (run 45172009344,
+  `***Timeout 60.03 sec` with SIGTERM and zero test output). Worst historical event run
+  43456729961 inflated matched tests up to 1.91x.
+- Not a hang: `tests/CadViewportPullTest.cpp:1086 runRotation` is bounded (7 index-sets x 2
+  transformed), and the only asynchronous construct is one `QTimer::singleShot(0, ...)` at
+  line 1159 answering the modal Rotate dialog.
+- Budget arithmetic for the new ceiling: 1.91 x 58.35 s = 111.4 s < 120 s.
+
+### 13.2 Technical decision
+
+`rotation-pivot` is split out of the shared group and registered with its own `TIMEOUT 120`,
+joining the `boolean-operations` / `move-face` / `sketch-drawing` budget class. The six lighter
+siblings (`primitive-pull`, `cylindrical-face-pull`, `native-document-pull`, `cone-pull`,
+`gizmo-center`, `command-sessions`) keep `TIMEOUT 60`; every other `set_tests_properties`
+line in `CMakeLists.txt` is untouched. No workload, tolerance or assertion was changed. The
+real cost driver — `src/CadViewport.cpp:1282 applyPartState()` issuing up to three
+`view_->Redraw()` calls per part update in rotate mode — was deliberately left alone: it is a
+production change and a separate performance task.
+
+### 13.3 Files changed and why
+
+| File | Change |
+| --- | --- |
+| `CMakeLists.txt` | `rotation-pivot` removed from the group line at 295; new `set_tests_properties(rotation-pivot PROPERTIES TIMEOUT 120)` plus a two-line comment carrying the measured justification. 4 insertions, 1 deletion. |
+| `docs/LOCAL_AI_PROGRESS.md` | refreshed snapshot header plus this section 13. |
+| `docs/LOCAL_AI_TASK_TIMES.csv` | one appended measured row. |
+
+### 13.4 Commands and results (executed in this session)
+
+```bash
+git checkout -b fix/rotation-pivot-ctest-timeout origin/develop   # f201ac0
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOPENDESIGNER_BUILD_TESTS=ON
+cmake --build build -j4 --target OpenDesignerPullTests
+xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX" ctest --test-dir build -C Release \
+  -R '^(primitive-pull|cylindrical-face-pull|native-document-pull|cone-pull|gizmo-center|command-sessions|rotation-pivot)$' --output-on-failure -j2
+xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX" ctest --test-dir build -C Release -R '^rotation-pivot$'   # twice
+```
+
+- Configure: `Configuring done` / `Generating done`, no error. Build: PASS, 89/89 targets,
+  57.48 s, zero `warning:` lines.
+- Generated registry size unchanged: 144 registered tests, 117 with `TIMEOUT`, 27 without
+  (CTest default 1500 s).
+- Generated budgets in `build/CTestTestfile.cmake` (CMake expands a group into one line per
+  test): `rotation-pivot` `TIMEOUT "120"` at line 112; `primitive-pull` 98, `cylindrical-face-pull`
+  100, `native-document-pull` 106, `cone-pull` 108, `command-sessions` 110, `gizmo-center`
+  114 all still `TIMEOUT "60"`.
+- Group run: `100% tests passed, 0 tests failed out of 7`, total 17.13 s —
+  `rotation-pivot` 8.09 s, `gizmo-center` 8.08 s, `command-sessions` 6.09 s, `cone-pull`
+  5.08 s, `primitive-pull` 2.96 s, `native-document-pull` 1.62 s,
+  `cylindrical-face-pull` 1.10 s.
+- Two extra solo repetitions of `rotation-pivot`: PASS 6.59 s and PASS 6.43 s, so 3/3 PASS.
+- Local durations are 7-9x below the CI green duration (58.35 s), so this host cannot
+  reproduce the CI pressure; the fix is evidenced by the registered budget, not by a local
+  timeout reproduction.
+- Not run: the other 137 tests (only one test's budget changed, no source file touched), the
+  three CI-gated tests (`command-panel-cross-screen`, `experimental-whole-section-lines`,
+  `move-face-box-shadow-observation`), and all GUI / Fedora KDE Wayland / HiDPI acceptance.
+
+### 13.5 Remaining problems and known limitations
+
+- `boolean-operations` still sits at 88.7-90 % of its 120 s ceiling and timed out in the 1.91x
+  event; this task scoped the change to `rotation-pivot` only, so that flake can still return.
+- 27 registered tests have no `TIMEOUT` property at all.
+- `.github/workflows/build.yml:31` still advertises the v0.5.6 artifact name.
+- The `applyPartState()` redraw collapse is untouched and needs measured before/after durations.
+- PR #81 CI is the first run under real load; `rotation-pivot` must be watched there.
+
+### 13.6 Exact next recommended development step
+
+Watch PR #81 (`gh pr checks 81`) for `rotation-pivot` and the suite total, then merge through
+the normal PR flow. After that, review the `boolean-operations` budget on a separate branch,
+and only then take the first open v0.5.7 acceptance gate: legacy `.odc` compatibility for
+F2.9G.5A on a copy of a private document opened from a temporary directory.
