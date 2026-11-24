@@ -292,7 +292,10 @@ if(OPENDESIGNER_BUILD_TESTS)
     target_compile_definitions(OpenDesignerBooleanTests PRIVATE OPENDESIGNER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     target_link_libraries(OpenDesignerBooleanTests PRIVATE ${OPENDESIGNER_LIBRARIES})
     add_test(NAME boolean-operations COMMAND OpenDesignerBooleanTests)
-    set_tests_properties(primitive-pull cylindrical-face-pull native-document-pull cone-pull gizmo-center rotation-pivot command-sessions PROPERTIES TIMEOUT 60)
+    set_tests_properties(primitive-pull cylindrical-face-pull native-document-pull cone-pull gizmo-center command-sessions PROPERTIES TIMEOUT 60)
+    # rotation-pivot used 97% of the shared 60 s ceiling on CI (58.35 s green, 60.03 s
+    # timeout on a slower runner), so it keeps its own budget instead of the group.
+    set_tests_properties(rotation-pivot PROPERTIES TIMEOUT 120)
     add_executable(OpenDesignerMoveFaceTests
         tests/MoveFaceTest.cpp tests/CylindricalMoveFaceSessionTest.cpp src/MainWindow.h src/MainWindow.cpp
         src/CadViewport.h src/CadViewport.cpp src/BooleanOperations.cpp
