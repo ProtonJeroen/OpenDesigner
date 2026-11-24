@@ -6,11 +6,10 @@ Open CASCADE (OCCT), inspired by CoCreate SolidDesigner / OneSpace Modeling.
 Repository: ProtonJeroen/OpenDesigner. Primary project reference: `docs/ROADMAP.md` on `develop`.
 
 ## Version status
-- v0.5.1 is complete: PR #71 merged into `develop` (merge commit `fabd9be9f47ff68eb9ae0928b733a450a3c9db68`).
-- v0.5.2 (current): conical Fillet & Chamfer support, branch `feature/v0.5.2-conical-edge-blends`.
-- v0.5.3 (next): Workplane, Axis, Point, Sketch and reference foundation (previously planned as v0.5.2).
-- Later: exact ellipse/spline curves and projection, Sweep with 3D spline paths, Loft, broader Align
-  and Assemblies, packaging. Task-specific instructions come from the prompt of each session.
+- `develop` HEAD is `fb370e5`: PR #79 "shared reconstruction and F2.9G.5A cylindrical seam unification", squash-merged 2026-11-23. `CMakeLists.txt` declares project version `0.5.6`, which is the last released milestone number.
+- Complete and merged into `develop`: v0.5.0 (#70), v0.5.1 circular Fillets (#71), v0.5.2 conical Fillet & Chamfer (#72), v0.5.3 Workplane and reference foundation (#74), v0.5.4 Show/Hide Workplanes and Move Face by Points (#75), v0.5.5 Advanced Sketch Curves (#76), v0.5.6 Interactive Trim, Extend and Exact Overdraw (#78).
+- v0.5.7 (in progress, unreleased): shared geometry-first B-Rep reconstruction foundation plus F2.9G.5A cylindrical seam unification, merged into `develop` by PR #79. Its remaining acceptance and release gates stay open in `docs/ROADMAP.md`; merged infrastructure is not a v0.5.7 release.
+- v0.5.8 (planned): advanced Hole Editing. Later: Sweep with 3D spline paths, Loft, broader Align and Assemblies, packaging. Task-specific instructions come from the prompt of each session.
 
 ## Architecture principles (non-negotiable)
 - History-independent, geometry-first B-Rep editing. The current B-Rep (faces, edges, vertices,
@@ -22,10 +21,15 @@ Repository: ProtonJeroen/OpenDesigner. Primary project reference: `docs/ROADMAP.
 - Preview is temporary and non-selectable. OK/Enter commits exactly one Undo step;
   Cancel/Escape commits none. Save writes only confirmed geometry.
 - Uncertain or unsupported cases are refused specifically and atomically, without model mutation.
-- Keep the 1e-6 sharp-reconstruction tolerance. Never relax tolerances or weaken assertions to make
+- Keep the 1e-6 reconstruction/topology tolerance ceiling. Operation-specific tolerances (1e-7
+  Sketch geometry, 1e-8 coverage, 1e-12 adaptive integration precision) are recorded in `docs/ROADMAP.md`
+  and `docs/SHARED_BREP_RECONSTRUCTION.md`. Never relax any tolerance or weaken assertions to make
   tests pass. No uncontrolled shape healing.
 - Reuse existing modules (`FilletGeometry`, `EdgeBlendFeatures`, Move/Delete Face geometry,
-  `NativeDocument`) rather than introducing parallel engines or persistence formats.
+  `NativeDocument`, and the shared B-Rep layer `BRepReconstruction`, `BRepTopology`,
+  `BRepCertification`, `BRepMeasurement`, `BRepInvariantSupport`/`BRepInvariantExtrusion`) rather
+  than introducing parallel engines or persistence formats. See
+  `docs/SHARED_BREP_RECONSTRUCTION.md` for the shared architecture.
 
 ## Git rules
 - Never `git clean`, `git reset --hard`, force checkout or force push.
@@ -45,6 +49,14 @@ Repository: ProtonJeroen/OpenDesigner. Primary project reference: `docs/ROADMAP.
 - CTest maximum `-j2`. Run only directly relevant tests locally; no full CTest suite locally.
 - Do not rerun passing tests unless relevant sources changed.
 - CI (Ubuntu 24.04) uses OCCT 7.6.3 and Qt 6.4.2. Newer APIs need version guards or a fallback.
+  OCCT-version-gated behaviour must be checked on both sides of the gate: `src/BRepReconstruction.cpp`
+  merges stacked cylindrical seams only for `OCC_VERSION_HEX >= 0x070900`, so CI exercises the
+  split-retaining path while a local OCCT 7.9.x build exercises the merged path.
+- `CMakeLists.txt` has 144 `add_test(` calls but 145 test names (the Fillet/Chamfer loop registers
+  two). CI runs 142 because `command-panel-cross-screen` (Qt >= 6.11),
+  `experimental-whole-section-lines` (Boost.Multiprecision headers) and
+  `move-face-box-shadow-observation` (`OPENDESIGNER_ENABLE_BOX_SHADOW`, default `OFF`) are gated
+  out of the CI image.
 
 ## Reporting
 Every report states: branch and SHA; exact build and test commands with PASS/FAIL counts;

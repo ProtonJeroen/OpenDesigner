@@ -1,5 +1,5 @@
 # OpenDesigner — Technical development handover
-**Snapshot:** 2026-11-07 | **Baseline:** `develop` v0.4.9 | **Audience:** Mistral Vibe / Qwen3-Coder local agent
+**Snapshot:** 2026-11-23 | **Baseline:** `develop` `fb370e5` (v0.5.6 released, v0.5.7 merged by PR #79 but unreleased) | **Audience:** Mistral Vibe / Qwen3-Coder local agent
 
 > This is a navigation and engineering handover, **not** a replacement for source inspection. The code and tests on the checked-out commit are authoritative. Historical conversations and older milestone names are not proof of current behavior. Never silently mark planned features implemented.
 
@@ -9,28 +9,60 @@ OpenDesigner is an open-source cross-platform **history-independent, direct-mode
 **Non-negotiable modeling invariant:** edit the *current B-Rep*, not primitive creation labels, feature histories or provenance. Recognize analytic geometry from faces/edges/adjacency. A Boolean, imported or transformed shape should be evaluated by geometry and a certified material/validity result. Refuse unsupported operations precisely and non-destructively; never silently approximate geometry.
 
 ## 2. Authoritative reading order
-1. `README.md` — present product scope and limitations.
-2. `docs/ROADMAP.md` — detailed implemented milestones, planned work and geometry-first requirements.
-3. `CMakeLists.txt` — exact build targets, dependencies and test registration.
-4. `docs/V049_INTEGRATION_REVIEW.md` — v0.4.9 validation, caveats.
-5. `docs/COMMAND_SESSIONS.md`, `docs/SELECTION_CONTEXT.md`, `docs/NATIVE_DOCUMENTS.md`.
-6. `docs/BREP_RECONSTRUCTION.md`, `docs/MOVE_FACE.md`, `docs/DELETE_FACE.md`, `docs/PULL_RESIZE_GAPS.md`.
-7. `docs/EXTRUDE_PROFILE.md`, `docs/REVOLVE.md`, `docs/SKETCH_EDITOR.md`, `docs/SKETCH_PROJECTION.md`.
-8. `docs/FACE_HISTORY_PERSISTENCE.md`, `docs/CROSS_SCREEN_HIDPI.md`, `docs/GUI_TEST_PLAN.md`.
-9. `docs/SOLIDDESIGNER16_WORKFLOWS.md` — reference workflow analysis without proprietary manual assets.
-10. Current `src/`, `tests/`, `.github/workflows/`, Git history and PR status.
+1. `AGENTS.md` and `CLAUDE.md` — standing rules, architecture principles, tolerance policy,
+   build/test limits, reporting and mandatory timing rules. Keep the two in sync.
+2. `README.md` — present product scope and limitations.
+3. `docs/ROADMAP.md` — version status, the merged-state section for PR #79, and the open
+   v0.5.7/v0.5.8 acceptance gates.
+4. `docs/SHARED_BREP_RECONSTRUCTION.md` — the v0.5.7 shared B-Rep architecture: module
+   ownership, certification pipeline, provisional pipeline, F2.9G.5A seam rule.
+5. `CMakeLists.txt` — exact build targets, dependencies and test registration.
+6. `docs/LOCAL_AI_PROGRESS.md` — current per-task handover snapshot and history.
+7. `docs/LOCAL_AI_TASK_TIMES.csv` — append-only measured task timings.
+8. `docs/FAST_DIRECT_MODELING_CERTIFICATION.md` — the certification ledger, including F2.9G.5A
+   and the PR #79 test-harness repairs.
+9. `docs/LOCAL_AI_ENGINEERING_OPERATIONS.md`, `docs/MISTRAL_VIBE_START.md`,
+   `docs/LOCAL_AI_TECHNICAL_REFERENCE.md` (anchored at v0.4.9 — see its header note).
+10. `docs/COMMAND_SESSIONS.md`, `docs/SELECTION_CONTEXT.md`, `docs/NATIVE_DOCUMENTS.md`,
+   `docs/BREP_RECONSTRUCTION.md`, `docs/MOVE_FACE.md`, `docs/DELETE_FACE.md`,
+   `docs/EXTRUDE_PROFILE.md`, `docs/REVOLVE.md`, `docs/SKETCH_EDITOR.md`,
+   `docs/SKETCH_PROJECTION.md`, `docs/FACE_HISTORY_PERSISTENCE.md`,
+   `docs/CROSS_SCREEN_HIDPI.md`, `docs/GUI_TEST_PLAN.md`,
+   `docs/V049_INTEGRATION_REVIEW.md` and `docs/V056_KDE_ACCEPTANCE.md` — feature-specific
+   detail; read before converting a roadmap bullet into an implementation claim.
+11. Current `src/`, `tests/`, `.github/workflows/`, Git history and PR status.
 
-Some previously discussed root-level files (`ARCHITECTURE.md`, `DECISIONS.md`, `CODEX_HANDOFF.md`) were not found at the inspected root of `develop`. Do not assume they exist; discover files before citing.
+Some previously discussed root-level files (`ARCHITECTURE.md`, `DECISIONS.md`, `CODEX_HANDOFF.md`)
+were not found at the repository root of `develop`; only `AGENTS.md`, `CLAUDE.md` and `README.md`
+exist there. Do not assume they exist; discover files before citing.
 
 ## 3. Build architecture (observed in CMake)
 C++20, CMake >=3.21, Qt6 Widgets >=6.4, Open CASCADE, LibArchive. Fedora OCCT builds may require VTK CommonCore/IOImage targets to be found before OpenCASCADE. Main executable `OpenDesigner` includes `src/main.cpp`, `MainWindow`, `CadViewport`, `BooleanOperations`, `BRepReconstruction`, `MoveFaceGeometry`, `MoveFace`, `FaceOperations`, `FaceTransformGeometry`, `SelectionContext`, `NativeDocument`.
 
 Dedicated libraries/targets:
 - `OpenDesignerCommandPanels`: `CommandPanelPositioner`.
-- `OpenDesignerConstruction`: `SketchDisplayBounds`, `ConstructionGeometry`, `SketchGeometry`, `SketchSnapping`, `SketchOverdraw`, `SketchConstruction`, `SketchProjection`, `SketchProfileValidation`, `SketchProfileBuilder`, `SketchProfileExtrusion`, `SketchProfileRevolution` and declared sweep interfaces.
-- `OpenDesignerCylindricalMoveGeometry`: headless geometry with Qt Core, no Qt Widgets/visualization dependency.
+- `OpenDesignerBRepTopology` (CMakeLists.txt:33): `BRepTopology` — topology indexing,
+  adjacency and analytic-support lookup shared by every direct-modeling command.
+- `OpenDesignerBRepCertification` (CMakeLists.txt:36): `BRepCertification`, `BRepMeasurement`
+  and `BRepInvariantSupport` — validity, volume/material certificates and the
+  `BRepReconstruction::SupportDescriptor` / `TopologyIndex` implementations.
+- `OpenDesignerConstruction`: `ReferenceGeometry`, `SketchDisplayBounds`,
+  `ConstructionGeometry`, `SketchGeometry`, `SketchSpline`, `SketchSnapping`,
+  `SketchOverdraw`, `SketchConstruction`, `SketchProjection` and the profile
+  validation/build/extrude/revolve interfaces declared further down the file.
+- `OpenDesignerCylindricalMoveGeometry`: headless geometry with Qt Core, no Qt Widgets/visualization
+  dependency; also compiles `BRepReconstruction.cpp` and `BRepInvariantExtrusion.cpp`
+  (CMakeLists.txt:77-78).
 - `OpenDesignerDeleteFaceGeometry`: Delete Face and planar deletion geometry.
+- `OpenDesignerEdgeBlends` (CMakeLists.txt:483): `FilletGeometry`, `ChamferGeometry`,
+  `EdgeBlendFeatures`, `FaceTransformGeometry`.
 - `OpenDesignerDebug`, `OpenDesignerDebugModel`: diagnostic model capture and inspection.
+
+Header-only v0.5.7 additions with no own CMake target: `BRepTiming.h`,
+`BRepMeasurementPrivate.h`, and the provisional pipeline
+(`BRepProvisional.h`, `BRepProvisionalNegotiation.h`, `BRepProvisionalProviders.h`,
+`ProvisionalBoxPreview.h`, `ProvisionalPlanarClearance.h`, `BRepSweepClearance.h`,
+`BRepSweepConstruction.h`).
 
 These are **build groupings**, not a claim of fully isolated architectural layers. Inspect headers/implementations to trace ownership and mutation boundaries. The large `CadViewport` and `MainWindow` translation units deserve special care when changing command lifecycle.
 
@@ -58,6 +90,15 @@ These are **build groupings**, not a claim of fully isolated architectural layer
 ## 6. Geometry and regression lessons
 **OCCT and material equivalence:** after Boolean/face edits, remove redundant seams only when material equivalence and connectivity are certified. Shared B-Rep reconstruction has bounded planar-cell logic; unrestricted blends/freeform/complex trims remain open. Geometry and occupancy must be tested independently of triangulation.
 
+**OCCT version behaviour differs and must be gated, not assumed.** Stacked-cylinder seam merging
+is compiled only when `OCC_VERSION_HEX >= 0x070900` (`stackedCylinderMergeSupported`,
+src/BRepReconstruction.cpp:244): CI's OCCT 7.6.3 keeps the previous guarded normalization
+because `ShapeUpgrade_UnifySameDomain::IntUnifyFaces` loops there, while local OCCT 7.9.x merges.
+Carrier identity for a shared seam is proven with 64-ulp axis/location/radius comparison, the
+material side through `cylinderMaterialSide` rather than raw `TopoDS_Face` orientation, and
+`stackedCylinderSeams` (src/BRepReconstruction.cpp:438). A locally green seam-merge result is
+therefore not evidence for the CI toolchain, and vice versa.
+
 **Cylindrical edits:** preserve trim edges and analytic support; use certified split-result fallback when unification is unsafe. Keep strict tolerance policy, including the historically used `1e-6` bound in affected offset cases; verify current code before relying on a numeric threshold. Test boundary holes, open notches, rotated rims, boss Trim/Extend and repeated edits.
 
 **Qt/KDE:** native command-panel coordinates can differ from QWidget logical coordinates, especially under Wayland/XWayland and multi-monitor HiDPI. Distinguish test-fixture placement fixes from production cross-screen correctness. `docs/V049_INTEGRATION_REVIEW.md` explicitly leaves real cross-screen acceptance pending.
@@ -72,7 +113,21 @@ ctest --test-dir build --output-on-failure
 ```
 GUI integration tests require a working X11/OpenGL desktop or a suitable Xvfb/software-GL environment. Do not assume `QT_QPA_PLATFORM=offscreen` works for Open CASCADE viewer tests. Use targeted CTest regex first, then full suite; report command, environment, pass/fail counts and skipped cases. CI green is not a substitute for Fedora KDE manual UI acceptance. `README.md` notes Windows/macOS not CI-validated. Review the current workflows before claiming cross-platform support.
 
-**Baseline evidence:** `README.md` identifies v0.4.9; its 47/47 manual checks are *user-reported*. `docs/V049_INTEGRATION_REVIEW.md` describes an initial full suite with failures, corrected targeted reruns, and 86 cases with passing results *across full and targeted runs*, not one clean full-suite pass. A separate earlier PR #68 was reported green with 88/88; check its actual merge and branch relevance. Never combine these figures as if they were the same run.
+**Baseline evidence:** historical v0.4.9 figures in `docs/V049_INTEGRATION_REVIEW.md` describe an
+initial full suite with failures, corrected targeted reruns, and 86 cases with passing results
+*across full and targeted runs*, not one clean full-suite pass. Its 47/47 manual checks are
+*user-reported*. PR #68 is **verified merged** (2026-11-07, merge commit
+`60d4bccc16efef762f01f099a1a850151e8cb020`); its 88/88 figure belongs to that PR's own run.
+Never combine these figures as if they were the same run.
+
+Current baseline evidence for PR #79, read from GitHub Actions (not re-executed locally in the
+documentation session that recorded it): PR head `63ff9a6` run `45071533024` was green with
+`100% tests passed, 0 tests failed out of 142`; `develop` `fb370e5` run `45172009344` failed
+with `141/142` because `rotation-pivot` hit its 60 s `TIMEOUT` at 60.03 s. The two trees are
+byte-identical (`git diff --name-only fb370e5 63ff9a6` is empty), so the failure is a timing
+flake, not a merge regression. `CMakeLists.txt` registers 144 tests; CI runs 142 because
+`command-panel-cross-screen` (Qt >= 6.11) and `experimental-whole-section-lines`
+(Boost.Multiprecision) are gated out.
 
 ## 8. Historical development timeline (high level)
 - v0.1: Qt/OCCT viewer, browser, box and Linux CI.
@@ -81,7 +136,20 @@ GUI integration tests require a working X11/OpenGL desktop or a suitable Xvfb/so
 - v0.3.3–v0.3.6: face move/rotate/align/delete, B-Rep reconstruction, diagnostic export and topology-safe workflows.
 - v0.3.7: native `.odc` storage.
 - v0.4.0+: construction objects, sketch editor, projection, profile validation/build, Extrude/Revolve, elliptical geometry and expanded regression coverage.
-- v0.4.9: cylindrical Move Face, geometry and crash fixes, persistence/history validation, cross-screen HiDPI qualifications.
+- v0.4.9: cylindrical Move Face, geometry and crash fixes, persistence/history validation,
+  cross-screen HiDPI qualifications.
+- v0.5.0-v0.5.2 (PRs #70-#72): feature-aware Fillet and Chamfer direct editing, circular Fillets
+  with intelligent selection and cap-editing recovery, conical Fillet and Chamfer.
+- v0.5.3-v0.5.5 (PRs #74-#76): Workplane and reference foundation; Show/Hide Workplanes and
+  Move Face by Points; Advanced Sketch Curves.
+- v0.5.6 (PR #78): interactive Trim, Extend and exact curve Overdraw. **v0.5.6 is the last
+  released version** (`project(OpenDesigner VERSION 0.5.6)`).
+- v0.5.7 (PR #79, merged 2026-11-23 as `fb370e5`, unreleased): shared B-Rep reconstruction
+  modules, F2.9G.5A stacked-cylinder seam unification, provisional pipeline, test-harness
+  repairs.
+- v0.5.7 (PR #79, merged 2026-11-23 as `fb370e5`, unreleased): shared B-Rep reconstruction
+  modules, F2.9G.5A stacked-cylinder seam unification, provisional pipeline, test-harness
+  repairs.
 
 Read milestone-specific documents before converting this timeline into detailed release claims. Old milestone labels in `docs/ROADMAP.md` are historical, not semantic versioning guarantees.
 
@@ -104,7 +172,23 @@ Intended offline workflow: Lenovo Legion RTX 3070 8 GB VRAM, 48 GB RAM, Fedora K
 10. At handoff, leave a clean or precisely described working tree, with no unsupported success claims.
 
 ## 12. Immediate next investigation
-Verify actual `develop` HEAD, branch divergence and PR #68 merge; read v0.4.9 integration review; inspect current CTest registration; confirm any pending KDE manual tests; compare roadmap planned sections with implementation; then choose the next small issue. No implementation work is authorized merely by reading this handover.
+Confirm `develop` HEAD (`fb370e5` expected) and that the working tree is clean before starting.
+Open items in priority order: (1) the `rotation-pivot` 60 s `TIMEOUT` that turns `develop` CI red
+— decide between a CI re-run and a test-registry budget change, without weakening the assertion;
+(2) the v0.5.7 acceptance gates still open in `docs/ROADMAP.md`, including legacy `.odc`
+compatibility for F2.9G.5A and the Fedora KDE manual rounds for the shared pipeline;
+(3) the 27 registered tests that declare no `TIMEOUT`; (4) the stale `v0.5.6` product string in
+the CI artifact README text. No implementation work is authorized merely by reading this handover.
 
 ## 13. Provenance / confidence
-**Repository-observed (2026-11-07):** `README.md`, `CMakeLists.txt`, `docs/ROADMAP.md`, `docs/V049_INTEGRATION_REVIEW.md`, `docs/FACE_HISTORY_PERSISTENCE.md`, `docs/GUI_TEST_PLAN.md` on `develop` were inspected in preparing this handover. **Historical context:** design preferences and prior milestones from development conversations. **Unverified:** exact current HEAD SHA, PR #68 merged status, current local Fedora working-tree state, complete class-level call graph and real multi-monitor acceptance. Treat these as tasks for direct repository/local inspection, not as facts.
+**Repository-observed (2026-11-23):** `AGENTS.md`, `CLAUDE.md`, `README.md`, `CMakeLists.txt`,
+`docs/ROADMAP.md`, `docs/SHARED_BREP_RECONSTRUCTION.md`, `docs/LOCAL_AI_HANDOVER.md`,
+`docs/LOCAL_AI_PROGRESS.md`, `docs/LOCAL_AI_TASK_TIMES.csv` and `.github/workflows/build.yml`
+on `develop` `fb370e5` were inspected while synchronizing the documentation after PR #79.
+PR #68 merge status, PR #79 head/merge SHAs and the CI pass/fail counts were read from Git and
+GitHub Actions in that session. **Not re-executed:** no C++ build or CTest run was performed in
+the documentation session; the local full-suite figures quoted in `docs/LOCAL_AI_PROGRESS.md`
+come from earlier development sessions. **Unverified:** Fedora KDE manual acceptance for the
+v0.5.7 pipeline on legacy `.odc` documents, real multi-monitor behaviour, and whether the
+`rotation-pivot` timeout reproduces on a re-run. Treat these as tasks for direct repository,
+CI and local inspection, not as facts.

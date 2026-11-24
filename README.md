@@ -2,10 +2,20 @@
 
 OpenDesigner is an open-source cross-platform 3D direct-modeling application inspired by classic CoCreate SolidDesigner.
 
-**Status:** v0.5.5 Advanced Sketch Curves; not a packaged distribution.
+**Status:** v0.5.6 Interactive Trim, Extend and Exact Overdraw is the last merged release
+milestone; the v0.5.7 shared B-Rep reconstruction foundation (PR #79) is merged into `develop`
+but unreleased. Not a packaged distribution.
 
 Exact elliptic profiles, editable 2D interpolating splines and exact standalone
 B-spline edge projection: [supported scope and acceptance checklist](docs/ADVANCED_SKETCH_CURVES.md).
+
+The v0.5.7 work puts one geometry-first reconstruction engine behind Move Face, Rotate Face,
+Pull/Resize and Delete Face: `BRepReconstruction` plus the shared `BRepTopology`,
+`BRepCertification`, `BRepMeasurement` and invariant-support modules, with no parallel command
+engine. F2.9G.5A unifies stacked cylindrical wall seams after a certified planar Move Face,
+independently of how the solid was built; it is enabled only on OCCT >= 7.9, so CI's OCCT 7.6.3
+keeps the split. See [shared B-Rep reconstruction](docs/SHARED_BREP_RECONSTRUCTION.md) and the
+[F2.9G.5A record](docs/FAST_DIRECT_MODELING_CERTIFICATION.md).
 
 Move supported cylindrical holes and bosses from their current B-Rep, with explicit
 lateral directions and boss Trim/Extend policies. Supported boundary features also
@@ -13,8 +23,9 @@ have Delete Face and diameter/height Pull workflows. No feature history is neede
 The user reports **47/47 manual desktop checks passed** across the recent geometry
 and crash-fix phases; these are user-reported acceptance results. Native persistence,
 identity and history checks are recorded in [Phase 9E](docs/FACE_HISTORY_PERSISTENCE.md).
-Final build/test results and release limitations are recorded in the
-[v0.4.9 integration review](docs/V049_INTEGRATION_REVIEW.md).
+Build/test evidence for the current `develop` is recorded in the
+[local AI progress handover](docs/LOCAL_AI_PROGRESS.md); the
+[v0.4.9 integration review](docs/V049_INTEGRATION_REVIEW.md) covers that milestone only.
 
 Delete Face now supports the certified sloped cylindrical opening in `hole2.odc`,
 including elliptical planar rims, native Save/Open and cached history. See
@@ -152,7 +163,9 @@ retain their explicit preview workflow.
 
 Shared analytic face reconstruction, verified Boolean Unite riser behavior,
 controlled topology changes and remaining limits:
-[B-Rep reconstruction](docs/BREP_RECONSTRUCTION.md).
+[B-Rep reconstruction](docs/BREP_RECONSTRUCTION.md). The v0.5.7 shared layer
+([shared B-Rep reconstruction](docs/SHARED_BREP_RECONSTRUCTION.md)) extends that same engine
+rather than replacing it.
 
 Advanced Face Topology adds final material-preserving normalization and bounded
 planar reconstruction across support-disappearance events. The tested Unite riser

@@ -1,8 +1,12 @@
 # OpenDesigner PR #79 — Local AI progress handover
 
-**Snapshot:** 2026-11-22 (updated after PR #79 Phase 11b — CI handover documentation committed and pushed) | **Worktree:** `/home/Jeroen/OpenDesigner-vibe` | **Branch:** `ai/vibe-moveface-review` | **Baseline HEAD:** `c50f054` (Phase 11 commit, pushed; `14f2d5c` is the baseline it was built on) | **Audience:** Mistral Vibe
+**Snapshot:** 2026-11-23 (documentation synchronization after PR #79 merged into `develop`) | **Worktree:** `/home/Jeroen/OpenDesigner-develop` | **Branch:** `docs/synchronize-after-pr-79` | **Baseline HEAD:** `fb370e5bc7fb0c83064a35e8e03176280504f260` (`origin/develop`, PR #79 squash merge) | **Audience:** Mistral Vibe
 
-> Items marked **verified** were executed in the recorded session. Re-run the commands in section 5 before acting on any claim. Phase 11 committed the reviewed work and pushed it to the PR #79 head branch; Phase 11b committed the CI outcome for that SHA, which structurally could not be in the Phase 11 commit. Everything before Phase 11 was uncommitted.
+> Sections 1-11 are the PR #79 development session family (worktree `/home/Jeroen/OpenDesigner-vibe`,
+> branch `ai/vibe-moveface-review` / PR head `feature/v0.5.7-shared-brep-reconstruction`, baseline
+> `c50f054`); their findings are preserved unchanged. Section 12 is this documentation task.
+> Items marked **verified** were executed in the recorded session. Re-run the commands in section
+> 5 (and section 12) before acting on any claim.
 
 ## 1. Git and working-tree status (verified)
 
@@ -740,3 +744,122 @@ written, as the rule requires. Two documentation-only commits resulted from the 
 belongs to" bullet. The extra wall clock after `end_utc` is **not** back-filled into
 `duration_seconds` — the CSV is append-only and the recorded interval is the one that was
 actually measured.
+
+## 12. Documentation synchronization after PR #79 (2026-11-23)
+
+### 12.1 Git and working-tree status (verified in this session)
+
+| Item | Value |
+| --- | --- |
+| Worktree | `/home/Jeroen/OpenDesigner-develop` |
+| Branch | `docs/synchronize-after-pr-79`, created from `origin/develop` |
+| Baseline HEAD | `fb370e5bc7fb0c83064a35e8e03176280504f260` — PR #79 squash merge, single parent `98ed414`, `mergedAt 2026-11-23T12:11:51Z` |
+| PR #79 head | `63ff9a6b35188af14d709015bdb1d7791261dc74` (`gh pr view 79 --json headRefOid`) |
+| Working tree at review time | 13 modified documentation files, +252 / −58; no `src/`, `tests/`, `CMakeLists.txt` or `.github/` change |
+| `git diff --check` | exit 0 — no whitespace errors or conflict markers |
+
+### 12.2 Task objective and completion status
+
+Documentation only: remove stale version statements, eliminate contradictions between the
+project-level instruction files and the docs, describe the shared B-Rep reconstruction
+architecture delivered by PR #79, keep every still-open v0.5.7/v0.5.8 roadmap item unchecked,
+and check tolerances, test rules and CI statements for mutual consistency. **Complete** as a
+docs change; no code, build or test work was in scope.
+
+### 12.3 Contradictions found and resolved
+
+| File | Stale or contradictory claim | Resolution |
+| --- | --- | --- |
+| `AGENTS.md` / `CLAUDE.md` | "v0.5.2 (current), branch `feature/v0.5.2-conical-edge-blends`" | Replaced with `develop` HEAD `fb370e5`, the v0.5.0-v0.5.6 PR list, v0.5.7 merged-but-unreleased, v0.5.8 planned |
+| `README.md` | Status line at v0.5.5; "Final build/test results ... v0.4.9 integration review" | v0.5.6 last release + v0.5.7 merged-unreleased; the "final results" pointer now points at `docs/LOCAL_AI_PROGRESS.md` |
+| `docs/LOCAL_AI_HANDOVER.md` | Snapshot `2026-11-07 / develop v0.4.9`; v0.4.9 build graph and reading order; PR #68 merge state listed as unknown | Snapshot `2026-11-23 / fb370e5`; reading order and module list updated; PR #68 recorded as merged (`60d4bccc`); timeline extended to v0.5.7 |
+| `docs/LOCAL_AI_TECHNICAL_REFERENCE.md` | v0.4.9 snapshot presented as current; PR #68 marked **VERIFY** | Kept as a v0.4.9-anchored annex with an explicit anchoring note; PR #68 marked resolved |
+| `docs/MISTRAL_VIBE_START.md`, `docs/LOCAL_AI_ENGINEERING_OPERATIONS.md` | "Initial assignment"/"Priority 0" still aimed at v0.4.9 and PR #68 reconciliation | Rewritten to the current baseline: the `rotation-pivot` CI timeout and the open v0.5.7 acceptance gates |
+| `docs/NATIVE_DOCUMENTS.md`, `docs/SKETCH_EDITOR.md`, `docs/SKETCH_PROJECTION.md`, `docs/WORKPLANE_REFERENCES.md` | "Current v0.5.5 scope and limits" | Version-neutral pointer listing v0.5.5, v0.5.6 and v0.5.7 scope documents |
+| `docs/ROADMAP.md` | No record of the merged PR #79 state; CI counts unexplained | New `### Merged state on develop (PR #79, 2026-11-23)` section with delivered items, CI evidence and the test-registry reconciliation |
+
+Feature documents that state their own milestone baseline (`docs/CROSS_SCREEN_HIDPI.md`,
+`docs/DELETE_FACE.md`, `docs/MOVE_FACE.md`, `docs/ADVANCED_SKETCH_CURVES.md`) were left
+untouched: those are historical scope records, not current-status claims.
+
+### 12.4 Technical decisions
+
+- Version truth source: `project(OpenDesigner VERSION 0.5.6)` in `CMakeLists.txt` plus the
+  `git log` PR annotations. `AGENTS.md` remains canonical and `CLAUDE.md` is kept byte-identical
+  except for its title/intro, as the standing rule requires.
+- The shared B-Rep architecture is documented by reference to the existing implementations
+  (`BRepTopology`, `BRepCertification`, `BRepMeasurement`, `BRepInvariantSupport`,
+  `BRepInvariantExtrusion`, `BRepTiming`, the provisional headers) and to
+  `docs/SHARED_BREP_RECONSTRUCTION.md`; no new parallel description was invented.
+- `docs/LOCAL_AI_TECHNICAL_REFERENCE.md` was annotated rather than rewritten: its OCCT/Qt
+  call-level notes are still useful, only its status claims needed a boundary.
+- `.github/workflows/build.yml` was **not** edited (CI configuration is outside this task),
+  even though its artifact `README.txt` still says "OpenDesigner v0.5.6 ... Linux prototype"
+  (line 31). Reported as an open item instead.
+
+### 12.5 Commands executed in this session (verified)
+
+```sh
+git status --short --branch
+git log --oneline -20 origin/develop
+git log -1 --format=%B fb370e5
+git log -1 --format="%H %ci %s" 60d4bcc
+git diff --check            # exit 0
+git diff --stat             # 13 files, +252 / -58
+gh pr view 79 --json headRefOid,mergeCommit,mergedAt,state
+gh pr checks 79             # linux pass 54m14s, run 45071533024
+gh run view 45071533024 --log | grep -E "tests passed|rotation-pivot"
+                              # 100% tests passed, 0 tests failed out of 142; #51 Passed 58.35 sec
+gh run view 45172009344 --log-failed | grep -E "rotation-pivot|tests passed"
+                              # 99% tests passed, 1 tests failed out of 142; #51 ***Timeout 60.03 sec
+grep -c "add_test(" CMakeLists.txt          # 144
+perl -0777 ... CMakeLists.txt               # 145 names, 118 with TIMEOUT, 27 without
+```
+
+**Not executed:** no `cmake` configure, no build, no `ctest`. `build_seconds` and
+`test_seconds` in the CSV row are therefore `not measured`. The 144/142/145 figures above
+come from static `CMakeLists.txt` analysis plus the two Actions logs, not from a local run.
+
+### 12.6 Findings a fresh session needs
+
+- The `develop` CI failure is a timing flake, proven by `git diff --name-only fb370e5 63ff9a6`
+  being empty plus the 58.35 s / 60.03 s pair. Do not "fix" it by relaxing the assertion.
+- Test registry reconciled: 144 `add_test(` calls, `foreach(blend Fillet Chamfer)` adds a
+  second name (`Fillet-geometry`, `Chamfer-geometry`), so 145 names exist. Three are
+  configure-time gated out of CI: `command-panel-cross-screen` (Qt >= 6.11, line 211),
+  `experimental-whole-section-lines` (Boost.Multiprecision, line 130) and
+  `move-face-box-shadow-observation` (`OPENDESIGNER_ENABLE_BOX_SHADOW`, default `OFF`, line
+  550). CI therefore runs 142. This reconciles with the Phase 10 inventory taken from
+  `build/CTestTestfile.cmake` (144 registered, 117 with `TIMEOUT`, 27 without): that local
+  configuration had the Box observer test off and both version-gated tests otherwise present.
+- 118 of the 145 names set `TIMEOUT`; 27 do not and inherit CTest's 1500 s default.
+  `rotation-pivot`'s 60 s ceiling comes from the shared `set_tests_properties` list at
+  `CMakeLists.txt:295`.
+- Tolerances are mutually consistent between code and docs: `1.e-6` reconstruction/topology
+  ceiling (src/BRepInvariantSupport.cpp:122, src/BRepCertification.cpp:123), `1e-7` Sketch
+  (src/SketchSpline.cpp:42), `1e-8` relative coverage (src/BRepSweepClearance.h:32),
+  `1e-12` adaptive integration (src/BRepMeasurement.cpp:103), and the `2e-6` clearance margin
+  documented as twice the ceiling.
+- The OCCT gate `stackedCylinderMergeSupported` (`OCC_VERSION_HEX >= 0x070900`,
+  src/BRepReconstruction.cpp:244) means a locally green seam-merge result is not evidence for
+  the CI toolchain and vice versa.
+
+### 12.7 Remaining problems and open uncertainties
+
+- `develop` CI is red on the `rotation-pivot` timeout; unresolved by design here.
+- 27 tests have no `TIMEOUT`; whether that is intentional is a test-registry question.
+- The CI artifact text still advertises v0.5.6 (`.github/workflows/build.yml:31`).
+- F2.9G.5A legacy `.odc` compatibility is untested; Fedora KDE manual acceptance for the
+  v0.5.7 pipeline is pending.
+- Residual risk from the PR #79 merge message still open: `BRepMesh_IncrementalMesh` clears
+  `Checked` on subshapes, so tessellation between the two `moveSourceUnchanged()` snapshots
+  can still read as a source change.
+- All v0.5.7/v0.5.8 acceptance and release gates in `docs/ROADMAP.md` remain unchecked.
+
+### 12.8 Exact next recommended step
+
+On a code branch (not this docs branch): decide the `rotation-pivot` remedy — re-run CI first,
+and only if it reproduces, raise the shared `TIMEOUT 60` group at `CMakeLists.txt:295` or
+split `rotation-pivot` into its own registration with a measured budget. Then take the first
+open v0.5.7 acceptance gate: legacy `.odc` compatibility for F2.9G.5A on a copy of a private
+document opened from a temporary directory.

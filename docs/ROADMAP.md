@@ -818,9 +818,11 @@ Sketch and projected-geometry references during design and acceptance.
 - **v0.5.7: shared geometry-first B-Rep reconstruction foundation**
   for Move Face, Rotate Face, Pull/Resize and Delete Face, including complex
   extruded ellipse/spline profiles and holes; consolidate proven specialized
-  reconstruction paths without reducing certified coverage. In progress:
-  shared infrastructure, scoped ellipse/obround/no-hole spline cap Move and
-  P1/P2 are implemented; see the status ledger and remaining gates below.
+  reconstruction paths without reducing certified coverage. **Merged into `develop`
+  by PR #79** (squash commit `fb370e5`, 2026-11-23): shared infrastructure, scoped
+  ellipse/obround/no-hole spline cap Move, P1/P2 and F2.9G.5A stacked-cylinder seam
+  unification are on `develop`. v0.5.7 is still unreleased and its acceptance and
+  release gates below remain open; a merged foundation is not a completed milestone.
 - **v0.5.8: advanced Hole Editing** on current B-Reps, regardless of whether
   the opening originated from Sketch/Remove Material, Boolean or STEP import.
 - Sweep (including 3D spline paths), then Loft, after the interactive curve
@@ -832,10 +834,11 @@ Sketch and projected-geometry references during design and acceptance.
 - Cross-platform desktop packaging; initial iPadOS/Android mouse-and-keyboard
   technical builds, then opt-in touch/stylus mode.
 
-Version 0.5.6 is merged; v0.5.7 remains an unreleased development milestone and
-v0.5.8 remains planned. All retain the geometry-first, current-B-Rep and
-conservative-certification principles. No milestone number or capability target
-is reassigned by this status update.
+Version 0.5.6 is the last released milestone and the version declared in `CMakeLists.txt`.
+The v0.5.7 foundation is merged into `develop` at `fb370e5` by PR #79 but remains an
+unreleased development milestone, and v0.5.8 remains planned. All retain the geometry-first,
+current-B-Rep and conservative-certification principles. No milestone number or capability
+target is reassigned by this status update.
 
 ### Scheduling boundaries and decisions (2026-11-15)
 
@@ -919,6 +922,74 @@ Pull/Resize and Delete Face. It must operate on the current B-Rep, independent
 of original primitives, Sketch/Extrude history and imported provenance. This
 is a staged, conservative capability target: no claim that every arbitrary
 freeform or multi-shell B-Rep can be modified.
+
+### Merged state on develop (PR #79, 2026-11-23)
+
+PR #79 squash-merged `feature/v0.5.7-shared-brep-reconstruction` (head `63ff9a6`) into `develop`
+as `fb370e5` on 2026-11-23. The merge carried the complete build closure the branch needed: the
+shared modules `BRepTopology`, `BRepCertification`, `BRepMeasurement`, `BRepInvariantSupport`,
+`BRepInvariantExtrusion`, `BRepTiming` and the provisional pipeline
+(`BRepProvisional*`, `ProvisionalBoxPreview`, `ProvisionalPlanarClearance`,
+`BRepSweepClearance`, `BRepSweepConstruction`), their `CMakeLists.txt` targets,
+test sources, synthetic fixtures and the design documents referenced from this roadmap.
+Branch commit `46d2f9b` did not build from a clean checkout; the merge added the sources,
+headers and CMake registrations it had left uncommitted.
+
+Delivered with the merge:
+
+- [x] **F2.9G.5A — construction-independent stacked cylinder seams.** A certified
+  planar Move Face releases only the seam edges that `stackedCylinderSeams` proves
+  share a carrier: 64-ulp axis/location/radius identity, same material side through
+  `cylinderMaterialSide` instead of raw `TopoDS_Face` orientation, full-width abutment
+  and a circular seam on the axis inside the moved Face's original plane. The obround
+  with two holes reaches 8 Faces / 4 cylinders / 0 seams whether the holes are in the
+  extruded profile or added by a separate Cut. Gated by `stackedCylinderMergeSupported`
+  (`OCC_VERSION_HEX >= 0x070900`): OCCT 7.6.3 keeps the previous guarded normalization
+  because `ShapeUpgrade_UnifySameDomain::IntUnifyFaces` loops there. Manual DellJV
+  Fedora KDE acceptance **PASS** for newly constructed obround models; legacy `.odc`
+  compatibility **not tested**.
+- [x] **Test-harness repairs.** The four Move Face failures recorded in
+  `docs/FAST_DIRECT_MODELING_CERTIFICATION.md` (`cylindrical-move-face-boundary`,
+  `sloped-planar-opening-move`, `cylindrical-open-notch-sessions`,
+  `cylindrical-move-face-recognition`) were repaired inside PR #79: awaits for the
+  300 ms planar numeric-preview debounce, a shared RAII `UnsavedPromptGuard` in
+  `MainWindowTestHelpers.h` that answers the blocking "Unsaved changes" prompt with
+  Discard, locale-independent decimal literals in `EdgeBlendSessionTest`, a
+  `compound()` copy fix in `BRepCertificationTest` that stopped clearing the caller's
+  `Free` flag, and one production fix in `CadViewport::movePartSnapshot` that
+  serializes a `BRepBuilderAPI_Copy` and re-carries the seven root shape flags. No
+  assertion, message, tolerance or timeout was weakened. Residual risk recorded in the
+  merge message and still open: `BRepMesh_IncrementalMesh` clears `Checked` on subshapes
+  without changing geometry, so tessellation between the two
+  `moveSourceUnchanged()` snapshots can still read as a source change.
+
+CI evidence, re-read from GitHub Actions in this session:
+
+| Scope | Result |
+| --- | --- |
+| PR #79 head `63ff9a6`, run `45071533024` | success, `100% tests passed, 0 tests failed out of 142`; `rotation-pivot` (#51) `Passed 58.35 sec` |
+| `develop` `fb370e5`, run `45172009344` | **failure**, `99% tests passed, 1 tests failed out of 142`; `rotation-pivot` (#51) `***Timeout 60.03 sec` |
+
+`git diff --name-only fb370e5 63ff9a6` is empty: the two trees are byte-identical, so the
+`develop` failure is **not attributable to a code change in the merge**. `rotation-pivot`
+passed in 58.35 s against its 60 s `TIMEOUT` on the green run, so it sits within ~1.7 s of
+its budget and is a flake risk, not a v0.5.7 capability claim. Re-running CI or raising that
+test's budget is a test-registry decision outside this documentation task.
+
+Test registry reconciled against `CMakeLists.txt` on `fb370e5`: there are 144 `add_test(`
+calls, and the `foreach(blend Fillet Chamfer)` loop at line 486 registers two names
+(`Fillet-geometry`, `Chamfer-geometry`), so 145 test names exist statically. Three are
+configure-time gated and absent from the CI image: `command-panel-cross-screen` (Qt ≥ 6.11,
+line 211), `experimental-whole-section-lines` (Boost.Multiprecision headers, line 130) and
+`move-face-box-shadow-observation` (`OPENDESIGNER_ENABLE_BOX_SHADOW`, default `OFF`, line 550).
+That yields the 142 CI tests; the local Fedora suite recorded in `docs/LOCAL_AI_PROGRESS.md`
+section 7 registered 144, i.e. only the development-only Box observer test was absent there.
+Of the 145 names, 118 set a `TIMEOUT` and **27 do not** — among them `brep-support-topology`,
+`construction-geometry`, `reference-geometry`, `selection-contours`, `sketch-snapping`,
+`Fillet-geometry` and `Chamfer-geometry`. A test without `TIMEOUT` inherits CTest's 1500 s
+default, so
+`rotation-pivot`'s 60 s ceiling comes from the shared `set_tests_properties` list at line 295,
+not from a per-test entry.
 
 ### Scoped implementation and acceptance status (2026-11-15)
 

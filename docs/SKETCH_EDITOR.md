@@ -1,6 +1,6 @@
 # 2D Modeling / Sketch Editor — v0.4.1 and v0.4.2 foundations
 
-Current v0.5.5 scope and limits: [Advanced Sketch Curves](ADVANCED_SKETCH_CURVES.md).
+Latest scope pointers: [Advanced Sketch Curves](ADVANCED_SKETCH_CURVES.md) (v0.5.5), [Interactive Trim](INTERACTIVE_TRIM.md), [Interactive Extend](INTERACTIVE_EXTEND.md) and [Exact Overdraw](EXACT_OVERDRAW.md) (v0.5.6), plus [Shared B-Rep Reconstruction](SHARED_BREP_RECONSTRUCTION.md) (v0.5.7).
 The phase descriptions below retain their historical scope.
 
 Phase 1 supplies document values, native storage, presentation, browser management
