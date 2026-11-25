@@ -57,6 +57,10 @@ public:
     // Shared by storage and snapshot import. Empty/legacy curves require v3,
     // points v4, ellipses v5, interpolating splines v6; older document-content guards remain separate.
     static int sketchSchemaVersion(const std::vector<Sketch::Entity>& entities);
+    // One predicate for the whole snapshot: the lowest schema able to store this
+    // content (1 Part-only, 2 with construction geometry, 3+ by exact 2D type).
+    // Save refuses below it; snapshot import re-checks the same content rules.
+    static int requiredSchemaVersion(const NativeDocumentSnapshot& snapshot);
     static bool save(const QString& path, const NativeDocumentSnapshot& snapshot, QString& error);
     static bool load(const QString& path, NativeDocumentSnapshot& snapshot, QString& error);
 };
