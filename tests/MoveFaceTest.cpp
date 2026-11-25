@@ -24,6 +24,7 @@
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
 #include <QTemporaryDir>
+#include <QFile>
 #include <QApplication>
 #include <QAction>
 #include <QDialogButtonBox>
@@ -1250,6 +1251,141 @@ struct MoveFaceTest {
         }
         qunsetenv("OPENDESIGNER_BOX_SHADOW");
         std::cout<<"Stacked cylindrical unification for sketch-profile and separately Cut holes passed\n";
+    }
+    // F2.9G.5A legacy .odc compatibility. The stacked-cylinder solid and its 2D
+    // profile must survive every native schema version able to represent them,
+    // and every version unable to represent them must refuse specifically and
+    // atomically, leaving the document on disk untouched. A legacy v3 document
+    // reopened by the current application must stay a first-class modelling
+    // input: same topology census, same certified Move Face seam behaviour.
+    // Fixtures are synthetic; no private .odc is read or written.
+    static void stackedCylinderCompatibility() {
+        const bool merges=OCC_VERSION_HEX>=0x070900;
+        std::cout<<"STACKED COMPATIBILITY OCCT "<<OCC_VERSION_COMPLETE<<" merge_enabled="<<merges<<'\n';
+        const auto profile=obroundTwoHolesProfile();
+        auto prism=[](const TopoDS_Face& f,double h){return BRepPrimAPI_MakePrism(f,gp_Vec(0,0,h),true,true).Shape();};
+        const auto unified=prism(profile,30);
+        const auto split=BRepAlgoAPI_Fuse(prism(profile,10),prism(obroundTwoHolesProfile(10),10)).Shape();
+        const gp_Pln old10(gp_Pnt(0,0,10),gp_Dir(0,0,1)),old20(gp_Pnt(0,0,20),gp_Dir(0,0,1));
+        auto census=[](const TopoDS_Shape& s){return std::array<int,3>{countType(s,TopAbs_FACE),cylinderFaces(s),cylinderSeams(s)};};
+        require(countType(unified,TopAbs_FACE)==8&&cylinderFaces(unified)==4&&cylinderSeams(unified)==0,"unified fixture");
+        require(cylinderSeams(split,&old10)==4,"split fixture");
+        // Content ladder: each fixture needs exactly one more schema level.
+        Construction::Object wp;wp.id="stacked-wp";wp.name="Stacked WP";wp.kind=Construction::Kind::Workplane;
+        wp.extent=100;wp.frame=gp_Ax3(gp_Pnt(0,0,0),gp_Dir(0,0,1),gp_Dir(1,0,0));
+        const double pi=std::numbers::pi;
+        auto entity=[&](const char* id,Sketch::Geometry g,Sketch::Role role){
+            Sketch::Entity e;e.id=QString(id);e.workplaneId=wp.id;e.geometry=g;e.role=role;return e;};
+        const Sketch::Role profileRole=Sketch::Role::Profile;
+        const std::vector<Sketch::Entity> curves{
+            entity("stacked-o1",Sketch::Segment{{-30,-20},{30,-20}},profileRole),
+            entity("stacked-o2",Sketch::Arc{{30,0},20,-pi/2,pi},profileRole),
+            entity("stacked-o3",Sketch::Segment{{30,20},{-30,20}},profileRole),
+            entity("stacked-o4",Sketch::Arc{{-30,0},20,pi/2,pi},profileRole),
+            entity("stacked-h1",Sketch::Circle{{-30,0},6},profileRole),
+            entity("stacked-h2",Sketch::Circle{{30,0},6},profileRole)};
+        const std::vector<Sketch::Entity> point{entity("stacked-p1",Sketch::ConstructionPoint{{0,-30}},Sketch::Role::Construction)};
+        const std::vector<Sketch::Entity> ellipse{entity("stacked-e1",Sketch::Ellipse{{60,0},10,5,0.3},profileRole)};
+        const std::vector<Sketch::Entity> spline{entity("stacked-s1",Sketch::Spline{{{-60,-10},{-50,10},{-40,-10}},false},profileRole)};
+        auto join=[](std::vector<Sketch::Entity> a,const std::vector<Sketch::Entity>& b){a.insert(a.end(),b.begin(),b.end());return a;};
+        struct Leg{int required;std::vector<Construction::Object> constructions;std::vector<Sketch::Entity> sketches;};
+        const std::vector<Leg> legs{
+            {1,{},{}},
+            {2,{wp},{}},
+            {3,{wp},curves},
+            {4,{wp},join(curves,point)},
+            {5,{wp},join(join(curves,point),ellipse)},
+            {6,{wp},join(join(join(curves,point),ellipse),spline)}
+        };
+        NativeDocumentSnapshot base;
+        NativePartState part;part.id="stacked-part";part.name="Stacked";part.shape=unified;part.color=QColor(180,60,40);part.geometryKind=1;
+        base.parts={part};base.activePartId=part.id;
+        // The three specific refusal reasons, restated as the storage contract.
+        auto refusal=[](int schema,const std::vector<Construction::Object>& constructions,const std::vector<Sketch::Entity>& sketches){
+            if(schema==1&&!constructions.empty()) return QString("Schema v1 cannot store construction geometry.");
+            if(schema<3&&!sketches.empty()) return QString("Schema v1/v2 cannot store 2D geometry.");
+            return QString("The requested schema cannot store these 2D geometry types (points require v4; ellipses require v5; splines require v6).");
+        };
+        QTemporaryDir directory;
+        require(directory.isValid(),"temporary directory");
+        const QString path=directory.filePath("stacked-legacy.odc");
+        QString error;
+        for(const auto& leg:legs) {
+            auto snapshot=base;
+            snapshot.constructions=leg.constructions;snapshot.sketchEntities=leg.sketches;
+            require(NativeDocumentStorage::requiredSchemaVersion(snapshot)==leg.required,"shared version predicate disagrees with the fixture ladder");
+            require(NativeDocumentStorage::save(path,snapshot,error),"current-schema save");
+            QFile reference(path);
+            require(reference.open(QIODevice::ReadOnly),"document readable");
+            const QByteArray stored=reference.readAll();reference.close();
+            for(int schema=1;schema<=NativeDocumentStorage::CurrentSchemaVersion;++schema) {
+                auto attempt=snapshot;attempt.schemaVersion=schema;
+                const std::string at="v"+std::to_string(schema)+" of a v"+std::to_string(leg.required)+" fixture";
+                if(schema>=leg.required) {
+                    require(NativeDocumentStorage::save(path,attempt,error),(at+": representable content refused").c_str());
+                    NativeDocumentSnapshot loaded;
+                    require(NativeDocumentStorage::load(path,loaded,error),(at+": Open failed").c_str());
+                    require(loaded.parts.size()==1&&loaded.parts[0].id==part.id&&loaded.parts[0].name==part.name
+                        &&loaded.parts[0].color==part.color&&loaded.activePartId==part.id,(at+": Open lost Part identity").c_str());
+                    require(census(loaded.parts[0].shape)==census(unified)&&BRepCertification::equivalent(loaded.parts[0].shape,unified),(at+": Open changed the stacked solid").c_str());
+                    require(loaded.sketchEntities==snapshot.sketchEntities,(at+": Open changed 2D content").c_str());
+                    require(loaded.constructions.size()==snapshot.constructions.size()
+                        &&(snapshot.constructions.empty()||(loaded.constructions[0].id==wp.id&&loaded.constructions[0].kind==Construction::Kind::Workplane)),(at+": Open lost the Workplane").c_str());
+                    require(loaded.schemaVersion==NativeDocumentStorage::CurrentSchemaVersion,(at+": Open reported a legacy schema as current").c_str());
+                } else {
+                    require(!NativeDocumentStorage::save(path,attempt,error),(at+": schema stored content it cannot represent").c_str());
+                    require(error==refusal(schema,attempt.constructions,attempt.sketchEntities),(at+": refusal reason wrong").c_str());
+                    QFile after(path);
+                    require(after.open(QIODevice::ReadOnly),(at+": refusal removed the document").c_str());
+                    require(after.readAll()==stored,(at+": refusal mutated the document on disk").c_str());
+                    after.close();
+                }
+                std::cout<<"STACKED COMPATIBILITY required=v"<<leg.required<<" attempted=v"<<schema
+                         <<" saved="<<std::boolalpha<<(schema>=leg.required)<<'\n';
+            }
+        }
+        // 2. A legacy v3 document (Part + Workplane + profile curves) whose wall
+        //    bands are still split at z=10, reopened and edited by the current
+        //    application. Seam expectations follow the OCCT gate: v0.5.7 unifies
+        //    the new band only on kernels where stacked merging is validated.
+        {   auto legacy=base;legacy.schemaVersion=3;legacy.constructions={wp};legacy.sketchEntities=curves;
+            legacy.parts[0].shape=split;
+            const QString legacyPath=directory.filePath("stacked-v3.odc");
+            require(NativeDocumentStorage::save(legacyPath,legacy,error),"legacy v3 save");
+            NativeDocumentSnapshot reopened;
+            require(NativeDocumentStorage::load(legacyPath,reopened,error),"legacy v3 Open");
+            require(census(reopened.parts[0].shape)==census(split)&&BRepCertification::equivalent(reopened.parts[0].shape,split),"legacy Open changed the solid");
+            auto tooOld=legacy;tooOld.schemaVersion=2;
+            require(!NativeDocumentStorage::save(directory.filePath("stacked-v2.odc"),tooOld,error)&&error==refusal(2,tooOld.constructions,tooOld.sketchEntities),"legacy 2D guard");
+            qunsetenv("OPENDESIGNER_ENABLE_PROVISIONAL_BOX_PREVIEW");qputenv("OPENDESIGNER_BOX_SHADOW","0");
+            MainWindow window;window.resize(1200,900);window.show();QApplication::processEvents();
+            auto& v=*window.findChild<CadViewport*>();v.initializeViewer();
+            require(v.importDocumentSnapshot(reopened,error),"import legacy document");
+            v.fitSelection({0});QApplication::processEvents();
+            const auto stock=v.boxes_[0].shape;
+            require(census(stock)==census(split),"viewport Open changed the topology census");
+            const auto top=cap(stock,true);
+            selectFace(v,0,top);
+            require(v.startMoveFace(0,top),"Move Face on a reopened legacy document");
+            v.stopMoveNumericPreview();{const QSignalBlocker block(v.dragDimension_);v.dragDimension_->setText(QLocale().toString(10.,'g',17));}
+            require(v.updateCommandParameter(false)&&v.commandSession_->valid,"certified preview on a legacy document");
+            const auto undo=v.undoStack_.size();v.commandButtons_->button(QDialogButtonBox::Ok)->click();
+            require(!v.commandSession_&&v.undoStack_.size()==undo+1,"OK did not commit once");
+            const auto committed=v.boxes_[0].shape;double committedVolume=0;
+            std::cout<<"STACKED COMPATIBILITY legacy: faces="<<countType(committed,TopAbs_FACE)<<" cylinders="<<cylinderFaces(committed)
+                     <<" seams_at_z10="<<cylinderSeams(committed,&old10)<<" seams_at_z20="<<cylinderSeams(committed,&old20)<<'\n';
+            require(BRepCertification::equivalent(committed,unified),"legacy Move Face material changed");
+            require(cylinderSeams(committed,&old10)==4&&cylinderSeams(committed,&old20)==(merges?0:4),"legacy seam rule wrong for this OCCT");
+            require(BRepCertification::singleSolid(committed,committedVolume)&&BRepCertification::withinTolerance(committed,1.e-6),"legacy result invalid");
+            {   NativeDocumentSnapshot captured,restored;QString e;
+                require(v.exportDocumentSnapshot(captured)&&NativeDocumentStorage::save(directory.filePath("stacked-reopened.odc"),captured,e)
+                    &&NativeDocumentStorage::load(directory.filePath("stacked-reopened.odc"),restored,e)&&v.importDocumentSnapshot(restored,e),"Save/Open of the legacy result");
+                require(cylinderSeams(v.boxes_[0].shape,&old10)==4&&cylinderSeams(v.boxes_[0].shape,&old20)==(merges?0:4)
+                    &&BRepCertification::equivalent(v.boxes_[0].shape,committed),"Save/Open changed the seam state");}
+            // No window.close(): the edited document would open the modal prompt.
+            qunsetenv("OPENDESIGNER_BOX_SHADOW");
+        }
+        std::cout<<"Stacked cylindrical legacy .odc compatibility passed\n";
     }
     // F2.9D.4: identity placement eligibility after Save/Open.
     static void provisionalPlacement() {
@@ -2636,6 +2772,7 @@ int main(int argc,char** argv) {
         else if(app.arguments().contains("--provisional-placement")) MoveFaceTest::provisionalPlacement();
         else if(app.arguments().contains("--clear-sweep-provisional")) MoveFaceTest::clearSweepSession();
         else if(app.arguments().contains("--stacked-cylinder-unification")) {MoveFaceTest::stackedCylinderUnification();MoveFaceTest::stackedCylinderConstructionMethods();}
+        else if(app.arguments().contains("--stacked-cylinder-compatibility")) MoveFaceTest::stackedCylinderCompatibility();
         else if(app.arguments().contains("--preview-reuse")) MoveFaceTest::previewReuse();
         else if(app.arguments().contains("--startup-validation")) MoveFaceTest::startupValidation();
         else if(app.arguments().contains("--startup-timings")) MoveFaceTest::startupTimings();
