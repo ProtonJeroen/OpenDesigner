@@ -57,8 +57,8 @@ Repository: ProtonJeroen/OpenDesigner. Primary project reference: `docs/ROADMAP.
   OCCT-version-gated behaviour must be checked on both sides of the gate: `src/BRepReconstruction.cpp`
   merges stacked cylindrical seams only for `OCC_VERSION_HEX >= 0x070900`, so CI exercises the
   split-retaining path while a local OCCT 7.9.x build exercises the merged path.
-- `CMakeLists.txt` has 144 `add_test(` calls but 145 test names (the Fillet/Chamfer loop registers
-  two). CI runs 142 because `command-panel-cross-screen` (Qt >= 6.11),
+- `CMakeLists.txt` has 146 `add_test(` calls but 147 test names (the Fillet/Chamfer loop registers
+  two). CI runs 144 because `command-panel-cross-screen` (Qt >= 6.11),
   `experimental-whole-section-lines` (Boost.Multiprecision headers) and
   `move-face-box-shadow-observation` (`OPENDESIGNER_ENABLE_BOX_SHADOW`, default `OFF`) are gated
   out of the CI image.

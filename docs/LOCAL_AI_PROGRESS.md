@@ -962,7 +962,7 @@ the normal PR flow. After that, review the `boolean-operations` budget on a sepa
 and only then take the first open v0.5.7 acceptance gate: legacy `.odc` compatibility for
 F2.9G.5A on a copy of a private document opened from a temporary directory.
 
-## 14. Legacy `.odc` compatibility for F2.9G.5A (2026-11-25, implemented and verified locally)
+## 14. Legacy `.odc` compatibility for F2.9G.5A (2026-11-25, implemented and verified locally; green on CI)
 
 ### 14.1 Task objective, reconstruction and completion status
 
@@ -1063,13 +1063,20 @@ xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX" ctest --test-dir build -C
   so the HiDPI twin is never below its non-HiDPI twin nor below the sibling
   `move-face-stacked-cylinder-unification` budget (180 s, whose own local duration is 2.65 s),
   leaving the slower CI runner ample margin.
-- Not run: the other 141 registered tests, the three CI-gated tests, and everything that needs
-  a real desktop session (GUI interaction, Fedora KDE/Wayland, physical HiDPI).
+- Not run locally: the other 142 registered test names, the three CI-gated tests, and everything
+  that needs a real desktop session (GUI interaction, Fedora KDE/Wayland, physical HiDPI).
+- CI evidence for the other side of the OCCT gate (run `45762792836`, `pull_request` on PR #82,
+  head `9f9ce5f`, Ubuntu 24.04 / Qt 6.4.2 / OCCT 7.6.3, command
+  `xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX" ctest --test-dir build -C Release
+  --output-on-failure -j2`): `143/144 Test #143: move-face-stacked-cylinder-compatibility ...
+  Passed 1.53 sec`, `144/144 Test #144: ...-hidpi ... Passed 1.59 sec`,
+  `100% tests passed, 0 tests failed out of 144`, run conclusion `success`. So the split-retaining
+  expectations (`seams_at_z20==4`) and both 180 s budgets hold on the CI toolchain.
 
 ### 14.6 Remaining problems and known limitations
 
-- The split-retaining path (OCCT 7.6.3, `seams_at_z20==4`) is **not** exercised locally; only
-  the merged path was executed. CI is the first place the other side of the gate runs.
+- The split-retaining path (OCCT 7.6.3, `seams_at_z20==4`) was **not** exercised locally; it passed
+  on CI (see 14.5), but no local OCCT 7.6.x build has run it.
 - HiDPI coverage here is `QT_SCALE_FACTOR=2` under Xvfb only; no physical HiDPI display was used.
 - The gate is proven with synthetic fixtures. A real legacy `.odc` (for example `fillet.odc`)
   was never opened; if the acceptance gate requires one, the user must supply a copy in a
@@ -1082,9 +1089,12 @@ xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX" ctest --test-dir build -C
 
 ### 14.7 Exact next recommended development step
 
-Done: the branch is pushed and **PR #82** is open against `develop`. Next, watch `gh pr checks 82`:
-CI (Qt 6.4.2, OCCT 7.6.3) is the first run of the split-retaining seam expectations
-(`seams_at_z20==4`) and of the two new 180 s budgets. Merge only through the normal PR flow.
+Done: the branch is pushed, **PR #82** is open against `develop` (`mergeable: MERGEABLE`) and its
+CI run `45762792836` for head `9f9ce5f` finished with conclusion `success` — 144/144 tests passed,
+including both new legs on the split-retaining OCCT 7.6.3 toolchain. Merge only through the normal
+PR flow (never locally, never by touching branch protection). A docs-only follow-up commit then
+synced the standing-rule test counts in `AGENTS.md`/`CLAUDE.md` (146 `add_test(` calls, 147 names,
+CI runs 144); it re-triggers the same workflow, so re-check `gh pr checks 82` before merging.
 After that, refactor `CadViewport::importDocumentSnapshot` onto
 `NativeDocumentStorage::requiredSchemaVersion` on a separate branch (it changes error precedence,
 so it needs its own test evidence), then take the next v0.5.7 gate (advanced Hole Editing, v0.5.8).
