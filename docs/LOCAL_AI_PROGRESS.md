@@ -974,8 +974,11 @@ task was reconstructed as the first open v0.5.7 acceptance gate named in section
 compatibility test leg, (b) a shared version-gate predicate/helper, (c) HiDPI registration with
 derived budgets, plus the mandatory handover and timing row.
 
-Status: **complete and verified by execution locally**; not committed at the time of writing,
-not pushed, no PR (the rules require stopping before push and asking for approval).
+Status: **complete and verified by execution locally**, committed as three commits on
+`feature/v0.5.7-legacy-odc-compatibility` (`2b1f768` predicate, `75f5a2c` test + registration,
+`03c6440` handover + timing row). The task rules required stopping before pushing; the user then
+gave explicit approval, the branch was pushed (fast-forward, no force) and **PR #82** was opened
+against `develop`.
 
 ### 14.2 Baseline and branch (verified)
 
@@ -1074,11 +1077,14 @@ xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX" ctest --test-dir build -C
 - `CadViewport::importDocumentSnapshot` still keeps its own three gates; the shared predicate
   covers save and the test asserts import refusals, but the import code path is not yet refactored
   onto `requiredSchemaVersion` (out of scope: it would change error precedence).
-- No push, no PR: stopping before push was an explicit rule of this task.
+- Stopping before push was an explicit rule of this task; the push and PR #82 happened only after
+  the user's separate approval, not as part of the task's own scope.
 
 ### 14.7 Exact next recommended development step
 
-Commit the four files on `feature/v0.5.7-legacy-odc-compatibility`, then ask the user for explicit
-approval to push and open a PR against `develop`. On CI, watch
-`move-face-stacked-cylinder-compatibility(-hidpi)?` for the split-retaining seam expectations
-(`seams_at_z20==4`) before taking the next v0.5.7 gate (advanced Hole Editing, v0.5.8).
+Done: the branch is pushed and **PR #82** is open against `develop`. Next, watch `gh pr checks 82`:
+CI (Qt 6.4.2, OCCT 7.6.3) is the first run of the split-retaining seam expectations
+(`seams_at_z20==4`) and of the two new 180 s budgets. Merge only through the normal PR flow.
+After that, refactor `CadViewport::importDocumentSnapshot` onto
+`NativeDocumentStorage::requiredSchemaVersion` on a separate branch (it changes error precedence,
+so it needs its own test evidence), then take the next v0.5.7 gate (advanced Hole Editing, v0.5.8).
