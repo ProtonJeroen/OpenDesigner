@@ -172,13 +172,19 @@ Intended offline workflow: Lenovo Legion RTX 3070 8 GB VRAM, 48 GB RAM, Fedora K
 10. At handoff, leave a clean or precisely described working tree, with no unsupported success claims.
 
 ## 12. Immediate next investigation
-Confirm `develop` HEAD (`fb370e5` expected) and that the working tree is clean before starting.
-Open items in priority order: (1) the `rotation-pivot` 60 s `TIMEOUT` that turns `develop` CI red
-— decide between a CI re-run and a test-registry budget change, without weakening the assertion;
-(2) the v0.5.7 acceptance gates still open in `docs/ROADMAP.md`, including legacy `.odc`
-compatibility for F2.9G.5A and the Fedora KDE manual rounds for the shared pipeline;
-(3) the 27 registered tests that declare no `TIMEOUT`; (4) the stale `v0.5.6` product string in
-the CI artifact README text. No implementation work is authorized merely by reading this handover.
+`docs/LOCAL_AI_PROGRESS.md` is the current snapshot; read its last section first. As of 2026-11-28
+`origin/develop` HEAD is `020a6e4` (PR #82, legacy `.odc` compatibility for F2.9G.5A); the
+shared-schema-predicate refactor is merged there. The import-side follow-up is committed locally on
+`refactor/native-document-import-schema-gate` (`6bd589f` + `8daebc5`), verified locally but **not
+pushed and without a PR**.
+Open items in priority order: (1) the v0.5.7 acceptance and release gates still open in
+`docs/ROADMAP.md`, including the Fedora KDE manual rounds for the shared pipeline; (2) the v0.5.8
+Advanced Hole Editing track (circular cylindrical hole recognition, then Resize, Move and Delete
+from the current B-Rep only); (3) the registered tests that declare no `TIMEOUT` — recount from
+`CMakeLists.txt`, do not trust a cached count; (4) the stale `v0.5.6` product string in the CI
+artifact README text. The `rotation-pivot` 60 s CI timeout is resolved: `CMakeLists.txt:298`
+sets `TIMEOUT 120` with the measured 58.35 s / 60.03 s evidence in the comment above it.
+No implementation work is authorized merely by reading this handover.
 
 ## 13. Provenance / confidence
 **Repository-observed (2026-11-23):** `AGENTS.md`, `CLAUDE.md`, `README.md`, `CMakeLists.txt`,
