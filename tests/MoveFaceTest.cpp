@@ -1382,6 +1382,52 @@ struct MoveFaceTest {
                     &&NativeDocumentStorage::load(directory.filePath("stacked-reopened.odc"),restored,e)&&v.importDocumentSnapshot(restored,e),"Save/Open of the legacy result");
                 require(cylinderSeams(v.boxes_[0].shape,&old10)==4&&cylinderSeams(v.boxes_[0].shape,&old20)==(merges?0:4)
                     &&BRepCertification::equivalent(v.boxes_[0].shape,committed),"Save/Open changed the seam state");}
+            // 3. The import-side contract: the same content ladder re-checked
+            //    through CadViewport::importDocumentSnapshot, whose three gates
+            //    must agree with NativeDocumentStorage::requiredSchemaVersion.
+            //    A refusal must leave the live document untouched.
+            auto importRefusal=[](int schema,const std::vector<Construction::Object>& constructions,const std::vector<Sketch::Entity>& sketches){
+                if(schema==1&&!constructions.empty()) return QString("Schema v1 cannot contain constructions.");
+                if(schema<3&&!sketches.empty()) return QString("Schema v1/v2 cannot contain 2D geometry.");
+                return QString("The requested schema cannot contain these 2D types (points require v4; ellipses require v5).");
+            };
+            for(const auto& leg:legs) {
+                auto snapshot=base;
+                snapshot.constructions=leg.constructions;snapshot.sketchEntities=leg.sketches;
+                for(int schema=1;schema<=NativeDocumentStorage::CurrentSchemaVersion;++schema) {
+                    auto attempt=snapshot;attempt.schemaVersion=schema;
+                    const std::string at="import v"+std::to_string(schema)+" of a v"+std::to_string(leg.required)+" fixture";
+                    const auto before=census(v.boxes_[0].shape);
+                    const auto undo=v.undoStack_.size();
+                    const bool accepted=v.importDocumentSnapshot(attempt,error);
+                    if(schema>=leg.required) {
+                        require(accepted,(at+": import refused representable content").c_str());
+                        require(census(v.boxes_[0].shape)==census(unified)&&v.sketchEntities_==snapshot.sketchEntities
+                            &&v.constructions_.size()==snapshot.constructions.size()&&v.boxes_[0].persistentId==part.id,(at+": import lost content or Part identity").c_str());
+                    } else {
+                        require(!accepted,(at+": import accepted content the schema cannot represent").c_str());
+                        require(error==importRefusal(schema,snapshot.constructions,snapshot.sketchEntities),(at+": import refusal reason wrong").c_str());
+                        require(census(v.boxes_[0].shape)==before&&v.undoStack_.size()==undo&&!v.commandSession_
+                            &&v.boxes_.size()==1&&v.boxes_[0].persistentId==part.id,(at+": import refusal damaged the live document").c_str());
+                    }
+                    std::cout<<"STACKED COMPATIBILITY import required=v"<<leg.required<<" attempted=v"<<schema
+                             <<" accepted="<<std::boolalpha<<(schema>=leg.required)<<'\n';
+                }
+            }
+            // Precedence pins: the 2D schema gate must stay behind the Active Part,
+            // schema-range and duplicate-ID checks, so a doubly invalid snapshot
+            // keeps reporting the reason it reports today.
+            {   auto both=base;both.schemaVersion=2;both.constructions={wp};both.sketchEntities=curves;both.activePartId="stacked-absent";
+                require(!v.importDocumentSnapshot(both,error),"precedence: invalid Active Part accepted");
+                require(error==QString("Active Part does not exist."),"precedence: the 2D schema gate jumped ahead of the Active Part check");}
+            {   auto both=base;both.schemaVersion=2;both.constructions={wp};both.sketchEntities=curves;
+                NativePartState duplicate;duplicate.id=part.id;duplicate.name="Duplicate";duplicate.shape=unified;duplicate.geometryKind=1;
+                both.parts.push_back(duplicate);
+                require(!v.importDocumentSnapshot(both,error),"precedence: duplicate Part ID accepted");
+                require(error==QString("Duplicate document object ID."),"precedence: the 2D schema gate jumped ahead of the Part loop");}
+            {   auto both=base;both.schemaVersion=NativeDocumentStorage::CurrentSchemaVersion+1;
+                require(!v.importDocumentSnapshot(both,error),"precedence: unsupported schema accepted");
+                require(error==QString("Unsupported OpenDesigner document schema."),"precedence: the range gate no longer precedes the shared predicate");}
             // No window.close(): the edited document would open the modal prompt.
             qunsetenv("OPENDESIGNER_BOX_SHADOW");
         }
