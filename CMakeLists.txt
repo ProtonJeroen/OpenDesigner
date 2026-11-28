@@ -581,4 +581,13 @@ if(OPENDESIGNER_BUILD_TESTS)
     set_tests_properties(move-face-clear-sweep-provisional PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
     add_test(NAME move-face-stacked-cylinder-unification COMMAND OpenDesignerMoveFaceTests --stacked-cylinder-unification)
     set_tests_properties(move-face-stacked-cylinder-unification PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+    add_test(NAME move-face-stacked-cylinder-compatibility COMMAND OpenDesignerMoveFaceTests --stacked-cylinder-compatibility)
+    add_test(NAME move-face-stacked-cylinder-compatibility-hidpi COMMAND OpenDesignerMoveFaceTests --stacked-cylinder-compatibility)
+    # Measured locally on OCCT 7.9.3 under ctest: 1.04 s without scaling, 1.09 s with
+    # QT_SCALE_FACTOR=2 (4.94 s / 4.11 s as standalone xvfb-run wall time). The budgets keep
+    # the stacked-cylinder family ceiling (180 s) so the HiDPI twin is never below its non-HiDPI
+    # twin nor below the sibling unification budget, which leaves the slower CI runner (Qt 6.4.2,
+    # OCCT 7.6.3, split-retaining seam path) ample margin.
+    set_tests_properties(move-face-stacked-cylinder-compatibility move-face-stacked-cylinder-compatibility-hidpi PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+    set_tests_properties(move-face-stacked-cylinder-compatibility-hidpi PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=2")
 endif()

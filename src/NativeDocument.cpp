@@ -405,12 +405,14 @@ void validateSnapshot(const NativeDocumentSnapshot& snapshot) {
     const gp_Vec direction(camera.eye,camera.center);
     if (direction.SquareMagnitude()<1.e-16 || direction.Crossed(gp_Vec(camera.up)).SquareMagnitude()<1.e-16
         || camera.projectionType<0 || camera.projectionType>4) throw std::runtime_error("Invalid camera orientation or projection.");
-    if(snapshot.schemaVersion==1 && !snapshot.constructions.empty())
-        throw std::runtime_error("Schema v1 cannot store construction geometry.");
-    if(snapshot.schemaVersion<3 && !snapshot.sketchEntities.empty())
-        throw std::runtime_error("Schema v1/v2 cannot store 2D geometry.");
-    if(!snapshot.sketchEntities.empty() && snapshot.schemaVersion<NativeDocumentStorage::sketchSchemaVersion(snapshot.sketchEntities))
+    if(snapshot.schemaVersion<NativeDocumentStorage::requiredSchemaVersion(snapshot)) {
+        // One shared predicate decides the refusal; the specific reasons stay distinct.
+        if(snapshot.schemaVersion==1 && !snapshot.constructions.empty())
+            throw std::runtime_error("Schema v1 cannot store construction geometry.");
+        if(snapshot.schemaVersion<3 && !snapshot.sketchEntities.empty())
+            throw std::runtime_error("Schema v1/v2 cannot store 2D geometry.");
         throw std::runtime_error("The requested schema cannot store these 2D geometry types (points require v4; ellipses require v5; splines require v6).");
+    }
     QSet<QString> ids;
     for(int counter:snapshot.constructionNameCounters) if(counter<0) throw std::runtime_error("Invalid construction name counters.");
     for(const auto& object:snapshot.constructions) {
@@ -439,6 +441,12 @@ void validateSnapshot(const NativeDocumentSnapshot& snapshot) {
 int NativeDocumentStorage::sketchSchemaVersion(const std::vector<Sketch::Entity>& entities) {
     if(std::any_of(entities.begin(),entities.end(),[](const auto& e){return std::holds_alternative<Sketch::Spline>(e.geometry) || std::holds_alternative<Sketch::BSpline>(e.geometry);})) return 6;
     return Sketch::hasEllipses(entities)?5:Sketch::hasConstructionPoints(entities)?4:3;
+}
+
+int NativeDocumentStorage::requiredSchemaVersion(const NativeDocumentSnapshot& snapshot) {
+    const int content=snapshot.constructions.empty()?1:2;
+    if(snapshot.sketchEntities.empty()) return content;
+    return std::max(content,sketchSchemaVersion(snapshot.sketchEntities));
 }
 
 bool NativeDocumentStorage::save(const QString& path, const NativeDocumentSnapshot& snapshot, QString& error) {

@@ -1,13 +1,16 @@
 # OpenDesigner PR #79 — Local AI progress handover
 
-**Snapshot:** 2026-11-24 (CTest budget fix for the unstable `rotation-pivot` test) | **Worktree:** `/home/Jeroen/OpenDesigner-develop` | **Branch:** `fix/rotation-pivot-ctest-timeout` @ baseline `f201ac05a99cf4f2f80c0a72597edc413f58e77f` (`origin/develop`, documentation sync of PR #80) | **Audience:** Mistral Vibe | **Verified by execution in this session:** section 13
+**Snapshot:** 2026-11-25 (legacy `.odc` compatibility for F2.9G.5A, the first open v0.5.7 acceptance gate) | **Worktree:** `/home/Jeroen/OpenDesigner-develop` | **Branch:** `feature/v0.5.7-legacy-odc-compatibility` @ baseline `064194e` (`origin/develop` tip, the `rotation-pivot` budget fix of PR #81) | **Audience:** Mistral Vibe | **Verified by execution in this session:** section 14
 
 > Sections 1-11 are the PR #79 development session family (worktree `/home/Jeroen/OpenDesigner-vibe`,
 > branch `ai/vibe-moveface-review` / PR head `feature/v0.5.7-shared-brep-reconstruction`, baseline
 > `c50f054`); their findings are preserved unchanged. Section 12 is the documentation task on
 > `docs/synchronize-after-pr-79`. Section 13 is the `rotation-pivot` CTest budget fix; its root
 > cause was established by the read-only investigation that still lives in `git stash@{0}` and
-> was read with `git stash show -p` without applying or dropping that stash.
+> was read with `git stash show -p` without applying or dropping that stash. Section 14 is the
+> legacy `.odc` compatibility gate for F2.9G.5A on `feature/v0.5.7-legacy-odc-compatibility`;
+> its task statement was reconstructed from section 13.6 because that session's prompt carried
+> only execution rules, and the reconstruction is stated as an assumption there.
 > Items marked **verified** were executed in the recorded session. Re-run the commands in section
 > 5 (and sections 12 and 13) before acting on any claim.
 
@@ -958,3 +961,140 @@ Watch PR #81 (`gh pr checks 81`) for `rotation-pivot` and the suite total, then 
 the normal PR flow. After that, review the `boolean-operations` budget on a separate branch,
 and only then take the first open v0.5.7 acceptance gate: legacy `.odc` compatibility for
 F2.9G.5A on a copy of a private document opened from a temporary directory.
+
+## 14. Legacy `.odc` compatibility for F2.9G.5A (2026-11-25, implemented and verified locally; green on CI)
+
+### 14.1 Task objective, reconstruction and completion status
+
+The session prompt (`/home/Jeroen/Bureaublad/prompt.txt`) contained only additional execution
+rules: baseline-drift handling, HiDPI CTest budget derivation, never bypassing `NativeDocument`
+schema validation, stopping before push, and a scope list. **Assumption, stated explicitly:** the
+task was reconstructed as the first open v0.5.7 acceptance gate named in section 13.6 — legacy
+`.odc` compatibility for F2.9G.5A — because the rules' scope list matches it exactly: (a) a
+compatibility test leg, (b) a shared version-gate predicate/helper, (c) HiDPI registration with
+derived budgets, plus the mandatory handover and timing row.
+
+Status: **complete and verified by execution locally**, committed as three commits on
+`feature/v0.5.7-legacy-odc-compatibility` (`2b1f768` predicate, `75f5a2c` test + registration,
+`03c6440` handover + timing row). The task rules required stopping before pushing; the user then
+gave explicit approval, the branch was pushed (fast-forward, no force) and **PR #82** was opened
+against `develop`.
+
+### 14.2 Baseline and branch (verified)
+
+| Item | Value |
+| --- | --- |
+| `git fetch` then `origin/develop` tip | `064194e` — "fix(ci): give rotation-pivot its own 120 s CTest budget (#81)" |
+| `git merge-base --is-ancestor 064194e origin/develop` | true — **no baseline drift**; `064194e` is the chosen baseline |
+| Branch | `feature/v0.5.7-legacy-odc-compatibility`, created from `064194e` |
+| `git stash@{0}` | the old `rotation-pivot` investigation, left untouched (not applied, not dropped) |
+| Toolchain | Qt 6.11.2, OCCT 7.9.3 → `OCC_VERSION_HEX>=0x070900` true, i.e. the **merged** seam path |
+
+### 14.3 Root cause and technical decisions
+
+- The capability rule was duplicated: `validateSnapshot` held three separate schema gates
+  (`src/NativeDocument.cpp:410-415`) while `CadViewport::importDocumentSnapshot` re-checks the
+  same content rules with its own thresholds. No single predicate existed for "the lowest schema
+  able to store this snapshot".
+- Added `NativeDocumentStorage::requiredSchemaVersion(const NativeDocumentSnapshot&)`:
+  `1` for Part-only, `2` once construction geometry exists, otherwise
+  `std::max(content, sketchSchemaVersion(sketchEntities))` (3 curves, 4 points, 5 ellipses,
+  6 splines). `validateSnapshot` now wraps its three refusals in
+  `if(snapshot.schemaVersion < requiredSchemaVersion(snapshot))`.
+- **Equivalence argument (no relaxation):** the wrapper accepts exactly the cases the three
+  original gates accepted. v1 + constructions → first message; schema < 3 + 2D geometry →
+  second message; 2D types above the schema → third message. When `schemaVersion >= required`
+  none of the three conditions can hold, so behaviour is unchanged case by case.
+- **Deliberately not moved:** the import gates at `src/CadViewport.cpp:1619/1634/1636`
+  ("…cannot contain…" messages). Relocating them would change error precedence against the
+  construction/Part validity loops. The new test asserts the import-side refusal instead, so
+  any drift between the two gates is caught.
+- Test design (`MoveFaceTest::stackedCylinderCompatibility`, flag `--stacked-cylinder-compatibility`):
+  a content ladder of six fixtures whose required schema is 1…6 (Part only; + Workplane; +
+  Segment/Arc/Circle profile curves; + ConstructionPoint; + Ellipse; + Spline) crossed with
+  schema attempts 1…6 = 36 cases. Representable → save, load, Part identity (id/name/colour/
+  activePartId), topology census `{faces, cylinder faces, cylinder seams}` equal,
+  `BRepCertification::equivalent`, 2D content equal, reader reports `CurrentSchemaVersion`.
+  Unrepresentable → save refused, error equals the specific expected message, and the file on
+  disk is byte-identical to the reference read (atomicity).
+- Second leg: a legacy v3 document (Part + Workplane + profile curves) whose wall bands are
+  still split at z=10 (`BRepAlgoAPI_Fuse(prism(profile,10), prism(obroundTwoHolesProfile(10),10))`,
+  `cylinderSeams(split,&old10)==4`) is saved, opened, imported into `CadViewport`, and edited by
+  Move Face +10: material certified equal to `prism(profile,30)`, `singleSolid` +
+  `withinTolerance(...,1.e-6)`, `cylinderSeams(committed,&old10)==4` and
+  `cylinderSeams(committed,&old20)==(merges?0:4)`, then Save/Open keeps that seam state.
+  A v2 snapshot carrying the same 2D content is asserted refused.
+- Seam expectations branch on `OCC_VERSION_HEX>=0x070900`, so the same test is meaningful on
+  CI (7.6.3, split-retaining) and locally (7.9.3, merged). Fixtures are synthetic; no private
+  `.odc` is read or written.
+
+### 14.4 Files changed and why
+
+| File | Change |
+| --- | --- |
+| `src/NativeDocument.h` | `requiredSchemaVersion` declaration plus the one-predicate comment |
+| `src/NativeDocument.cpp` | `validateSnapshot` gate wrapper (three messages preserved verbatim) and the predicate definition |
+| `tests/MoveFaceTest.cpp` | `#include <QFile>`, `stackedCylinderCompatibility()`, `--stacked-cylinder-compatibility` dispatch |
+| `CMakeLists.txt` | `move-face-stacked-cylinder-compatibility` and `-hidpi` twin, `TIMEOUT 180 RUN_SERIAL TRUE`, `ENVIRONMENT "QT_SCALE_FACTOR=2"`, comment with the measured durations |
+
+No modelling geometry, tolerance, certification, preview/session behaviour, persistence format,
+rotation-pivot budget, spline-hole stage or `moveSourceUnchanged()` code was touched.
+
+### 14.5 Commands and results (executed in this session)
+
+```
+cmake --build build -j4 --target OpenDesignerMoveFaceTests          # first: exit 1 (test bug, see below)
+cmake --build build -j4 --target OpenDesignerMoveFaceTests          # exit 0
+cmake --build build -j4                                             # exit 0, 430 steps, 0 warning: lines, 355.25 s
+xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX" ctest --test-dir build -C Release \
+  -R '^move-face-stacked-cylinder-compatibility(-hidpi)?$'          # 2/2 PASS, 1.04 s + 1.09 s, total 2.13 s
+xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX" ctest --test-dir build -C Release \
+  -R '^(move-face-stacked-cylinder-unification|native-document-roundtrip|native-document-sessions)$' \
+  --output-on-failure -j2                                             # 3/3 PASS, 2.65 s + 0.07 s + 1.28 s, total 3.94 s
+```
+
+- Standalone runs of the new leg under Xvfb: 4.94 s (no scaling) and 4.11 s (`QT_SCALE_FACTOR=2`),
+  both exit 0; the ctest durations above are the ones the budgets are derived from.
+- Observed on the merged path: `legacy: faces=12 cylinders=8 seams_at_z10=4 seams_at_z20=0`.
+- Development bug found and fixed **in the test, not in production**: the Workplane assertion
+  indexed `loaded.constructions[0]` for the Part-only leg (sizes equal at 0), which segfaulted
+  the leg (exit 139) right after the header line; guarded with `snapshot.constructions.empty()`.
+- Budget derivation: measured ctest durations 1.04 s / 1.09 s; both variants registered at 180 s
+  so the HiDPI twin is never below its non-HiDPI twin nor below the sibling
+  `move-face-stacked-cylinder-unification` budget (180 s, whose own local duration is 2.65 s),
+  leaving the slower CI runner ample margin.
+- Not run locally: the other 142 registered test names, the three CI-gated tests, and everything
+  that needs a real desktop session (GUI interaction, Fedora KDE/Wayland, physical HiDPI).
+- CI evidence for the other side of the OCCT gate (run `45762792836`, `pull_request` on PR #82,
+  head `9f9ce5f`, Ubuntu 24.04 / Qt 6.4.2 / OCCT 7.6.3, command
+  `xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX" ctest --test-dir build -C Release
+  --output-on-failure -j2`): `143/144 Test #143: move-face-stacked-cylinder-compatibility ...
+  Passed 1.53 sec`, `144/144 Test #144: ...-hidpi ... Passed 1.59 sec`,
+  `100% tests passed, 0 tests failed out of 144`, run conclusion `success`. So the split-retaining
+  expectations (`seams_at_z20==4`) and both 180 s budgets hold on the CI toolchain.
+
+### 14.6 Remaining problems and known limitations
+
+- The split-retaining path (OCCT 7.6.3, `seams_at_z20==4`) was **not** exercised locally; it passed
+  on CI (see 14.5), but no local OCCT 7.6.x build has run it.
+- HiDPI coverage here is `QT_SCALE_FACTOR=2` under Xvfb only; no physical HiDPI display was used.
+- The gate is proven with synthetic fixtures. A real legacy `.odc` (for example `fillet.odc`)
+  was never opened; if the acceptance gate requires one, the user must supply a copy in a
+  temporary directory.
+- `CadViewport::importDocumentSnapshot` still keeps its own three gates; the shared predicate
+  covers save and the test asserts import refusals, but the import code path is not yet refactored
+  onto `requiredSchemaVersion` (out of scope: it would change error precedence).
+- Stopping before push was an explicit rule of this task; the push and PR #82 happened only after
+  the user's separate approval, not as part of the task's own scope.
+
+### 14.7 Exact next recommended development step
+
+Done: the branch is pushed, **PR #82** is open against `develop` (`mergeable: MERGEABLE`) and its
+CI run `45762792836` for head `9f9ce5f` finished with conclusion `success` — 144/144 tests passed,
+including both new legs on the split-retaining OCCT 7.6.3 toolchain. Merge only through the normal
+PR flow (never locally, never by touching branch protection). A docs-only follow-up commit then
+synced the standing-rule test counts in `AGENTS.md`/`CLAUDE.md` (146 `add_test(` calls, 147 names,
+CI runs 144); it re-triggers the same workflow, so re-check `gh pr checks 82` before merging.
+After that, refactor `CadViewport::importDocumentSnapshot` onto
+`NativeDocumentStorage::requiredSchemaVersion` on a separate branch (it changes error precedence,
+so it needs its own test evidence), then take the next v0.5.7 gate (advanced Hole Editing, v0.5.8).
