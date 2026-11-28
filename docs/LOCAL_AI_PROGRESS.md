@@ -1195,9 +1195,35 @@ Totals for the timing row: build 38.98 s (14.58 + 24.4), test 26.57 s (8.37 char
 - The save side keeps three message branches, the import side two: the predicate is shared, the
   message selection is deliberately local.
 
-### 15.7 Exact next recommended development step
+### 15.7 Push, PR and CI (executed 2026-11-28, after the timed session boundary)
 
-Push `refactor/native-document-import-schema-gate` and open a PR against `develop` only on explicit
-user approval (not yet given). CI must show 144/144 on OCCT 7.6.3, including both compatibility legs.
-After that, the next v0.5.7 gate is the v0.5.8 Advanced Hole Editing track in `docs/ROADMAP.md`
-(circular cylindrical hole recognition, then Resize, Move and Delete from current B-Rep only).
+The user approved the push. `git push --set-upstream origin refactor/native-document-import-schema-gate`
+created the branch; **PR #83** targets `develop` (`baseRefOid` `020a6e4`, `headRefOid` `3227bac`,
+`mergeStateStatus` CLEAN).
+
+CI run `46135581037` (job `140950034330`, workflow `Build/linux (pull_request)`, elapsed 22 m 49 s,
+conclusion `success`):
+
+```
+100% tests passed, 0 tests failed out of 144
+Total Test time (real) = 866.86 sec
+143/144 move-face-stacked-cylinder-compatibility .... Passed  4.90 sec
+144/144 move-face-stacked-cylinder-compatibility-hidpi ... Passed  5.16 sec
+```
+
+Both compatibility legs therefore ran on the **OCCT 7.6.3 split-retaining side** (CI installs the
+`libocct-*-7.6t64` packages, Qt `6.4.2+dfsg-21.1build5`), which is the side the local OCCT 7.9.3
+build cannot exercise. 0 `error:` lines; every `warning:` line in the CI log is from
+`/usr/include/opencascade/...` system headers — none from `CadViewport.cpp`,
+`NativeDocument.cpp` or `MoveFaceTest.cpp`.
+
+The timing row in `docs/LOCAL_AI_TASK_TIMES.csv` says "No push, no PR" because that was the state at
+the recorded end timestamp; the CSV is append-only, so the row was not rewritten and this section is
+the record of what happened afterwards.
+
+### 15.8 Exact next recommended development step
+
+PR #83 is green and mergeable, but merging PRs is not authorized by these rules — wait for the
+maintainer to merge it. Once it lands, refresh `develop` and take the next v0.5.7 gate: the v0.5.8
+Advanced Hole Editing track in `docs/ROADMAP.md` (circular cylindrical hole recognition, then Resize,
+Move and Delete from the current B-Rep only).

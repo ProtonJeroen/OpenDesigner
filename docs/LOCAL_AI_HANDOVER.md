@@ -174,9 +174,9 @@ Intended offline workflow: Lenovo Legion RTX 3070 8 GB VRAM, 48 GB RAM, Fedora K
 ## 12. Immediate next investigation
 `docs/LOCAL_AI_PROGRESS.md` is the current snapshot; read its last section first. As of 2026-11-28
 `origin/develop` HEAD is `020a6e4` (PR #82, legacy `.odc` compatibility for F2.9G.5A); the
-shared-schema-predicate refactor is merged there. The import-side follow-up is committed locally on
-`refactor/native-document-import-schema-gate` (`6bd589f` + `8daebc5`), verified locally but **not
-pushed and without a PR**.
+shared-schema-predicate refactor is merged there. The import-side follow-up is on `refactor/native-document-import-schema-gate` (`6bd589f` + `8daebc5` +
+`3227bac`) as **PR #83**, CI green at 144/144 on OCCT 7.6.3, mergeable but not merged — merging PRs is
+not authorized by the standing rules.
 Open items in priority order: (1) the v0.5.7 acceptance and release gates still open in
 `docs/ROADMAP.md`, including the Fedora KDE manual rounds for the shared pipeline; (2) the v0.5.8
 Advanced Hole Editing track (circular cylindrical hole recognition, then Resize, Move and Delete
