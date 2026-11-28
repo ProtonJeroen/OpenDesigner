@@ -1098,3 +1098,132 @@ CI runs 144); it re-triggers the same workflow, so re-check `gh pr checks 82` be
 After that, refactor `CadViewport::importDocumentSnapshot` onto
 `NativeDocumentStorage::requiredSchemaVersion` on a separate branch (it changes error precedence,
 so it needs its own test evidence), then take the next v0.5.7 gate (advanced Hole Editing, v0.5.8).
+
+## 15. Import-side schema gate refactored onto the shared predicate (2026-11-28, implemented and verified locally)
+
+### 15.1 Task objective and completion status
+
+The step recommended by section 14.7: put `CadViewport::importDocumentSnapshot`'s schema decision
+onto `NativeDocumentStorage::requiredSchemaVersion` instead of re-deriving it, without changing the
+Open dialog text or the order in which refusals are reported. The user approved both open decisions
+before execution: keep the import wording verbatim ("cannot contain", no splines clause), and keep the
+precedence pins inside the existing compatibility leg rather than registering a new test name.
+
+Status: **complete and verified by execution locally.** Two commits on
+`refactor/native-document-import-schema-gate`: `6bd589f` (test pins first), `8daebc5` (production
+refactor). Not pushed — pushing is a separate approval.
+
+### 15.2 Baseline and branch (verified)
+
+| Item | Value |
+| --- | --- |
+| `git fetch origin develop` | `064194e..020a6e4`; PR #82 is squash-merged into `develop` as `020a6e4` |
+| Branch | `refactor/native-document-import-schema-gate`, created from `origin/develop` `020a6e4` |
+| Previous session branch | `feature/v0.5.7-legacy-odc-compatibility` `7477d66`; `git diff --name-only origin/develop 7477d66` was empty, so nothing carried over |
+| `git stash@{0}` | the old `rotation-pivot` investigation, untouched |
+| Toolchain | Qt 6.11.2, OCCT 7.9.3 → the **merged** seam path; `build/` cache is `Release`, `OPENDESIGNER_BUILD_TESTS=ON` |
+
+### 15.3 Root cause and technical decisions
+
+Two findings that changed the risk assessment, both read from source:
+
+- **The import schema gates are unreachable on the Open path.** `NativeDocumentStorage::load`
+  hard-codes `loaded.schemaVersion = CurrentSchemaVersion` (`src/NativeDocument.cpp:578`); the file's
+  own version is consumed at `:555-573` only to pick the root marker and check the `TDataStd_Integer`
+  attribute. `MainWindow.cpp:650` therefore always hands the viewport a v6 snapshot. The gates only
+  fire for snapshots built in memory, which is how every test reaches them.
+- **The import contract was unpinned.** Save-side messages are asserted verbatim
+  (`tests/MoveFaceTest.cpp:1305-1307`); import-side refusals only as booleans
+  (`tests/SketchEllipseSessionTest.cpp:80`, `tests/SketchPointSessionTest.cpp:126-127`,
+  `tests/ActivePartSessionTest.cpp:171`). A refactor could have changed the dialog text invisibly,
+  so the pins were committed **before** the production change and run against unmodified code.
+
+The three import gates sit on **both sides** of the construction-validity and Part-validity loops
+(`src/CadViewport.cpp:1619` before them, `:1634`/`:1636` after), so a single wrapper covering all
+three messages would have moved the v1 construction guard and changed which reason a doubly invalid
+snapshot reports. Decision: leave the v1 guard at `:1619` and wrap only the two 2D gates in the
+shared predicate, keeping both messages and their position after the Part loop.
+
+Equivalence, with the range gate at `:1615` already passed (`1 <= s <= 6`): with `sketchEntities`
+empty, `required` is 1 or 2 and the only refusal left is the v1 construction guard, which still fires
+at its own earlier site; with `sketchEntities` non-empty, `sketchSchemaVersion >= 3 > content`, so
+`s < 3` gives the v1/v2 message and `s >= 3` reduces exactly to the previous
+`sketchSchemaVersion` comparison. Reaching `:1634` with `sketchEntities` empty and `s < required`
+is impossible, because that case already returned at `:1619`.
+
+### 15.4 Files changed and why
+
+| File | Change |
+| --- | --- |
+| `tests/MoveFaceTest.cpp` | `stackedCylinderCompatibility` gains the v1..v6 ladder re-checked through `importDocumentSnapshot` (36 cases, 15 refusals) with per-refusal atomicity, plus three precedence pins: invalid `activePartId`, duplicate Part ID, out-of-range schema |
+| `src/CadViewport.cpp` | the two 2D gates replaced by one `requiredSchemaVersion` wrapper; messages, order and the v1 guard unchanged |
+
+No geometry, tolerance, certification, preview/session behaviour, persistence format, `load`
+version-marker logic, `CMakeLists.txt` or test-count change. Registered test count stays 146
+`add_test(` calls / 147 names.
+
+### 15.5 Commands and results (executed in this session)
+
+```
+cmake --build build -j4 --target OpenDesignerMoveFaceTests          # exit 0, 14.58 s, 0 warnings  [pins, pre-refactor]
+xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX" ctest --test-dir build -C Release \
+  -R '^move-face-stacked-cylinder-compatibility(-hidpi)?$'          # 2/2 PASS, 2.67 s + 2.65 s, total 8.37 s  [characterization]
+./build/OpenDesignerMoveFaceTests --stacked-cylinder-compatibility  # exit 0, 36 "import required=" lines, 15 accepted=false
+cmake --build build -j4 --target OpenDesignerMoveFaceTests OpenDesignerSelectionContextTests OpenDesignerPullTests
+                                                          # exit 0, 9 steps, CadViewport.cpp rebuilt in all three, 0 warnings, 24.4 s
+xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX" ctest --test-dir build -C Release \
+  -R '^move-face-stacked-cylinder-compatibility(-hidpi)?$'          # 2/2 PASS, 2.10 s + 2.68 s
+xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX" ctest --test-dir build -C Release -j2 \
+  -R '^(native-document-roundtrip|native-document-sessions|native-partless-documents|active-part-sessions|construction-sessions|sketch-point-sessions|sketch-ellipse-sessions|native-document-pull)$'
+                                                          # 8/8 PASS, 1.17+0.09+1.33+0.65+1.40+1.85+1.57+3.61 s, total 7.38 s
+```
+
+Totals for the timing row: build 38.98 s (14.58 + 24.4), test 26.57 s (8.37 characterization +
+18.20 post-refactor). 10 PASS, 0 FAIL. The eight names above are every registered test that calls
+`importDocumentSnapshot` on a refusal path or with a mutated schema.
+
+### 15.6 Remaining problems and known limitations
+
+- Not run: the other ~136 registered tests, the three CI-gated tests, and all GUI, Fedora KDE/Wayland
+  and physical-HiDPI acceptance. The OCCT 7.6.3 split-retaining side of the compatibility leg is
+  again only reachable on CI.
+- The pins assert the **current** precedence. If a future change moves the Part loop or the range
+  gate, these three assertions are the tripwire; they do not prove the order is the right one.
+- `NativeDocumentStorage::load` still normalizes every reopened document to v6, so the import gates
+  remain a defensive layer for in-memory snapshots. Making `load` report the file's real version
+  would be a separate, larger change with its own compatibility risk.
+- The save side keeps three message branches, the import side two: the predicate is shared, the
+  message selection is deliberately local.
+
+### 15.7 Push, PR and CI (executed 2026-11-28, after the timed session boundary)
+
+The user approved the push. `git push --set-upstream origin refactor/native-document-import-schema-gate`
+created the branch; **PR #83** targets `develop` (`baseRefOid` `020a6e4`, `headRefOid` `3227bac`,
+`mergeStateStatus` CLEAN).
+
+CI run `46135581037` (job `140950034330`, workflow `Build/linux (pull_request)`, elapsed 22 m 49 s,
+conclusion `success`):
+
+```
+100% tests passed, 0 tests failed out of 144
+Total Test time (real) = 866.86 sec
+143/144 move-face-stacked-cylinder-compatibility .... Passed  4.90 sec
+144/144 move-face-stacked-cylinder-compatibility-hidpi ... Passed  5.16 sec
+```
+
+Both compatibility legs therefore ran on the **OCCT 7.6.3 split-retaining side** (CI installs the
+`libocct-*-7.6t64` packages, Qt `6.4.2+dfsg-21.1build5`), which is the side the local OCCT 7.9.3
+build cannot exercise. 0 `error:` lines; every `warning:` line in the CI log is from
+`/usr/include/opencascade/...` system headers — none from `CadViewport.cpp`,
+`NativeDocument.cpp` or `MoveFaceTest.cpp`.
+
+The timing row in `docs/LOCAL_AI_TASK_TIMES.csv` says "No push, no PR" because that was the state at
+the recorded end timestamp; the CSV is append-only, so the row was not rewritten and this section is
+the record of what happened afterwards.
+
+### 15.8 Exact next recommended development step
+
+PR #83 is green and mergeable, but merging PRs is not authorized by these rules — wait for the
+maintainer to merge it. Once it lands, refresh `develop` and take the next v0.5.7 gate: the v0.5.8
+Advanced Hole Editing track in `docs/ROADMAP.md` (circular cylindrical hole recognition, then Resize,
+Move and Delete from the current B-Rep only).

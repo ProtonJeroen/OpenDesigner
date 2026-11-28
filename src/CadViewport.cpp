@@ -1631,8 +1631,11 @@ bool CadViewport::importDocumentSnapshot(const NativeDocumentSnapshot& snapshot,
             return false;
         }
     }
-    if(snapshot.schemaVersion<3 && !snapshot.sketchEntities.empty()) {error=tr("Schema v1/v2 cannot contain 2D geometry.");return false;}
-    if(!snapshot.sketchEntities.empty() && snapshot.schemaVersion<NativeDocumentStorage::sketchSchemaVersion(snapshot.sketchEntities)) {
+    if(snapshot.schemaVersion<NativeDocumentStorage::requiredSchemaVersion(snapshot)) {
+        // Same predicate as NativeDocumentStorage::validateSnapshot decides that the
+        // schema cannot hold this content. The v1 construction guard above already
+        // fired for schema v1, so only the 2D rules remain, in their existing order.
+        if(snapshot.schemaVersion<3) {error=tr("Schema v1/v2 cannot contain 2D geometry.");return false;}
         error=tr("The requested schema cannot contain these 2D types (points require v4; ellipses require v5).");return false;
     }
     if(!Sketch::validate(snapshot.sketchEntities,snapshot.constructions,documentIds,error)) return false;
